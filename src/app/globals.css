@@ -1,0 +1,152 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * GRAL design system — floating cards on a tinted blue-grey backdrop.
+ * Copied from the Lovable design. All colors are oklch tokens.
+ * Never hardcode colors in components.
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+
+  --font-sans: var(--font-inter), "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-subtle: var(--subtle);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-sky: var(--sky);
+  --color-pale: var(--pale);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--card);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --shadow-card: 0 8px 24px oklch(0.221 0.0394 258.28 / 6%);
+  --shadow-float: 0 22px 48px oklch(0.221 0.0394 258.28 / 18%);
+  --shadow-pill: 0 6px 18px oklch(0.221 0.0394 258.28 / 8%);
+}
+
+:root {
+  --radius: 1rem;
+  --background: oklch(0.9075 0.0238 240.11);
+  --foreground: oklch(0.221 0.0394 258.28);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.221 0.0394 258.28);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.221 0.0394 258.28);
+  --primary: oklch(0.4258 0.1121 254.21);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.9683 0.0069 247.9);
+  --secondary-foreground: oklch(0.4258 0.1121 254.21);
+  --muted: oklch(0.9683 0.0069 247.9);
+  --muted-foreground: oklch(0.4474 0.0343 261.32);
+  --subtle: oklch(0.7107 0.0351 256.79);
+  --accent: oklch(0.9624 0.0134 240.95);
+  --accent-foreground: oklch(0.4258 0.1121 254.21);
+  --sky: oklch(0.6816 0.1098 235.47);
+  --pale: oklch(0.9624 0.0134 240.95);
+  --destructive: oklch(0.5771 0.2152 27.33);
+  --destructive-foreground: oklch(1 0 0);
+  --success: oklch(0.6271 0.1699 149.21);
+  --success-soft: oklch(0.9624 0.0434 156.74);
+  --warning: oklch(0.6658 0.1574 58.32);
+  --warning-soft: oklch(0.9619 0.058 95.62);
+  --danger: oklch(0.5771 0.2152 27.33);
+  --danger-soft: oklch(0.9356 0.0309 17.72);
+  --border: oklch(0.9288 0.0126 255.51);
+  --input: oklch(0.9288 0.0126 255.51);
+  --ring: oklch(0.6816 0.1098 235.47);
+  --chart-1: oklch(0.4258 0.1121 254.21);
+  --chart-2: oklch(0.6816 0.1098 235.47);
+  --chart-3: oklch(0.7107 0.0351 256.79);
+  --chart-4: oklch(0.6658 0.1574 58.32);
+  --chart-5: oklch(0.6271 0.1699 149.21);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Floating white card surface */
+@utility float-card {
+  background-color: var(--color-card);
+  border: 1px solid var(--color-border);
+  border-radius: 1.25rem;
+  box-shadow: var(--shadow-card);
+}
+
+@utility float-pill {
+  background-color: var(--color-card);
+  border-radius: 9999px;
+  box-shadow: var(--shadow-pill);
+}
+
+/* Subtle hover lift — the only floating effect */
+@utility lift-card {
+  transition:
+    transform 300ms ease,
+    box-shadow 300ms ease;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-float);
+  }
+}
+
+@utility rise-in {
+  animation: rise-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
