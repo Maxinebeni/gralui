@@ -94,7 +94,7 @@ export function ClientsView() {
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
         <div className="min-w-0 space-y-4">
-          <FloatCard delay={120}>
+          <FloatCard className="overflow-hidden" delay={120}>
             <CardHeader
               title="Client Records"
               right={

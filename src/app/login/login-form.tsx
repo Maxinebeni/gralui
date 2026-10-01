@@ -35,8 +35,8 @@ export function LoginForm() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="float-card rise-in w-full max-w-md p-8">
+    <div className="flex min-h-screen items-center justify-center bg-background px-3 py-4 sm:px-4">
+      <div className="float-card rise-in w-full max-w-md p-5 sm:p-8">
         <div className="flex flex-col items-center text-center">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/favicon_io/android-chrome-512x512.png" alt="Global Risk Advisors Ltd" className="h-24 w-auto" />

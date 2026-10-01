@@ -14,7 +14,7 @@ export function FloatCard({
 }) {
   return (
     <div
-      className={cn("float-card rise-in", className)}
+      className={cn("float-card rise-in min-w-0", className)}
       style={{ animationDelay: `${delay}ms` }}
     >
       {children}
@@ -32,9 +32,14 @@ export function CardHeader({
   className?: string;
 }) {
   return (
-    <div className={cn("flex flex-wrap items-center justify-between gap-3 px-5 pt-5", className)}>
+    <div
+      className={cn(
+        "grid min-w-0 gap-3 px-4 pt-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-5 sm:pt-5",
+        className,
+      )}
+    >
       <h2 className="text-base font-semibold tracking-tight">{title}</h2>
-      {right}
+      <div className="min-w-0">{right}</div>
     </div>
   );
 }
@@ -63,7 +68,9 @@ export function StatTile({
         <span className="text-xs font-medium text-muted-foreground">{label}</span>
       </div>
       <div className="mt-3 flex items-end justify-between gap-2">
-        <span className="text-3xl leading-none font-semibold tracking-tight">{value}</span>
+        <span className="min-w-0 break-words text-2xl leading-none font-semibold tracking-tight sm:text-3xl">
+          {value}
+        </span>
         {delta ? (
           <span
             className={cn(
@@ -123,10 +130,10 @@ export function FilterPill({
     <button
       type="button"
       onClick={onClick}
-      className="float-pill flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-foreground transition-shadow hover:shadow-[var(--shadow-float)]"
+      className="float-pill flex max-w-full items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-foreground transition-shadow hover:shadow-[var(--shadow-float)]"
     >
       {label ? <span className="text-muted-foreground">{label}:</span> : null}
-      <span>{value}</span>
+      <span className="truncate">{value}</span>
       <ChevronDown className="size-3.5 text-subtle" />
     </button>
   );
@@ -185,7 +192,7 @@ export function NavyButton({
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "inline-flex items-center justify-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40",
+        "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40 sm:min-h-0",
         className,
       )}
     >
@@ -208,7 +215,7 @@ export function OutlineButton({
       type="button"
       onClick={onClick}
       className={cn(
-        "inline-flex items-center justify-center gap-1.5 rounded-full border border-border bg-card px-3.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary",
+        "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-full border border-border bg-card px-3.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary sm:min-h-0",
         className,
       )}
     >
@@ -235,7 +242,7 @@ export function DistributionRow({
   items: { label: string; value: string; tone?: "danger" | "warning" | "success" }[];
 }) {
   return (
-    <div className="mt-4 flex divide-x divide-border">
+    <div className="mt-4 grid grid-cols-3 divide-x divide-border">
       {items.map((it) => (
         <div key={it.label} className="flex-1 px-2 text-center">
           <div className="text-[11px] text-muted-foreground">{it.label}</div>
@@ -295,7 +302,7 @@ export function ChartCard({
   children: ReactNode;
 }) {
   return (
-    <FloatCard className="lift-card p-5" delay={delay}>
+    <FloatCard className="lift-card p-4 sm:p-5" delay={delay}>
       <h3 className="text-base font-semibold tracking-tight">{title}</h3>
       <div className="mt-1 flex flex-wrap items-center gap-4">
         {legend.map((l) => (
@@ -307,7 +314,7 @@ export function ChartCard({
           </span>
         ))}
       </div>
-      <div className="mt-3" style={{ height }}>
+      <div className="mt-3 min-w-0" style={{ height }}>
         {children}
       </div>
     </FloatCard>
@@ -316,7 +323,7 @@ export function ChartCard({
 
 export function QuickAction({ children, delay = 0 }: { children: ReactNode; delay?: number }) {
   return (
-    <FloatCard className="p-5" delay={delay}>
+    <FloatCard className="p-4 sm:p-5" delay={delay}>
       <h2 className="text-base font-semibold tracking-tight">Quick Action</h2>
       <div className="mt-3 space-y-2">{children}</div>
     </FloatCard>
@@ -339,13 +346,13 @@ export function QuickActionRow({
   return (
     <div
       className={cn(
-        "flex items-center justify-between gap-3 rounded-xl px-3 py-2.5",
+        "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl px-2 py-2.5 sm:px-3",
         tinted ? "bg-pale" : "",
       )}
     >
-      <div className="flex items-center gap-2.5">
+      <div className="flex min-w-0 items-center gap-2.5">
         <Icon className={cn("size-4 shrink-0", tone === "danger" ? "text-danger" : "text-success")} />
-        <span className="text-xs font-medium text-foreground">{text}</span>
+        <span className="min-w-0 text-xs font-medium text-foreground">{text}</span>
       </div>
       {action}
     </div>

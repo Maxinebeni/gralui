@@ -27,20 +27,25 @@ export function Shell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="mx-auto max-w-[1280px] px-4 py-6 sm:px-6">
-        <header className="flex items-center justify-between gap-4">
-          <Link href="/" className="flex items-center">
+      <div className="mx-auto max-w-[1280px] px-3 py-4 sm:px-6 sm:py-6">
+        {/* Phones: logo + icons on row 1, full-width scrollable menu on row 2. */}
+        <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-4 lg:flex lg:justify-between">
+          <Link href="/" className="flex min-w-0 items-center">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/favicon_io/android-chrome-512x512.png" alt="Global Risk Advisors Ltd" className="h-12 w-auto" />
+            <img
+              src="/favicon_io/android-chrome-512x512.png"
+              alt="Global Risk Advisors Ltd"
+              className="h-11 w-auto sm:h-12"
+            />
           </Link>
 
-          <nav className="float-pill order-3 flex w-full items-center gap-1 overflow-x-auto p-1.5 lg:order-none lg:w-auto">
+          <nav className="float-pill col-span-2 row-start-2 flex w-full min-w-0 items-center justify-between gap-0.5 overflow-x-auto p-1.5 lg:col-auto lg:row-auto lg:w-auto lg:justify-start lg:gap-1">
             {tabs.map((t) => (
               <Link
                 key={t.href}
                 href={t.href}
                 className={cn(
-                  "shrink-0 rounded-full px-4 py-2 text-sm font-medium transition-colors",
+                  "shrink-0 rounded-full px-2.5 py-2 text-xs font-medium transition-colors sm:px-4 sm:text-sm",
                   isActive(t.href)
                     ? "bg-primary text-primary-foreground hover:text-primary-foreground"
                     : "text-muted-foreground hover:text-foreground",
@@ -48,13 +53,13 @@ export function Shell({ children }: { children: ReactNode }) {
               >
                 <span className="flex items-center gap-1.5">
                   {t.label}
-                  <ChevronDown className="size-3.5 opacity-70" />
+                  <ChevronDown className="hidden size-3.5 opacity-70 sm:block" />
                 </span>
               </Link>
             ))}
           </nav>
 
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <IconBtn label="Search clients" onClick={() => router.push("/clients")}>
               <Search className="size-4" />
             </IconBtn>
@@ -66,6 +71,7 @@ export function Shell({ children }: { children: ReactNode }) {
             </IconBtn>
             <IconBtn
               label="Sign out"
+              mobile
               onClick={() => {
                 signOut();
                 router.replace("/login");
@@ -92,17 +98,23 @@ function IconBtn({
   children,
   label,
   onClick,
+  mobile = false,
 }: {
   children: ReactNode;
   label: string;
   onClick?: () => void;
+  /** Also show on phones (other icon buttons are hidden below the sm breakpoint). */
+  mobile?: boolean;
 }) {
   return (
     <button
       type="button"
       aria-label={label}
       onClick={onClick}
-      className="hidden size-10 items-center justify-center rounded-full bg-card text-muted-foreground shadow-[var(--shadow-pill)] transition-colors hover:text-primary sm:flex"
+      className={cn(
+        "size-10 items-center justify-center rounded-full bg-card text-muted-foreground shadow-[var(--shadow-pill)] transition-colors hover:text-primary",
+        mobile ? "flex" : "hidden sm:flex",
+      )}
     >
       {children}
     </button>
@@ -123,22 +135,22 @@ export function PageHeader({
   const { user, roles, setRole } = useCurrentUser();
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <div>
+    <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+      <div className="min-w-0">
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
         {subtitle ? <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p> : null}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">
         {/* Demo-only role switcher (from the design). Remove once real roles come from the backend. */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
-              className="float-pill flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium"
+              className="float-pill flex max-w-full items-center gap-1.5 px-3.5 py-2 text-xs font-medium"
             >
               <span className="text-muted-foreground">Role:</span>
-              <span>{user.role}</span>
+              <span className="truncate">{user.role}</span>
               <ChevronDown className="size-3.5 text-subtle" />
             </button>
           </DropdownMenuTrigger>
@@ -180,7 +192,7 @@ export function SlideOver({
         onClick={onClose}
         className="absolute inset-0 bg-foreground/25 backdrop-blur-[2px]"
       />
-      <div className="relative h-full w-full max-w-[620px] overflow-y-auto rounded-l-3xl bg-card shadow-[var(--shadow-float)] duration-300 animate-in slide-in-from-right">
+      <div className="relative h-full w-full max-w-[620px] overflow-y-auto bg-card shadow-[var(--shadow-float)] duration-300 animate-in slide-in-from-right sm:rounded-l-3xl">
         {children}
       </div>
     </div>
@@ -192,7 +204,7 @@ export function NoAccess() {
   const { user } = useCurrentUser();
   return (
     <div className="flex justify-center pt-16">
-      <div className="float-card rise-in max-w-md p-8 text-center">
+      <div className="float-card rise-in max-w-md p-5 text-center sm:p-8">
         <h1 className="text-xl font-semibold tracking-tight">No access</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           The {user.role} role does not have access to this page.

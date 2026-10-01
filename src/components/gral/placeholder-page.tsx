@@ -8,7 +8,7 @@ export function PlaceholderPage({ title }: { title: string }) {
   return (
     <>
       <PageHeader title={title} />
-      <FloatCard className="mt-5 p-8 text-center" delay={60}>
+      <FloatCard className="mt-5 p-5 text-center sm:p-8" delay={60}>
         <p className="text-sm text-muted-foreground">To be completed.</p>
       </FloatCard>
     </>
