@@ -12,7 +12,7 @@ export const ROLES = [
 
 export type Role = (typeof ROLES)[number];
 
-export type ClientType = "Corporate" | "State Enterprise" | "Financial Institution" | "SME";
+export type ClientType = "Corporate" | "State Enterprise" | "NGO" | "Financial Institution" | "SME";
 
 export type ClientDoc = {
   name: string;
@@ -20,6 +20,10 @@ export type ClientDoc = {
   expiry?: string;
   status?: "ok" | "soon" | "expired";
 };
+
+/** Policy statuses. Active, Lapsed and Cancelled come from the requirements document. */
+export const POLICY_STATUSES = ["Active", "In Renewal", "Lapsed", "Cancelled"] as const;
+export type PolicyStatus = (typeof POLICY_STATUSES)[number];
 
 export type Policy = {
   id: string;
@@ -29,7 +33,15 @@ export type Policy = {
   premium: number;
   start: string;
   renewal: string;
-  status: "Active" | "In Renewal" | "Lapsed";
+  status: PolicyStatus;
+};
+
+/** Primary contact person at the client (requirements doc, section 4). */
+export type ClientContact = {
+  name: string;
+  title: string;
+  email: string;
+  phone: string;
 };
 
 export type Client = {
@@ -37,6 +49,10 @@ export type Client = {
   name: string;
   type: ClientType;
   sector: string;
+  /** Physical address. Optional because the older sample records do not have one. */
+  address?: string;
+  /** Primary contact person. Optional because the older sample records do not have one. */
+  contact?: ClientContact;
   activePolicies: number;
   kyc: boolean;
   policiesOk: boolean;

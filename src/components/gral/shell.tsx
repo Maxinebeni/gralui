@@ -177,10 +177,13 @@ export function PageHeader({
 export function SlideOver({
   open,
   onClose,
+  wide = false,
   children,
 }: {
   open: boolean;
   onClose: () => void;
+  /** Wider panel for forms (720px instead of 620px). */
+  wide?: boolean;
   children: ReactNode;
 }) {
   if (!open) return null;
@@ -192,7 +195,12 @@ export function SlideOver({
         onClick={onClose}
         className="absolute inset-0 bg-foreground/25 backdrop-blur-[2px]"
       />
-      <div className="relative h-full w-full max-w-[620px] overflow-y-auto bg-card shadow-[var(--shadow-float)] duration-300 animate-in slide-in-from-right sm:rounded-l-3xl">
+      <div
+        className={cn(
+          "relative h-full w-full overflow-y-auto bg-card shadow-[var(--shadow-float)] duration-300 animate-in slide-in-from-right sm:rounded-l-3xl",
+          wide ? "max-w-[720px]" : "max-w-[620px]",
+        )}
+      >
         {children}
       </div>
     </div>

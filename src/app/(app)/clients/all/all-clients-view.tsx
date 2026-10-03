@@ -12,7 +12,7 @@ import {
 import { CardHeader, FloatCard, SegmentedTabs } from "@/components/gral/ui";
 
 export function AllClientsView() {
-  const { allClients, rows, tab, setTab, query, setQuery, emptyMessage } = useClientList();
+  const { allClients, rows, tab, setTab, query, setQuery, emptyMessage, reload } = useClientList();
   const { open, setOpen } = useOpenClient(allClients);
 
   return (
@@ -36,7 +36,7 @@ export function AllClientsView() {
         </div>
       </FloatCard>
 
-      <ClientFileSlideOver client={open} onClose={() => setOpen(null)} />
+      <ClientFileSlideOver client={open} onClose={() => setOpen(null)} onChanged={reload} />
     </>
   );
 }
