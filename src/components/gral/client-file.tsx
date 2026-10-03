@@ -54,7 +54,7 @@ export function ClientFile({
 
   return (
     <div>
-      <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
+      <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-6 sm:py-5">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-lg font-semibold tracking-tight">{client.name}</span>
@@ -107,7 +107,7 @@ export function ClientFile({
         </div>
       </div>
 
-      <div className="px-6 py-5">
+      <div className="px-4 py-5 sm:px-6">
         <SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />
 
         {tab === "KYC & Compliance" ? (
@@ -119,7 +119,7 @@ export function ClientFile({
               {client.documents.map((d) => (
                 <div
                   key={d.name}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2.5"
+                  className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-border px-3 py-2.5"
                 >
                   <span className="flex items-center gap-2 text-xs">
                     {d.filed ? (

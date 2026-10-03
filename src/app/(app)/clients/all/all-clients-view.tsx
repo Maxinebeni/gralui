@@ -21,7 +21,7 @@ export function AllClientsView() {
         title="All Client Records"
         subtitle={`${rows.length} ${rows.length === 1 ? "record" : "records"}`}
       />
-      <FloatCard className="mt-5">
+      <FloatCard className="mt-5 overflow-hidden">
         <CardHeader
           title="Client List"
           right={

@@ -57,15 +57,15 @@ export function useClientList() {
 
 export function ClientSearch({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
-    <label className="flex items-center gap-2 rounded-full bg-secondary px-3.5 py-1.5 focus-within:ring-2 focus-within:ring-sky/30">
-      <Search className="size-3.5 text-subtle" />
+    <label className="flex w-full items-center gap-2 rounded-full bg-secondary px-3.5 py-1.5 focus-within:ring-2 focus-within:ring-sky/30 sm:w-auto">
+      <Search className="size-3.5 shrink-0 text-subtle" />
       <input
         type="search"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder="Search name, ID, sector, manager…"
         aria-label="Search clients"
-        className="w-48 bg-transparent text-xs outline-none placeholder:text-subtle"
+        className="w-full min-w-0 bg-transparent text-xs outline-none placeholder:text-subtle sm:w-48"
       />
     </label>
   );
