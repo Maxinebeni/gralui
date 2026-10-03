@@ -13,6 +13,7 @@ export function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Already signed in — skip the login screen.
   useEffect(() => {
@@ -21,6 +22,7 @@ export function LoginForm() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError(null);
     if (!email.trim() || !password) {
       toast.error("Enter your work email and password.");
       return;
@@ -29,6 +31,14 @@ export function LoginForm() {
     try {
       await signIn(email.trim(), password);
       router.replace("/clients");
+    } catch (err) {
+      // Show the backend's message (wrong password, no role, server down) on the page.
+      const message =
+        err instanceof Error && err.message
+          ? err.message
+          : "Could not sign in right now. Please try again.";
+      setError(message);
+      toast.error(message);
     } finally {
       setSubmitting(false);
     }
@@ -53,7 +63,10 @@ export function LoginForm() {
               type="email"
               autoComplete="username"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                setError(null);
+              }}
               placeholder="name@gral.rw"
               className="mt-1.5 w-full rounded-xl border border-input bg-card px-3.5 py-2.5 text-sm outline-none focus:border-sky focus:ring-2 focus:ring-sky/30"
             />
@@ -67,10 +80,20 @@ export function LoginForm() {
               type="password"
               autoComplete="current-password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                setError(null);
+              }}
               placeholder="••••••••"
+              aria-invalid={error ? true : undefined}
+              aria-describedby={error ? "login-error" : undefined}
               className="mt-1.5 w-full rounded-xl border border-input bg-card px-3.5 py-2.5 text-sm outline-none focus:border-sky focus:ring-2 focus:ring-sky/30"
             />
+            {error && (
+              <p id="login-error" role="alert" className="mt-2 text-xs font-medium text-red-600">
+                {error}
+              </p>
+            )}
             <div className="mt-2 flex justify-end">
               <Link href="/forgot-password" className="text-xs font-medium text-primary hover:opacity-70">
                 Forgot password?

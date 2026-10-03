@@ -4,10 +4,11 @@
 // data + search + filter tabs, the search box, the table, and the profile
 // slide-over (whose open client lives in the URL as ?client=CLT-001).
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Search } from "lucide-react";
 import { ClientFile } from "@/components/gral/client-file";
+import { ClientFormPanel } from "@/components/gral/client-form";
 import { SlideOver } from "@/components/gral/shell";
 import { Chip, Person, TextLink } from "@/components/gral/ui";
 import { listClients } from "@/lib/api";
@@ -23,10 +24,12 @@ export function useClientList() {
   const [query, setQuery] = useState("");
   const [allClients, setAllClients] = useState<Client[]>([]);
   const [matches, setMatches] = useState<Client[]>([]);
+  // Bumped after a client is added or edited, so the lists load again.
+  const [version, setVersion] = useState(0);
 
   useEffect(() => {
     listClients().then(setAllClients);
-  }, []);
+  }, [version]);
 
   useEffect(() => {
     let cancelled = false;
@@ -36,7 +39,9 @@ export function useClientList() {
     return () => {
       cancelled = true;
     };
-  }, [query]);
+  }, [query, version]);
+
+  const reload = useCallback(() => setVersion((v) => v + 1), []);
 
   const rows = useMemo(() => {
     if (tab === "KYC Pending") return matches.filter((c) => !c.kyc);
@@ -47,7 +52,7 @@ export function useClientList() {
 
   const emptyMessage = `No clients match ${query ? `“${query}”` : "this filter"}.`;
 
-  return { allClients, rows, tab, setTab, query, setQuery, emptyMessage };
+  return { allClients, rows, tab, setTab, query, setQuery, emptyMessage, reload };
 }
 
 export function ClientSearch({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -179,10 +184,54 @@ export function useOpenClient(allClients: Client[]) {
   return { open, setOpen };
 }
 
-export function ClientFileSlideOver({ client, onClose }: { client: Client | null; onClose: () => void }) {
+/**
+ * The client file panel. The Edit button swaps the panel to the Edit Client
+ * form and back. After any save, the panel shows the latest details straight
+ * away, and onChanged lets the page reload its table.
+ */
+export function ClientFileSlideOver({
+  client,
+  onClose,
+  onChanged,
+}: {
+  client: Client | null;
+  onClose: () => void;
+  onChanged?: () => void;
+}) {
+  const [latest, setLatest] = useState<Client | null>(null);
+  const [editing, setEditing] = useState(false);
+  const shown = client && latest && latest.id === client.id ? latest : client;
+
+  function handleSaved(saved: Client) {
+    setLatest(saved);
+    onChanged?.();
+  }
+
+  function handleClose() {
+    setEditing(false);
+    onClose();
+  }
+
   return (
-    <SlideOver open={!!client} onClose={onClose}>
-      {client ? <ClientFile key={client.id} client={client} onClose={onClose} /> : null}
+   <SlideOver open={!!shown} onClose={handleClose}>
+      {shown ? (
+        editing ? (
+          <ClientFormPanel
+            key={`edit-${shown.id}`}
+            client={shown}
+            onClose={() => setEditing(false)}
+            onSaved={handleSaved}
+          />
+        ) : (
+          <ClientFile
+            key={shown.id}
+            client={shown}
+            onClose={handleClose}
+            onEdit={() => setEditing(true)}
+            onChanged={handleSaved}
+          />
+        )
+      ) : null}
     </SlideOver>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, BadgeCheck, Building2, FileWarning, Plus, Users } from "lucide-react";
 import { toast } from "sonner";
@@ -14,6 +14,7 @@ import {
   useClientList,
   useOpenClient,
 } from "@/components/gral/client-list";
+import { ClientFormSlideOver, canManageClients } from "@/components/gral/client-form";
 import {
   CardHeader,
   ChartCard,
@@ -29,20 +30,29 @@ import {
   StatTile,
 } from "@/components/gral/ui";
 import { getPoliciesByInsurer } from "@/lib/api";
+import { useCurrentUser } from "@/lib/auth-context";
 import type { ClientType, InsurerSummary } from "@/lib/types";
 
-const CLIENT_TYPES: ClientType[] = ["Corporate", "State Enterprise", "Financial Institution", "SME"];
+const CLIENT_TYPES: ClientType[] = ["Corporate", "State Enterprise", "NGO", "Financial Institution", "SME"];
 /** The dashboard shows a compact list; the full list is on /clients/all. */
 const PREVIEW_ROWS = 4;
 
 export function ClientsView() {
-  const { allClients, rows, tab, setTab, query, setQuery, emptyMessage } = useClientList();
+  const { allClients, rows, tab, setTab, query, setQuery, emptyMessage, reload } = useClientList();
   const { open, setOpen } = useOpenClient(allClients);
+  const { user } = useCurrentUser();
   const [insurers, setInsurers] = useState<InsurerSummary[]>([]);
+  const [adding, setAdding] = useState(false);
 
   useEffect(() => {
     getPoliciesByInsurer().then(setInsurers);
   }, []);
+
+  // Relationship managers already assigned to clients, for the form's dropdown.
+  const managers = useMemo(
+    () => Array.from(new Set(allClients.map((c) => c.manager).filter(Boolean))).sort(),
+    [allClients],
+  );
 
   const kycComplete = allClients.filter((c) => c.kyc).length;
   const flags = allClients.filter((c) => c.nonCompliant).length;
@@ -61,12 +71,11 @@ export function ClientsView() {
         title="Client Records"
         extraPills={<FilterPill label="Sector" value="All sectors" />}
         action={
-          <NavyButton
-            className="px-4 py-2 text-sm"
-            onClick={() => toast.success("New client record started.")}
-          >
-            <Plus className="size-4" /> Add Client
-          </NavyButton>
+          canManageClients(user.role) ? (
+            <NavyButton className="px-4 py-2 text-sm" onClick={() => setAdding(true)}>
+              <Plus className="size-4" /> Add Client
+            </NavyButton>
+          ) : undefined
         }
       />
 
@@ -194,7 +203,18 @@ export function ClientsView() {
         </div>
       </div>
 
-      <ClientFileSlideOver client={open} onClose={() => setOpen(null)} />
+      
+     <ClientFileSlideOver client={open} onClose={() => setOpen(null)} onChanged={reload} />
+
+      <ClientFormSlideOver
+        open={adding}
+        onClose={() => setAdding(false)}
+        managers={managers}
+        onSaved={(saved) => {
+          reload();
+          setOpen(saved);
+        }}
+      />
     </>
   );
 }
