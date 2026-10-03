@@ -203,8 +203,7 @@ export function ClientsView() {
         </div>
       </div>
 
-      
-     <ClientFileSlideOver client={open} onClose={() => setOpen(null)} onChanged={reload} />
+      <ClientFileSlideOver client={open} onClose={() => setOpen(null)} onChanged={reload} />
 
       <ClientFormSlideOver
         open={adding}

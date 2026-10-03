@@ -61,7 +61,8 @@ export function ClientFile({
             {client.nonCompliant ? <Chip tone="danger">Non-Compliant</Chip> : <Chip tone="success">Compliant</Chip>}
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            {client.id} · {client.type} · {client.sector} · {client.activePolicies} active policies
+            {client.id} · {client.type} · {client.sector} · {client.activePolicies} active{" "}
+            {client.activePolicies === 1 ? "policy" : "policies"}
           </p>
           {client.address ? (
             <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">

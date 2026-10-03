@@ -105,7 +105,7 @@ export function ClientFormSlideOver({
   onSaved: (saved: Client) => void;
 }) {
   return (
-   <SlideOver open={open} onClose={onClose} wide>
+    <SlideOver open={open} onClose={onClose} wide>
       {open ? (
         <ClientFormPanel
           key={client?.id ?? "new"}
@@ -371,7 +371,7 @@ export function Field({
       </label>
       {children}
       {error ? (
-        <p id={`${id}-error`} role="alert" className="mt-1.5 text-xs font-medium text-red-600">
+        <p id={`${id}-error`} role="alert" className="mt-1.5 text-xs font-medium text-danger">
           {error}
         </p>
       ) : null}

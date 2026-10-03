@@ -213,7 +213,7 @@ export function ClientFileSlideOver({
   }
 
   return (
-   <SlideOver open={!!shown} onClose={handleClose}>
+    <SlideOver open={!!shown} onClose={handleClose}>
       {shown ? (
         editing ? (
           <ClientFormPanel

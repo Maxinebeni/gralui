@@ -90,7 +90,7 @@ export function LoginForm() {
               className="mt-1.5 w-full rounded-xl border border-input bg-card px-3.5 py-2.5 text-sm outline-none focus:border-sky focus:ring-2 focus:ring-sky/30"
             />
             {error && (
-              <p id="login-error" role="alert" className="mt-2 text-xs font-medium text-red-600">
+              <p id="login-error" role="alert" className="mt-2 text-xs font-medium text-danger">
                 {error}
               </p>
             )}
