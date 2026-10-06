@@ -9,14 +9,30 @@
 // STATUS: signIn is connected to the real backend. Everything else still
 // uses mock data until the backend has the matching endpoints.
 
-import { CLIENTS, CLIENT_CLAIMS, POLICIES_BY_INSURER } from "./mock-data";
+import {
+  CLAIM_MONTHLY,
+  CLAIM_STEPS,
+  CLIENTS,
+  CLIENT_CLAIMS,
+  POLICIES_BY_INSURER,
+  RECENT_ACTIVITY,
+  RENEWAL_CASES,
+  RENEWAL_MONTHLY,
+} from "./mock-data";
+import { completionBlocker, currentMilestone, todayIso } from "./renewals";
 import type {
+  ActivityItem,
+  ClaimMonth,
+  ClaimStep,
   Client,
   ClientClaim,
   ClientContact,
   ClientType,
   InsurerSummary,
   Policy,
+  RenewalCase,
+  RenewalMonth,
+  RenewalQuote,
   Role,
   SessionUser,
 } from "./types";
@@ -190,7 +206,111 @@ export async function getPoliciesByInsurer(): Promise<InsurerSummary[]> {
   return POLICIES_BY_INSURER;
 }
 
+/* --------------------------------- Renewals ---------------------------------- */
+// Mock versions: changes are kept in memory until the page is refreshed.
+// Backend: REN-01 to REN-06 (Toochukwu). Rules the backend must also enforce:
+// only the current milestone can be completed, quotes need a recommendation,
+// and placement needs written client acceptance.
+
+function findRenewal(id: string): RenewalCase {
+  const found = RENEWAL_CASES.find((r) => r.id === id);
+  if (!found) throw new Error("This renewal could not be found.");
+  return found;
+}
+
+function saveRenewal(updated: RenewalCase): RenewalCase {
+  const index = RENEWAL_CASES.findIndex((r) => r.id === updated.id);
+  RENEWAL_CASES[index] = updated;
+  return updated;
+}
+
+export async function listRenewals(): Promise<RenewalCase[]> {
+  return [...RENEWAL_CASES];
+}
+
+export async function getRenewalMonthly(): Promise<RenewalMonth[]> {
+  return RENEWAL_MONTHLY;
+}
+
+/** Complete the case's current milestone with a note and optional evidence. */
+export async function completeRenewalMilestone(
+  id: string,
+  input: { note: string; evidence?: string; completedBy: string },
+): Promise<RenewalCase> {
+  const c = findRenewal(id);
+  const blocker = completionBlocker(c);
+  if (blocker) throw new Error(blocker);
+  const m = currentMilestone(c)!;
+  return saveRenewal({
+    ...c,
+    completed: [
+      ...c.completed,
+      { code: m.code, completedAt: todayIso(), completedBy: input.completedBy, note: input.note, evidence: input.evidence },
+    ],
+  });
+}
+
+export async function addRenewalQuote(
+  id: string,
+  input: Omit<RenewalQuote, "id" | "recommended">,
+): Promise<RenewalCase> {
+  const c = findRenewal(id);
+  const quote: RenewalQuote = { ...input, id: `Q${c.quotes.length + 1}`, recommended: false };
+  return saveRenewal({ ...c, quotes: [...c.quotes, quote] });
+}
+
+export async function recommendRenewalQuote(id: string, quoteId: string): Promise<RenewalCase> {
+  const c = findRenewal(id);
+  if (c.acceptance) throw new Error("The client has already accepted an option.");
+  return saveRenewal({ ...c, quotes: c.quotes.map((q) => ({ ...q, recommended: q.id === quoteId })) });
+}
+
+export async function recordRenewalAcceptance(
+  id: string,
+  input: { quoteId: string; evidence: string; recordedBy: string },
+): Promise<RenewalCase> {
+  const c = findRenewal(id);
+  if (!c.quotes.some((q) => q.id === input.quoteId)) throw new Error("Choose one of the quotes.");
+  return saveRenewal({ ...c, acceptance: { ...input, acceptedAt: todayIso() } });
+}
+
+/* --------------------------------- Overview ---------------------------------- */
+
+export async function listClaimsSummary(): Promise<ClientClaim[]> {
+  return CLIENT_CLAIMS;
+}
+
+export async function getClaimSteps(): Promise<ClaimStep[]> {
+  return CLAIM_STEPS;
+}
+
+export async function getClaimMonthly(): Promise<ClaimMonth[]> {
+  return CLAIM_MONTHLY;
+}
+
+export async function listRecentActivity(): Promise<ActivityItem[]> {
+  return RECENT_ACTIVITY;
+}
+
 /* ------------------------------- Authentication ------------------------------ */
+
+/**
+ * Set a new password from a reset email link (backend: POST
+ * /api/v1/auth/password-reset/confirm, needs the CSRF header).
+ * Mock version: accepts any token. Rachel connects this to the backend.
+ */
+export async function confirmPasswordReset(_token: string, _password: string): Promise<void> {
+  await new Promise((r) => setTimeout(r, 400));
+}
+
+/**
+ * Set a first password from an invitation email link (backend: POST
+ * /api/v1/auth/invitations/accept, needs the CSRF header).
+ * Mock version: accepts any token. Rachel connects this to the backend.
+ */
+export async function acceptInvitation(_token: string, _password: string): Promise<void> {
+  await new Promise((r) => setTimeout(r, 400));
+}
 
 /**
  * Mock password-reset request. The real version will POST the email to the

@@ -79,6 +79,71 @@ export type ClientClaim = {
 
 export type InsurerSummary = { insurer: string; policies: number; premium: number };
 
+/* --------------------------------- Renewals ---------------------------------- */
+// Proposed contract for the renewal API (backlog REN-01 to REN-06). Agree the
+// final field names with the backend team (PLN-03) before connecting.
+
+/** GRAL's renewal milestones from the SOP, in order (see lib/renewals.ts). */
+export type RenewalMilestoneCode =
+  | "BRIEF"
+  | "VISIT"
+  | "NOTICE"
+  | "RFQ"
+  | "QUOTES"
+  | "APPROVAL"
+  | "ACCEPTANCE"
+  | "SCHEDULE"
+  | "DELIVERY"
+  | "COMPLETION";
+
+/** One milestone that has been completed on a renewal case. */
+export type CompletedMilestone = {
+  code: RenewalMilestoneCode;
+  completedAt: string; // ISO date
+  completedBy: string;
+  note: string;
+  evidence?: string; // document name or reference
+};
+
+export type RenewalQuote = {
+  id: string;
+  insurer: string;
+  premium: number;
+  terms: string;
+  recommended: boolean;
+};
+
+/** Written client acceptance — required before placement. */
+export type RenewalAcceptance = {
+  quoteId: string;
+  acceptedAt: string; // ISO date
+  recordedBy: string;
+  evidence: string;
+};
+
+export type RenewalCase = {
+  id: string; // renewal case reference, e.g. REN-2026-001
+  policyId: string;
+  clientId: string;
+  client: string;
+  classOfInsurance: string;
+  insurer: string;
+  premium: number;
+  expiryDate: string; // ISO date the current cover ends
+  owner: string; // Accounts Executive responsible
+  completed: CompletedMilestone[];
+  quotes: RenewalQuote[];
+  acceptance?: RenewalAcceptance;
+};
+
+export type RenewalMonth = { month: string; premium: number; policies: number };
+
+/* ------------------------------ Overview extras ------------------------------ */
+
+export type ClaimStep = { n: number; name: string; sla: string };
+export type ClaimMonth = { month: string; amount: number; count: number };
+export type ActivityItem = { who: string; what: string; when: string };
+
 export type SessionUser = {
   email: string;
   name: string;

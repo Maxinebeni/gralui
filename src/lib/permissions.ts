@@ -34,6 +34,17 @@ export function canAccessPath(role: Role, pathname: string) {
   return item ? item.roles.includes(role) : true;
 }
 
+/**
+ * Who can update renewal cases (complete milestones, add quotes, record
+ * acceptance). PROVISIONAL — from the design; replace with the backend's
+ * permission list once PLN-02 is agreed with GRAL.
+ */
+export function renewalPermissions(role: Role) {
+  return {
+    canUpdateRenewals: role === "Commercial Director" || role === "DMD" || role === "MD",
+  };
+}
+
 /** Fine-grained permissions used inside the client screens (from the design). */
 export function clientPermissions(role: Role) {
   return {
