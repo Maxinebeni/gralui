@@ -1,7 +1,18 @@
 // Sample data copied from the Lovable design. Front end only — this is
 // replaced by real API calls in src/lib/api.ts once the backend is merged.
 
-import type { Client, ClientClaim, InsurerSummary } from "./types";
+import { RENEWAL_MILESTONES, addDays, todayIso } from "./renewals";
+import type {
+  ActivityItem,
+  ClaimMonth,
+  ClaimStep,
+  Client,
+  ClientClaim,
+  CompletedMilestone,
+  InsurerSummary,
+  RenewalCase,
+  RenewalMonth,
+} from "./types";
 
 export const CLIENTS: Client[] = [
   {
@@ -217,4 +228,168 @@ export const POLICIES_BY_INSURER: InsurerSummary[] = [
   { insurer: "UAP", policies: 7, premium: 31 },
   { insurer: "SORAS", policies: 6, premium: 42 },
   { insurer: "CORAR", policies: 4, premium: 17 },
+];
+
+/* --------------------------------- Renewals ---------------------------------- */
+// Expiry dates are set relative to today so the demo always shows one expired,
+// one overdue, one due soon and the rest on track.
+
+const EVIDENCE: Partial<Record<CompletedMilestone["code"], string>> = {
+  VISIT: "Visit report.pdf",
+  NOTICE: "Renewal notice letter.pdf",
+  RFQ: "RFQ email to insurers.pdf",
+  QUOTES: "Quote comparison.xlsx",
+  APPROVAL: "Approval memo.pdf",
+  ACCEPTANCE: "Client acceptance letter.pdf",
+};
+
+function completedSteps(expiry: string, count: number, by: string): CompletedMilestone[] {
+  return RENEWAL_MILESTONES.slice(0, count).map((m) => ({
+    code: m.code,
+    completedAt: addDays(expiry, m.offset - 2),
+    completedBy: by,
+    note: m.output,
+    evidence: EVIDENCE[m.code],
+  }));
+}
+
+function renewal(
+  seq: number,
+  daysToExpiry: number,
+  done: number,
+  data: Omit<RenewalCase, "id" | "expiryDate" | "completed">,
+): RenewalCase {
+  const expiryDate = addDays(todayIso(), daysToExpiry);
+  return {
+    id: `REN-2026-${String(seq).padStart(3, "0")}`,
+    expiryDate,
+    completed: completedSteps(expiryDate, done, data.owner),
+    ...data,
+  };
+}
+
+export const RENEWAL_CASES: RenewalCase[] = [
+  renewal(1, -3, 7, {
+    policyId: "POL-2025-412",
+    clientId: "CLT-001",
+    client: "Kigali Steel Industries Ltd",
+    classOfInsurance: "Industrial All Risk",
+    insurer: "SONARWA",
+    premium: 31200000,
+    owner: "Jean-Paul Habimana",
+    quotes: [
+      { id: "Q1", insurer: "SONARWA", premium: 31200000, terms: "Same cover, deductible RWF 5m", recommended: true },
+      { id: "Q2", insurer: "UAP", premium: 33900000, terms: "Same cover, deductible RWF 3m", recommended: false },
+    ],
+    acceptance: { quoteId: "Q1", acceptedAt: addDays(todayIso(), -40), recordedBy: "Jean-Paul Habimana", evidence: "Client acceptance letter.pdf" },
+  }),
+  renewal(2, 9, 6, {
+    policyId: "POL-2025-107",
+    clientId: "CLT-004",
+    client: "Bank of Kigali",
+    classOfInsurance: "Professional Indemnity",
+    insurer: "SORAS",
+    premium: 22100000,
+    owner: "Isabelle Mukamana",
+    quotes: [
+      { id: "Q1", insurer: "SORAS", premium: 22100000, terms: "Limit RWF 2.4bn, same exclusions", recommended: true },
+      { id: "Q2", insurer: "RADIANT", premium: 23400000, terms: "Limit RWF 2.4bn, cyber extension", recommended: false },
+    ],
+  }),
+  renewal(3, 25, 7, {
+    policyId: "POL-2025-299",
+    clientId: "CLT-002",
+    client: "Rwanda Energy Group",
+    classOfInsurance: "Motor Fleet",
+    insurer: "RADIANT",
+    premium: 8700000,
+    owner: "Marie Claire Uwimana",
+    quotes: [
+      { id: "Q1", insurer: "RADIANT", premium: 8700000, terms: "42 vehicles, comprehensive", recommended: true },
+    ],
+    acceptance: { quoteId: "Q1", acceptedAt: addDays(todayIso(), -9), recordedBy: "Marie Claire Uwimana", evidence: "Client acceptance letter.pdf" },
+  }),
+  renewal(4, 45, 5, {
+    policyId: "POL-2025-341",
+    clientId: "CLT-002",
+    client: "Rwanda Energy Group",
+    classOfInsurance: "Public Liability",
+    insurer: "CORAR",
+    premium: 3600000,
+    owner: "Marie Claire Uwimana",
+    quotes: [
+      { id: "Q1", insurer: "CORAR", premium: 3600000, terms: "Limit RWF 500m", recommended: true },
+      { id: "Q2", insurer: "SONARWA", premium: 3450000, terms: "Limit RWF 400m", recommended: false },
+    ],
+  }),
+  renewal(5, 72, 4, {
+    policyId: "POL-2025-188",
+    clientId: "CLT-003",
+    client: "Bralirwa PLC",
+    classOfInsurance: "Property All Risk",
+    insurer: "UAP",
+    premium: 14300000,
+    owner: "Eric Niyonzima",
+    quotes: [{ id: "Q1", insurer: "UAP", premium: 14900000, terms: "Sum insured RWF 1.1bn", recommended: false }],
+  }),
+  renewal(6, 113, 1, {
+    policyId: "POL-2025-455",
+    clientId: "CLT-005",
+    client: "Horizon Logistics Rwanda",
+    classOfInsurance: "Goods in Transit",
+    insurer: "RADIANT",
+    premium: 4100000,
+    owner: "Eric Niyonzima",
+    quotes: [],
+  }),
+];
+
+export const RENEWAL_MONTHLY: RenewalMonth[] = [
+  { month: "Sep", premium: 31, policies: 1 },
+  { month: "Oct", premium: 31, policies: 2 },
+  { month: "Nov", premium: 4, policies: 1 },
+  { month: "Dec", premium: 14, policies: 1 },
+  { month: "Jan", premium: 4, policies: 1 },
+  { month: "Feb", premium: 12, policies: 3 },
+  { month: "Mar", premium: 26, policies: 2 },
+  { month: "Apr", premium: 9, policies: 2 },
+  { month: "May", premium: 18, policies: 3 },
+  { month: "Jun", premium: 7, policies: 1 },
+  { month: "Jul", premium: 22, policies: 4 },
+  { month: "Aug", premium: 16, policies: 2 },
+];
+
+/* --------------------------------- Overview ---------------------------------- */
+
+export const CLAIM_STEPS: ClaimStep[] = [
+  { n: 1, name: "FNOL Received", sla: "24 hrs" },
+  { n: 2, name: "Documentation", sla: "3 days" },
+  { n: 3, name: "Assessment", sla: "2 days" },
+  { n: 4, name: "Negotiation", sla: "ongoing" },
+  { n: 5, name: "Adjudication", sla: "2 days" },
+  { n: 6, name: "Settlement", sla: "5 days" },
+  { n: 7, name: "Closed", sla: "—" },
+];
+
+export const CLAIM_MONTHLY: ClaimMonth[] = [
+  { month: "Oct", amount: 128, count: 14 },
+  { month: "Nov", amount: 96, count: 11 },
+  { month: "Dec", amount: 174, count: 19 },
+  { month: "Jan", amount: 142, count: 16 },
+  { month: "Feb", amount: 88, count: 9 },
+  { month: "Mar", amount: 205, count: 22 },
+  { month: "Apr", amount: 163, count: 18 },
+  { month: "May", amount: 121, count: 13 },
+  { month: "Jun", amount: 189, count: 21 },
+  { month: "Jul", amount: 154, count: 17 },
+  { month: "Aug", amount: 211, count: 24 },
+  { month: "Sep", amount: 178, count: 20 },
+];
+
+export const RECENT_ACTIVITY: ActivityItem[] = [
+  { who: "Jean-Paul Habimana", what: "advanced CLM-2025-071 to Assessment", when: "2h ago" },
+  { who: "Marie Claire Uwimana", what: "uploaded the police report for CLM-2025-064", when: "4h ago" },
+  { who: "Eric Niyonzima", what: "added a UAP quote on REN-2026-005", when: "Yesterday" },
+  { who: "Isabelle Mukamana", what: "flagged Bank of Kigali as non-compliant", when: "Yesterday" },
+  { who: "Marie Claire Uwimana", what: "recorded client acceptance on REN-2026-003", when: "2 days ago" },
 ];
