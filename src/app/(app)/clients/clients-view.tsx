@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, BadgeCheck, Building2, FileWarning, Plus, Users } from "lucide-react";
 import { toast } from "sonner";
@@ -48,11 +48,8 @@ export function ClientsView() {
     getPoliciesByInsurer().then(setInsurers);
   }, []);
 
-  // Relationship managers already assigned to clients, for the form's dropdown.
-  const managers = useMemo(
-    () => Array.from(new Set(allClients.map((c) => c.manager).filter(Boolean))).sort(),
-    [allClients],
-  );
+  // The Add Client form loads the manager list from the backend by itself,
+  // so this page no longer builds one.
 
   const kycComplete = allClients.filter((c) => c.kyc).length;
   const flags = allClients.filter((c) => c.nonCompliant).length;
@@ -208,7 +205,6 @@ export function ClientsView() {
       <ClientFormSlideOver
         open={adding}
         onClose={() => setAdding(false)}
-        managers={managers}
         onSaved={(saved) => {
           reload();
           setOpen(saved);

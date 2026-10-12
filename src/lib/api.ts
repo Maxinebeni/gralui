@@ -1,14 +1,12 @@
 // Data access for the screens. Every screen goes through these functions,
 // never through mock-data.ts directly.
 //
-// BACKEND HAND-OFF: when the Spring Boot API is ready, replace the body of
-// each function with a fetch() to the matching endpoint. Requests go to
-// /api/..., which next.config.ts forwards to the backend. The screens will
-// not need to change as long as the response shapes match src/lib/types.ts.
+// Requests go to /api/..., which src/app/api/[...path]/route.ts forwards to
+// the backend. The screens will not need to change as long as the response
+// shapes match src/lib/types.ts.
 //
-// STATUS: authentication (login, who am I, logout, invitations and password
-// reset) is connected to the real backend. Everything else still uses mock
-// data until it is connected.
+// STATUS: authentication and clients are connected to the real backend.
+// Policies, claims, renewals and the overview still use mock data.
 
 import {
   CLAIM_MONTHLY,
@@ -38,28 +36,195 @@ import type {
   SessionUser,
 } from "./types";
 
-// Empty means "same address as the frontend". next.config.ts forwards /api to the backend.
+// Empty means "same address as the frontend". The /api route forwards to the backend.
 const API_URL = "";
 
 /* ---------------------------------- Clients ---------------------------------- */
+// Connected to the backend: /api/v1/clients. The screens keep using the
+// client reference (e.g. CLT-001) as the ID; the backend UUID and version are
+// kept on each client for saving.
 
-/** Search across name, ID, sector, type and account manager. */
+type BackendClientType = "CORPORATE" | "STATE_ENTERPRISE" | "NGO" | "FINANCIAL_INSTITUTION" | "SME";
+
+const TYPE_TO_BACKEND: Record<ClientType, BackendClientType> = {
+  Corporate: "CORPORATE",
+  "State Enterprise": "STATE_ENTERPRISE",
+  NGO: "NGO",
+  "Financial Institution": "FINANCIAL_INSTITUTION",
+  SME: "SME",
+};
+
+const TYPE_FROM_BACKEND: Record<BackendClientType, ClientType> = {
+  CORPORATE: "Corporate",
+  STATE_ENTERPRISE: "State Enterprise",
+  NGO: "NGO",
+  FINANCIAL_INSTITUTION: "Financial Institution",
+  SME: "SME",
+};
+
+type BackendContact = { name: string; jobTitle: string; email: string; phone: string };
+
+type ClientView = {
+  id: string;
+  reference: string;
+  profile: {
+    registeredName: string;
+    type: BackendClientType;
+    sector: string;
+    physicalAddress: string;
+    remarks?: string;
+  };
+  primaryContact?: BackendContact;
+  managerId?: string;
+  restricted: boolean;
+  version: number;
+};
+
+type ClientSummary = {
+  id: string;
+  reference: string;
+  registeredName: string;
+  type: BackendClientType;
+  managerId?: string;
+  restricted: boolean;
+  version: number;
+};
+
+type Page<T> = { items: T[]; page: number; size: number; totalElements: number; totalPages: number };
+
+type ManagerChoice = { id: string; fullName: string };
+
+/** Backend clients already loaded, by reference, so saving can find the UUID and version. */
+const CLIENT_CACHE = new Map<string, Client>();
+
+/** Policies are not on the backend yet, so they are kept in memory per client until refresh. */
+const LOCAL_POLICIES = new Map<string, Policy[]>();
+
+/** Eligible account managers from the backend, loaded once. */
+let MANAGERS: ManagerChoice[] | null = null;
+
+async function loadManagers(): Promise<ManagerChoice[]> {
+  if (MANAGERS) return MANAGERS;
+  try {
+    const res = await apiFetch("/api/v1/clients/managers?size=100");
+    if (!res.ok) return [];
+    MANAGERS = ((await res.json()) as Page<ManagerChoice>).items ?? [];
+    return MANAGERS;
+  } catch {
+    return [];
+  }
+}
+
+function managerName(id: string | undefined, managers: ManagerChoice[]): string {
+  if (!id) return "Unassigned";
+  return managers.find((m) => m.id === id)?.fullName ?? "Account manager";
+}
+
+/** Turns a backend error into a message the user can act on. */
+async function problemMessage(res: Response, fallback: string): Promise<string> {
+  const problem = await readProblem(res);
+  if (res.status === 401) return "Your session has ended. Please sign in again.";
+  if (res.status === 403) return "You do not have permission to do this.";
+  if (res.status === 404) return "This client could not be found.";
+  if (problem.code === "STALE_VERSION") {
+    return "Someone else changed this client. Close it and open it again to see the latest details.";
+  }
+  if (problem.code === "DUPLICATE_REVIEW_REQUIRED") {
+    return "A client with the same name, email or phone number already exists.";
+  }
+  if (res.status === 400 && problem.fields?.length) {
+    return `Please check these fields: ${problem.fields.join(", ")}.`;
+  }
+  return fallback;
+}
+
+/** The backend only accepts +250 followed by 9 digits. */
+function toBackendPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("250")) return `+${digits}`;
+  if (digits.length === 10 && digits.startsWith("0")) return `+250${digits.slice(1)}`;
+  if (digits.length === 9) return `+250${digits}`;
+  throw new Error("Enter a Rwandan phone number, for example +250 788 123 456.");
+}
+
+function toClient(v: ClientView, managers: ManagerChoice[]): Client {
+  const policies = LOCAL_POLICIES.get(v.reference) ?? [];
+  const active = policies.filter((p) => p.status === "Active" || p.status === "In Renewal").length;
+  const client: Client = {
+    id: v.reference,
+    uuid: v.id,
+    version: v.version,
+    managerId: v.managerId,
+    name: v.profile.registeredName,
+    type: TYPE_FROM_BACKEND[v.profile.type] ?? "Corporate",
+    sector: v.profile.sector,
+    address: v.profile.physicalAddress,
+    remarks: v.profile.remarks,
+    contact: v.primaryContact
+      ? {
+          name: v.primaryContact.name,
+          title: v.primaryContact.jobTitle,
+          email: v.primaryContact.email,
+          phone: v.primaryContact.phone,
+        }
+      : undefined,
+    manager: managerName(v.managerId, managers),
+    // Not tracked by the backend yet.
+    activePolicies: active,
+    kyc: false,
+    policiesOk: active > 0,
+    claimsOk: false,
+    correspondenceOk: false,
+    docsFiled: 0,
+    docsTotal: 4,
+    nonCompliant: false,
+    documents: [],
+    policies,
+    correspondence: [],
+  };
+  CLIENT_CACHE.set(client.id, client);
+  return client;
+}
+
+async function fetchClientView(uuid: string): Promise<ClientView> {
+  const res = await apiFetch(`/api/v1/clients/${uuid}`);
+  if (!res.ok) throw new Error(await problemMessage(res, "Could not load this client."));
+  return (await res.json()) as ClientView;
+}
+
+/** Search clients on the backend (name, reference and more). */
 export async function listClients(query = ""): Promise<Client[]> {
-  const q = query.trim().toLowerCase();
-  // Return a copy so React notices when a client has been added or edited.
-  if (!q) return [...CLIENTS];
-  return CLIENTS.filter((c) =>
-    [c.name, c.id, c.sector, c.type, c.manager].some((f) => f.toLowerCase().includes(q)),
-  );
+  try {
+    const params = new URLSearchParams({ size: "100", sort: "name" });
+    if (query.trim()) params.set("q", query.trim());
+    const res = await apiFetch(`/api/v1/clients?${params}`);
+    if (!res.ok) throw new Error(await problemMessage(res, "Could not load clients."));
+    const page = (await res.json()) as Page<ClientSummary>;
+    const managers = await loadManagers();
+
+    // The list only has summaries, so load each full record. Unchanged ones come from the cache.
+    return await Promise.all(
+      page.items.map(async (s) => {
+        const cached = CLIENT_CACHE.get(s.reference);
+        if (cached && cached.uuid === s.id && cached.version === s.version) return cached;
+        return toClient(await fetchClientView(s.id), managers);
+      }),
+    );
+  } catch (err) {
+    console.error(err);
+    return [];
+  }
 }
 
 export async function getClient(id: string): Promise<Client | null> {
-  return CLIENTS.find((c) => c.id === id) ?? null;
+  const cached = CLIENT_CACHE.get(id);
+  if (cached?.uuid) return toClient(await fetchClientView(cached.uuid), await loadManagers());
+  return (await listClients(id)).find((c) => c.id === id) ?? null;
 }
 
-/** GRAL relationship managers already assigned to clients, for dropdowns. */
+/** Account manager names for the dropdown, from the backend. */
 export async function listManagers(): Promise<string[]> {
-  return Array.from(new Set(CLIENTS.map((c) => c.manager).filter(Boolean))).sort();
+  return (await loadManagers()).map((m) => m.fullName).sort();
 }
 
 /** What the Add Client and Edit Client forms send. */
@@ -72,77 +237,106 @@ export type ClientInput = {
   manager: string;
 };
 
-/** Next free ID in the CLT-001 style. The backend will generate this itself later. */
-function nextClientId(): string {
-  const highest = CLIENTS.reduce((max, c) => {
-    const n = Number(c.id.replace(/\D/g, ""));
-    return Number.isFinite(n) && n > max ? n : max;
-  }, 0);
-  return `CLT-${String(highest + 1).padStart(3, "0")}`;
+function toProfile(input: ClientInput) {
+  return {
+    registeredName: input.name,
+    type: TYPE_TO_BACKEND[input.type],
+    sector: input.sector,
+    physicalAddress: input.address,
+  };
 }
+
+function toContact(contact: ClientContact): BackendContact {
+  return {
+    name: contact.name,
+    jobTitle: contact.title,
+    email: contact.email,
+    phone: toBackendPhone(contact.phone),
+  };
+}
+
+async function managerIdFor(name: string): Promise<string> {
+  const id = (await loadManagers()).find((m) => m.fullName === name)?.id;
+  if (!id) throw new Error("Choose an account manager from the list.");
+  return id;
+}
+
+/** Add a new client: POST /api/v1/clients. */
+export async function createClient(input: ClientInput): Promise<Client> {
+  const body = {
+    // Lets the backend ignore an accidental double submit.
+    commandId: crypto.randomUUID(),
+    profile: toProfile(input),
+    primaryContact: toContact(input.contact),
+    managerId: await managerIdFor(input.manager),
+  };
+  const res = await apiFetch("/api/v1/clients", { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(await problemMessage(res, "Could not save the client. Please try again."));
+  return toClient((await res.json()) as ClientView, await loadManagers());
+}
+
+/**
+ * Update a client. The backend uses three separate steps: profile, primary
+ * contact and account manager. Each step needs the latest version number.
+ */
+export async function updateClient(id: string, input: ClientInput): Promise<Client> {
+  const current = CLIENT_CACHE.get(id);
+  if (!current?.uuid || current.version === undefined) {
+    throw new Error("This client could not be found. Close it and open it again.");
+  }
+  const uuid = current.uuid;
+  let version = current.version;
+
+  // 1. Company details.
+  let res = await apiFetch(`/api/v1/clients/${uuid}`, {
+    method: "PUT",
+    body: JSON.stringify({ version, profile: { ...toProfile(input), remarks: current.remarks } }),
+  });
+  if (!res.ok) throw new Error(await problemMessage(res, "Could not save the client details."));
+  let view = (await res.json()) as ClientView;
+  version = view.version;
+
+  // 2. Primary contact person.
+  res = await apiFetch(`/api/v1/clients/${uuid}/primary-contact`, {
+    method: "PUT",
+    body: JSON.stringify({ version, primaryContact: toContact(input.contact) }),
+  });
+  if (!res.ok) throw new Error(await problemMessage(res, "Could not save the contact person."));
+  view = (await res.json()) as ClientView;
+  version = view.version;
+
+  // 3. Account manager, only if it changed.
+  const managerId = await managerIdFor(input.manager);
+  if (managerId !== view.managerId) {
+    res = await apiFetch(`/api/v1/clients/${uuid}/reassign`, {
+      method: "POST",
+      body: JSON.stringify({ version, managerId, reason: "Account manager changed from the client form." }),
+    });
+    if (!res.ok) throw new Error(await problemMessage(res, "Could not change the account manager."));
+    view = (await res.json()) as ClientView;
+  }
+
+  return toClient(view, await loadManagers());
+}
+
+/* --------------------------------- Policies ---------------------------------- */
+// Not on the backend yet. Policies for backend clients are kept in memory
+// until the page is refreshed; sample clients keep using mock-data.ts.
 
 function sameText(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
-/**
- * Add a new client (requirements doc, section 4). The file starts empty:
- * no documents, no policies, and KYC Pending until the Risk & Compliance
- * Manager marks Section A complete.
- * Mock version: saves in memory until the page is refreshed.
- */
-export async function createClient(input: ClientInput): Promise<Client> {
-  if (CLIENTS.some((c) => sameText(c.name, input.name))) {
-    throw new Error("A client with this name already exists.");
-  }
-
-  const client: Client = {
-    id: nextClientId(),
-    name: input.name,
-    type: input.type,
-    sector: input.sector,
-    address: input.address,
-    contact: input.contact,
-    manager: input.manager,
-    activePolicies: 0,
-    kyc: false,
-    policiesOk: false,
-    claimsOk: false,
-    correspondenceOk: false,
-    docsFiled: 0,
-    docsTotal: 4,
-    nonCompliant: false,
-    documents: [],
-    policies: [],
-    correspondence: [],
-  };
-
-  CLIENTS.unshift(client);
-  return client;
-}
-
-/** Update a client's details. Mock version: saves in memory until the page is refreshed. */
-export async function updateClient(id: string, input: ClientInput): Promise<Client> {
-  const index = CLIENTS.findIndex((c) => c.id === id);
-  if (index === -1) throw new Error("This client could not be found.");
-
-  if (CLIENTS.some((c) => c.id !== id && sameText(c.name, input.name))) {
-    throw new Error("Another client already has this name.");
-  }
-
-  const updated: Client = { ...CLIENTS[index], ...input };
-  CLIENTS[index] = updated;
-  return updated;
-}
-
-/* --------------------------------- Policies ---------------------------------- */
-
 /** What the Add Policy and Edit Policy forms send. */
 export type PolicyInput = Policy;
 
+function allKnownClients(): Client[] {
+  return [...CLIENTS, ...CLIENT_CACHE.values()];
+}
+
 /** True if any client already holds a policy with this number (ignoring one policy, when editing). */
 function policyNumberTaken(policyId: string, ignore?: { clientId: string; policyId: string }): boolean {
-  return CLIENTS.some((c) =>
+  return allKnownClients().some((c) =>
     c.policies.some(
       (p) =>
         sameText(p.id, policyId) &&
@@ -162,33 +356,45 @@ function withPolicies(client: Client, policies: Policy[]): Client {
   };
 }
 
-/** Add a policy to a client. Mock version: saves in memory until the page is refreshed. */
-export async function createPolicy(clientId: string, input: PolicyInput): Promise<Client> {
-  const index = CLIENTS.findIndex((c) => c.id === clientId);
-  if (index === -1) throw new Error("This client could not be found.");
-  if (policyNumberTaken(input.id)) throw new Error("This policy number is already in use.");
+function findClientForPolicies(clientId: string): Client {
+  const found = CLIENTS.find((c) => c.id === clientId) ?? CLIENT_CACHE.get(clientId);
+  if (!found) throw new Error("This client could not be found.");
+  return found;
+}
 
-  const updated = withPolicies(CLIENTS[index], [...CLIENTS[index].policies, input]);
-  CLIENTS[index] = updated;
+function savePolicies(clientId: string, policies: Policy[]): Client {
+  const updated = withPolicies(findClientForPolicies(clientId), policies);
+  const mockIndex = CLIENTS.findIndex((c) => c.id === clientId);
+  if (mockIndex >= 0) {
+    CLIENTS[mockIndex] = updated;
+  } else {
+    LOCAL_POLICIES.set(clientId, policies);
+    CLIENT_CACHE.set(clientId, updated);
+  }
   return updated;
 }
 
-/** Update one of a client's policies. Mock version: saves in memory until the page is refreshed. */
+/** Add a policy to a client. Kept in memory until the page is refreshed. */
+export async function createPolicy(clientId: string, input: PolicyInput): Promise<Client> {
+  const client = findClientForPolicies(clientId);
+  if (policyNumberTaken(input.id)) throw new Error("This policy number is already in use.");
+  return savePolicies(clientId, [...client.policies, input]);
+}
+
+/** Update one of a client's policies. Kept in memory until the page is refreshed. */
 export async function updatePolicy(
   clientId: string,
   originalPolicyId: string,
   input: PolicyInput,
 ): Promise<Client> {
-  const index = CLIENTS.findIndex((c) => c.id === clientId);
-  if (index === -1) throw new Error("This client could not be found.");
+  const client = findClientForPolicies(clientId);
   if (policyNumberTaken(input.id, { clientId, policyId: originalPolicyId })) {
     throw new Error("This policy number is already in use.");
   }
-
-  const policies = CLIENTS[index].policies.map((p) => (p.id === originalPolicyId ? input : p));
-  const updated = withPolicies(CLIENTS[index], policies);
-  CLIENTS[index] = updated;
-  return updated;
+  return savePolicies(
+    clientId,
+    client.policies.map((p) => (p.id === originalPolicyId ? input : p)),
+  );
 }
 
 /* ---------------------------------- Claims ----------------------------------- */
@@ -429,6 +635,9 @@ export async function signIn(email: string, password: string): Promise<SessionUs
 
 /** Real sign-out: POST /api/v1/auth/logout ends the session on the backend. */
 export async function signOut(): Promise<void> {
+  // Forget cached clients and managers so the next user starts fresh.
+  CLIENT_CACHE.clear();
+  MANAGERS = null;
   const res = await apiFetch("/api/v1/auth/logout", { method: "POST" });
   // 401 means the session had already ended, which is fine.
   if (!res.ok && res.status !== 401) throw new Error("Could not sign out on the server.");

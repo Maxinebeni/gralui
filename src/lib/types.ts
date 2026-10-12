@@ -45,12 +45,21 @@ export type ClientContact = {
 };
 
 export type Client = {
+  /** The client reference shown on screen, e.g. CLT-001. */
   id: string;
+  /** Backend client ID (UUID). Only set for clients loaded from the backend. */
+  uuid?: string;
+  /** Backend version number, needed when saving changes. Only set for backend clients. */
+  version?: number;
+  /** Backend ID of the assigned relationship manager. */
+  managerId?: string;
   name: string;
   type: ClientType;
   sector: string;
   /** Physical address. Optional because the older sample records do not have one. */
   address?: string;
+  /** Free text remarks stored on the backend client profile. */
+  remarks?: string;
   /** Primary contact person. Optional because the older sample records do not have one. */
   contact?: ClientContact;
   activePolicies: number;
@@ -113,7 +122,7 @@ export type RenewalQuote = {
   recommended: boolean;
 };
 
-/** Written client acceptance — required before placement. */
+/** Written client acceptance, required before placement. */
 export type RenewalAcceptance = {
   quoteId: string;
   acceptedAt: string; // ISO date
