@@ -162,6 +162,17 @@ export function Chip({
   );
 }
 
+export function PriorityPill({ priority }: { priority: "P1" | "P2" | "P3" }) {
+  return (
+    <span
+      title={`Priority ${priority.slice(1)}`}
+      className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-primary-foreground"
+    >
+      {priority}
+    </span>
+  );
+}
+
 export function Person({ name }: { name: string }) {
   return (
     <span className="flex items-center gap-2">

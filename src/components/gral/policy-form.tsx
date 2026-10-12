@@ -18,6 +18,9 @@ type FormValues = {
   insurer: string;
   sumInsured: string;
   premium: string;
+  netPremium: string;
+  amountPaid: string;
+  commissionRate: string;
   start: string;
   renewal: string;
   status: PolicyStatus | "";
@@ -31,6 +34,9 @@ const EMPTY: FormValues = {
   insurer: "",
   sumInsured: "",
   premium: "",
+  netPremium: "",
+  amountPaid: "",
+  commissionRate: "",
   start: "",
   renewal: "",
   status: "Active",
@@ -62,6 +68,9 @@ function fromPolicy(p: Policy): FormValues {
     insurer: p.insurer,
     sumInsured: String(p.sumInsured),
     premium: String(p.premium),
+    netPremium: p.netPremium === undefined ? "" : String(p.netPremium),
+    amountPaid: p.amountPaid === undefined ? "" : String(p.amountPaid),
+    commissionRate: p.commissionRate === undefined ? "" : String(+(p.commissionRate * 100).toFixed(2)),
     start: toInputDate(p.start),
     renewal: toInputDate(p.renewal),
     status: p.status,
@@ -87,10 +96,18 @@ function validate(v: FormValues, allowed: { classes: string[]; insurers: string[
   const sum = toAmount(v.sumInsured);
   const premium = toAmount(v.premium);
   if (!Number.isFinite(sum) || sum <= 0) e.sumInsured = "Enter the sum insured in RWF, numbers only.";
-  if (!Number.isFinite(premium) || premium <= 0) e.premium = "Enter the annual premium in RWF, numbers only.";
+  if (!Number.isFinite(premium) || premium <= 0) e.premium = "Enter the total premium in RWF, numbers only.";
   if (!e.sumInsured && !e.premium && premium > sum) {
     e.premium = "The premium cannot be more than the sum insured.";
   }
+
+  const net = toAmount(v.netPremium);
+  const paid = toAmount(v.amountPaid);
+  const rate = toAmount(v.commissionRate);
+  if (!Number.isFinite(net) || net <= 0) e.netPremium = "Enter the net premium in RWF, numbers only.";
+  else if (!e.premium && net > premium) e.netPremium = "The net premium cannot be more than the total premium.";
+  if (!Number.isFinite(paid) || paid < 0) e.amountPaid = "Enter the amount paid so far in RWF (0 if nothing yet).";
+  if (!Number.isFinite(rate) || rate < 0 || rate > 100) e.commissionRate = "Enter the commission rate as a percentage, e.g. 15.";
 
   if (!v.start) e.start = "Choose the start date.";
   if (!v.renewal) e.renewal = "Choose the renewal date.";
@@ -150,6 +167,9 @@ export function PolicyForm({
       insurer: values.insurer,
       sumInsured: toAmount(values.sumInsured),
       premium: toAmount(values.premium),
+      netPremium: toAmount(values.netPremium),
+      amountPaid: toAmount(values.amountPaid),
+      commissionRate: toAmount(values.commissionRate) / 100,
       start: toDisplayDate(values.start),
       renewal: toDisplayDate(values.renewal),
       status: values.status as PolicyStatus,
@@ -176,7 +196,9 @@ export function PolicyForm({
       <h3 className="text-base font-semibold tracking-tight">
         {editing ? `Edit Policy ${policy?.id}` : `Add Policy for ${client.name}`}
       </h3>
-      <p className="mt-1 text-xs text-muted-foreground">All fields are required. Amounts are in RWF.</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        All fields are required. Amounts are in RWF. Balance and commission are worked out automatically.
+      </p>
 
       <div className="mt-4 space-y-6">
         <Section title="Policy details">
@@ -224,7 +246,7 @@ export function PolicyForm({
               {...describedBy("sumInsured", errors.sumInsured)}
             />
           </Field>
-          <Field id="premium" label="Annual premium (RWF)" error={errors.premium}>
+          <Field id="premium" label="Total premium (RWF)" error={errors.premium}>
             <input
               id="premium"
               inputMode="numeric"
@@ -233,6 +255,39 @@ export function PolicyForm({
               placeholder="e.g. 1500000"
               className={inputClass(errors.premium)}
               {...describedBy("premium", errors.premium)}
+            />
+          </Field>
+          <Field id="netPremium" label="Net premium (RWF)" error={errors.netPremium}>
+            <input
+              id="netPremium"
+              inputMode="numeric"
+              value={values.netPremium}
+              onChange={(e) => set("netPremium", e.target.value)}
+              placeholder="Before taxes and levies, e.g. 1300000"
+              className={inputClass(errors.netPremium)}
+              {...describedBy("netPremium", errors.netPremium)}
+            />
+          </Field>
+          <Field id="amountPaid" label="Amount paid (RWF)" error={errors.amountPaid}>
+            <input
+              id="amountPaid"
+              inputMode="numeric"
+              value={values.amountPaid}
+              onChange={(e) => set("amountPaid", e.target.value)}
+              placeholder="e.g. 750000"
+              className={inputClass(errors.amountPaid)}
+              {...describedBy("amountPaid", errors.amountPaid)}
+            />
+          </Field>
+          <Field id="commissionRate" label="Commission rate (%)" error={errors.commissionRate}>
+            <input
+              id="commissionRate"
+              inputMode="decimal"
+              value={values.commissionRate}
+              onChange={(e) => set("commissionRate", e.target.value)}
+              placeholder="e.g. 15"
+              className={inputClass(errors.commissionRate)}
+              {...describedBy("commissionRate", errors.commissionRate)}
             />
           </Field>
         </Section>
@@ -323,5 +378,5 @@ function GroupedSelect({
         </optgroup>
       ))}
     </select>
-  )
+  );
 }

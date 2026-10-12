@@ -5,15 +5,19 @@
 // the backend. The screens will not need to change as long as the response
 // shapes match src/lib/types.ts.
 //
-// STATUS: authentication and clients are connected to the real backend.
-// Policies, claims, renewals and the overview still use mock data.
+// STATUS: authentication, clients and client documents are connected to the
+// real backend. Policies, claims, renewals, approvals, tasks and the overview
+// still use mock data.
 
 import {
+  APPROVALS,
+  CLAIMS,
   CLAIM_MONTHLY,
   CLAIM_STEPS,
   CLIENTS,
-  CLIENT_CLAIMS,
+  MANUAL_TASKS,
   POLICIES_BY_INSURER,
+  POLICY_TERMS,
   RECENT_ACTIVITY,
   RENEWAL_CASES,
   RENEWAL_MONTHLY,
@@ -25,22 +29,63 @@ import {
   mockListManagers,
   mockUpdateClient,
 } from "./mock-clients";
-import { completionBlocker, currentMilestone, todayIso } from "./renewals";
+import {
+  APPROVAL_POLICY_VERSION,
+  DECISION_DAYS,
+  actingRole,
+  approveBlocker,
+  buildSteps,
+  canDecide,
+  currentStep,
+  renewalApprovers,
+} from "./approvals";
+import {
+  addWorkingDays,
+  claimBlocker,
+  claimSignOffChain,
+  claimSla,
+  dueDate,
+  isClosed,
+  isDisputed,
+  missingDocuments,
+  needsEscalation,
+  nextSigner,
+  stageLabel,
+  stepDef,
+} from "./claims";
+import { displayToIso } from "./format";
+import { completionBlocker, currentMilestone, milestoneDue, todayIso } from "./renewals";
 import type {
   ActivityItem,
+  ApprovalDecision,
+  ApprovalRequest,
+  ApprovalStep,
+  Claim,
+  ClaimEvent,
+  ClaimFollowUp,
+  ClaimPriority,
   ClaimMonth,
   ClaimStep,
   Client,
   ClientClaim,
   ClientContact,
   ClientType,
+  DocumentClassification,
+  DocumentSubject,
+  EvidenceRef,
   InsurerSummary,
   Policy,
+  PolicyDetail,
+  PolicyFinancials,
+  PolicyMovement,
+  PolicyPeriod,
   RenewalCase,
   RenewalMonth,
   RenewalQuote,
   Role,
   SessionUser,
+  StoredDocument,
+  WorkTask,
 } from "./types";
 
 // Empty means "same address as the frontend". The /api route forwards to the backend.
@@ -419,7 +464,7 @@ export async function updatePolicy(
 /* ---------------------------------- Claims ----------------------------------- */
 
 export async function listClientClaims(clientName: string): Promise<ClientClaim[]> {
-  return CLIENT_CLAIMS.filter((c) => c.client === clientName);
+  return CLAIMS.filter((c) => c.client === clientName).map(toClaimSummary);
 }
 
 export async function getPoliciesByInsurer(): Promise<InsurerSummary[]> {
@@ -461,6 +506,10 @@ export async function completeRenewalMilestone(
   const blocker = completionBlocker(c);
   if (blocker) throw new Error(blocker);
   const m = currentMilestone(c)!;
+  // Internal approval goes through the Approvals inbox (APR-01), never a tick box.
+  if (m.code === "APPROVAL") {
+    throw new Error("Internal approval is recorded in the Approvals inbox. Use Request approval.");
+  }
   return saveRenewal({
     ...c,
     completed: [
@@ -494,10 +543,920 @@ export async function recordRenewalAcceptance(
   return saveRenewal({ ...c, acceptance: { ...input, acceptedAt: todayIso() } });
 }
 
+/* --------------------------------- Approvals --------------------------------- */
+// Mock versions of APR-01 to APR-04 (Christian). Changes are kept in memory
+// until the page is refreshed. The backend must enforce the same rules: only
+// the current step's role decides, steps go in order, a decision carries the
+// request version (an out-of-date one is refused), reject and return need a
+// comment, and evidence-backed requests cannot be approved without evidence.
+// Claim settlement sign-offs are built from the claims, so the claim screen
+// and the inbox always agree.
+
+const CLAIM_APPROVAL_PREFIX = "APR-";
+
+function claimApproval(c: Claim): ApprovalRequest {
+  const s = c.settlement!;
+  const chain = claimSignOffChain(s.amount);
+  const signer = nextSigner(c);
+  const signedEvent = (role: string) =>
+    [...c.history].reverse().find((e) => e.text === (role === "Board" ? "Board informed (recorded by MD)" : `${role} sign-off given`));
+  return {
+    id: `${CLAIM_APPROVAL_PREFIX}${c.id}`,
+    subjectType: "CLAIM_SETTLEMENT",
+    subjectId: c.id,
+    subjectRef: c.id,
+    subjectRevision: 1,
+    title: `Claim settlement · ${c.classOfInsurance}`,
+    summary: `${c.insurer} offered ${`RWF ${s.amount.toLocaleString("en-US")}`} on an estimated loss of RWF ${c.amount.toLocaleString("en-US")}. Payment to the client can only be recorded after sign-off.`,
+    clientId: c.clientId,
+    client: c.client,
+    amount: s.amount,
+    amountLabel: "Settlement",
+    policyVersion: APPROVAL_POLICY_VERSION.CLAIM_SETTLEMENT,
+    requestedBy: c.handler,
+    requestedAt: s.advisedAt,
+    dueAt: addWorkingDays(s.advisedAt, stepDef("SETTLEMENT").slaDays),
+    status: signer ? "PENDING" : "APPROVED",
+    steps: chain.map((role, i) => {
+      const done = s.signedBy.includes(role);
+      const event = done ? signedEvent(role) : undefined;
+      return {
+        order: i + 1,
+        role,
+        status: done ? "APPROVED" : role === signer ? "PENDING" : "WAITING",
+        decidedBy: event?.by,
+        decidedAt: event?.at,
+      };
+    }),
+    evidenceRequired: false,
+    evidence: [],
+    version: s.signedBy.length + 1,
+    history: c.history.filter((e) => /sign-off|Board informed|Settlement offer|returned/i.test(e.text)),
+  };
+}
+
+function claimApprovals(): ApprovalRequest[] {
+  return CLAIMS.filter((c) => c.settlement && (c.step === "SETTLEMENT" || c.closure?.outcome === "SETTLED")).map(claimApproval);
+}
+
+export async function listApprovals(): Promise<ApprovalRequest[]> {
+  return [...APPROVALS, ...claimApprovals()].sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
+}
+
+export async function getApproval(id: string): Promise<ApprovalRequest | null> {
+  return (await listApprovals()).find((r) => r.id === id) ?? null;
+}
+
+function saveApproval(updated: ApprovalRequest, by: string, event: string): ApprovalRequest {
+  const saved = {
+    ...updated,
+    version: updated.version + 1,
+    history: [...updated.history, { at: todayIso(), by, text: event }],
+  };
+  APPROVALS[APPROVALS.findIndex((r) => r.id === updated.id)] = saved;
+  return saved;
+}
+
+export type DecisionInput = {
+  decision: ApprovalDecision;
+  comment: string;
+  /** The request version the approver was looking at. */
+  expectedVersion: number;
+};
+
+/** Approve, reject or return the current step (APR-02). */
+export async function decideApproval(
+  id: string,
+  input: DecisionInput,
+  actor: { name: string; role: string },
+): Promise<ApprovalRequest> {
+  const r = await getApproval(id);
+  if (!r) throw new Error("This approval request could not be found.");
+  if (r.version !== input.expectedVersion) {
+    throw new Error("This request changed since you opened it. Close it and open it again to see the latest.");
+  }
+  if (!canDecide(r, actor.role)) throw new Error("This request is not waiting for your decision.");
+  const comment = input.comment.trim();
+  if (input.decision !== "APPROVE" && !comment) throw new Error("Say why, so the requester knows what to change.");
+
+  // Claim settlements: the claim records the sign-off.
+  if (r.subjectType === "CLAIM_SETTLEMENT") {
+    if (input.decision === "REJECT") {
+      throw new Error("A settlement cannot be rejected here. Return it to the handler with your reasons.");
+    }
+    if (input.decision === "APPROVE") await signClaimSettlement(r.subjectId, actor.role, actor.name);
+    else await addClaimNote(r.subjectId, `Settlement sign-off returned by ${actor.role}: ${comment}`, actor.name);
+    if (comment && input.decision === "APPROVE") {
+      await addClaimNote(r.subjectId, `${actor.role} sign-off note: ${comment}`, actor.name);
+    }
+    return (await getApproval(id))!;
+  }
+
+  if (input.decision === "APPROVE") {
+    const blocker = approveBlocker(r);
+    if (blocker) throw new Error(blocker);
+  }
+
+  const step = currentStep(r)!;
+  const status = { APPROVE: "APPROVED", REJECT: "REJECTED", RETURN: "RETURNED" }[input.decision] as ApprovalStep["status"];
+  let steps = r.steps.map((s) =>
+    s.order === step.order
+      ? { ...s, status, decidedBy: actor.name, decidedAt: todayIso(), comment: comment || undefined }
+      : s,
+  );
+  let requestStatus: ApprovalRequest["status"] = r.status;
+
+  if (input.decision === "APPROVE") {
+    // Board steps after an approval are informed, not asked.
+    steps = steps.map((s) =>
+      s.order > step.order && s.informOnly && s.status === "WAITING"
+        ? { ...s, status: "INFORMED", decidedBy: actor.name, decidedAt: todayIso() }
+        : s,
+    );
+    const next = steps.find((s) => s.status === "WAITING");
+    if (next) steps = steps.map((s) => (s.order === next.order ? { ...s, status: "PENDING" } : s));
+    else requestStatus = "APPROVED";
+  } else {
+    requestStatus = input.decision === "REJECT" ? "REJECTED" : "RETURNED";
+  }
+
+  const label = { APPROVE: "Approved", REJECT: "Rejected", RETURN: "Returned" }[input.decision];
+  const saved = saveApproval({ ...r, steps, status: requestStatus }, actor.name, `${label} by ${step.role}`);
+
+  // A fully approved renewal completes its Approval milestone.
+  if (saved.status === "APPROVED" && saved.subjectType === "RENEWAL") {
+    const renewal = RENEWAL_CASES.find((c) => c.id === saved.subjectId);
+    if (renewal && currentMilestone(renewal)?.code === "APPROVAL") {
+      saveRenewal({
+        ...renewal,
+        completed: [
+          ...renewal.completed,
+          {
+            code: "APPROVAL",
+            completedAt: todayIso(),
+            completedBy: actor.name,
+            note: `Approved through ${saved.id}`,
+            evidence: saved.evidence.at(-1)?.name,
+          },
+        ],
+      });
+    }
+  }
+  return saved;
+}
+
+/** Send a returned request back for decision after it was fixed. The record's revision goes up. */
+export async function resubmitApproval(id: string, note: string, by: string): Promise<ApprovalRequest> {
+  const r = APPROVALS.find((x) => x.id === id);
+  if (!r) throw new Error("This approval request could not be found.");
+  if (r.status !== "RETURNED") throw new Error("Only a returned request can be sent again.");
+  if (!note.trim()) throw new Error("Say what was changed.");
+  const steps = r.steps.map((s, i) => ({ order: s.order, role: s.role, informOnly: s.informOnly, status: i === 0 ? "PENDING" : "WAITING" }) as ApprovalStep);
+  return saveApproval(
+    { ...r, steps, status: "PENDING", subjectRevision: r.subjectRevision + 1, dueAt: addWorkingDays(todayIso(), DECISION_DAYS) },
+    by,
+    `Sent again: ${note.trim()}`,
+  );
+}
+
+export async function addApprovalEvidence(id: string, evidence: EvidenceRef, by: string): Promise<ApprovalRequest> {
+  const r = APPROVALS.find((x) => x.id === id);
+  if (!r) throw new Error("Evidence for this request is kept on the claim.");
+  if (r.status === "APPROVED" || r.status === "REJECTED") throw new Error("This request is already decided.");
+  return saveApproval({ ...r, evidence: [...r.evidence, evidence] }, by, `Evidence attached: ${evidence.name}`);
+}
+
+/** Ask for internal approval of a renewal's recommended quote (APR-01). */
+export async function requestRenewalApproval(renewalId: string, by: string): Promise<ApprovalRequest> {
+  const c = findRenewal(renewalId);
+  if (currentMilestone(c)?.code !== "APPROVAL") throw new Error("This renewal is not at the approval step.");
+  const live = APPROVALS.find((r) => r.subjectId === renewalId && r.status === "PENDING");
+  if (live) return live; // the same request is never created twice
+  const quote = c.quotes.find((q) => q.recommended);
+  if (!quote) throw new Error("Recommend a quote first.");
+  const rate = POLICY_TERMS[c.policyId]?.commissionRate ?? 0.15;
+  const commission = Math.round(quote.premium * rate);
+  const year = new Date().getFullYear();
+  const highest = APPROVALS.reduce((max, r) => Math.max(max, Number(r.id.split("-").at(-1)) || 0), 0);
+  const request: ApprovalRequest = {
+    id: `APR-${year}-${String(highest + 1).padStart(3, "0")}`,
+    subjectType: "RENEWAL",
+    subjectId: c.id,
+    subjectRef: c.id,
+    subjectRevision: c.completed.length + c.quotes.length,
+    title: `Renewal recommendation · ${c.classOfInsurance}`,
+    summary: `Renew with ${quote.insurer} at RWF ${quote.premium.toLocaleString("en-US")} (${quote.terms}).`,
+    clientId: c.clientId,
+    client: c.client,
+    amount: commission,
+    amountLabel: "Annual commission",
+    policyVersion: APPROVAL_POLICY_VERSION.RENEWAL,
+    requestedBy: by,
+    requestedAt: todayIso(),
+    dueAt: addWorkingDays(todayIso(), DECISION_DAYS),
+    status: "PENDING",
+    steps: buildSteps(renewalApprovers(commission)),
+    evidenceRequired: true,
+    evidence: c.completed.find((m) => m.code === "QUOTES")?.evidence
+      ? [{ name: c.completed.find((m) => m.code === "QUOTES")!.evidence!, version: 1 }]
+      : [],
+    version: 1,
+    history: [{ at: todayIso(), by, text: "Approval requested" }],
+  };
+  APPROVALS.unshift(request);
+  return request;
+}
+
+/** The latest approval request for a renewal, if any. */
+export async function renewalApproval(renewalId: string): Promise<ApprovalRequest | null> {
+  return APPROVALS.find((r) => r.subjectType === "RENEWAL" && r.subjectId === renewalId) ?? null;
+}
+
+/* ---------------------------------- My Work ---------------------------------- */
+// Mock version of WFL-02/WFL-04 (Christian). System tasks are built from the
+// claims, renewals and approvals and close when the record moves on; a task
+// cannot move a record forward by itself. Manual tasks are completed by hand.
+
+/** Reassignments, by task key, kept in memory until refresh. */
+const TASK_ASSIGNMENTS = new Map<string, { owner: string; history: ClaimEvent[] }>();
+
+function claimTask(c: Claim): WorkTask | null {
+  if (isClosed(c)) return null;
+  const due = dueDate(c) ?? todayIso();
+  const base = {
+    resourceType: "CLAIM" as const,
+    resourceId: c.id,
+    resourceRef: c.id,
+    client: c.client,
+    dueDate: due,
+    status: "OPEN" as const,
+    source: "SYSTEM" as const,
+    createdAt: c.stepStartedAt,
+    history: [],
+  };
+  if (isDisputed(c)) {
+    return {
+      ...base,
+      id: `T-${c.id}-DISPUTE`,
+      key: `CLAIM:${c.id}:DISPUTE`,
+      type: "CLAIM_DISPUTE",
+      title: "Claims Committee decision",
+      detail: c.dispute!.reason,
+      ownerRole: "DMD",
+    };
+  }
+  // Sign-offs appear as approval tasks instead.
+  if (c.step === "SETTLEMENT" && nextSigner(c)) return null;
+  const missing = missingDocuments(c).length;
+  const titles: Record<Claim["step"], string> = {
+    REGISTER: "Confirm the claim registration",
+    DOCUMENTS: `Collect ${missing} missing ${missing === 1 ? "document" : "documents"}`,
+    SUBMIT: `Submit the claim to ${c.insurer}`,
+    FOLLOW_UP: needsEscalation(c) ? `Escalate: no response from ${c.insurer}` : `Follow up with ${c.insurer}`,
+    SETTLEMENT: "Record the payment to the client",
+    CLOSE: "Close with the discharge voucher",
+  };
+  return {
+    ...base,
+    id: `T-${c.id}-${c.step}`,
+    key: `CLAIM:${c.id}:${c.step}`,
+    type: c.step === "FOLLOW_UP" ? "CLAIM_FOLLOW_UP" : "CLAIM_STEP",
+    title: titles[c.step],
+    detail: claimBlocker(c) ?? undefined,
+    owner: c.handler,
+  };
+}
+
+function renewalTask(r: RenewalCase, pendingApproval: boolean): WorkTask | null {
+  const m = currentMilestone(r);
+  if (!m || (m.code === "APPROVAL" && pendingApproval)) return null;
+  return {
+    id: `T-${r.id}-${m.code}`,
+    key: `RENEWAL:${r.id}:${m.code}`,
+    type: "RENEWAL_MILESTONE",
+    title: m.code === "APPROVAL" ? "Request internal approval" : m.name,
+    detail: `${r.policyId} · ${r.classOfInsurance} · ${m.output}`,
+    resourceType: "RENEWAL",
+    resourceId: r.id,
+    resourceRef: r.id,
+    client: r.client,
+    owner: r.owner,
+    dueDate: milestoneDue(r, m),
+    status: "OPEN",
+    source: "SYSTEM",
+    createdAt: todayIso(),
+    history: [],
+  };
+}
+
+function approvalTask(r: ApprovalRequest): WorkTask | null {
+  const step = currentStep(r);
+  if (!step) return null;
+  return {
+    id: `T-${r.id}-${step.order}`,
+    key: `APPROVAL:${r.id}:${step.order}`,
+    type: "APPROVAL",
+    title: `Decide: ${r.title}`,
+    detail: `${r.subjectRef}${r.amount ? ` · ${r.amountLabel} RWF ${r.amount.toLocaleString("en-US")}` : ""}`,
+    resourceType: "APPROVAL",
+    resourceId: r.id,
+    resourceRef: r.id,
+    client: r.client,
+    ownerRole: actingRole(step.role),
+    dueDate: r.dueAt,
+    status: "OPEN",
+    source: "SYSTEM",
+    createdAt: r.requestedAt,
+    history: [],
+  };
+}
+
+export async function listTasks(): Promise<WorkTask[]> {
+  const approvals = await listApprovals();
+  const pendingRenewals = new Set(approvals.filter((a) => a.subjectType === "RENEWAL" && a.status === "PENDING").map((a) => a.subjectId));
+  const system = [
+    ...CLAIMS.map(claimTask),
+    ...RENEWAL_CASES.map((r) => renewalTask(r, pendingRenewals.has(r.id))),
+    ...approvals.map(approvalTask),
+  ].filter((t): t is WorkTask => t !== null);
+
+  return [...system, ...MANUAL_TASKS].map((t) => {
+    const assigned = TASK_ASSIGNMENTS.get(t.key);
+    if (!assigned) return t;
+    return { ...t, owner: assigned.owner, ownerRole: undefined, history: [...t.history, ...assigned.history] };
+  });
+}
+
+/** Names that tasks can be assigned to. */
+export async function listAssignees(): Promise<string[]> {
+  const names = new Set<string>([
+    ...CLAIMS.map((c) => c.handler),
+    ...RENEWAL_CASES.map((r) => r.owner),
+    ...MANUAL_TASKS.flatMap((t) => (t.owner ? [t.owner] : [])),
+  ]);
+  return [...names].sort();
+}
+
+export async function reassignTask(key: string, owner: string, by: string): Promise<void> {
+  if (!owner) throw new Error("Choose who should do this.");
+  const index = MANUAL_TASKS.findIndex((t) => t.key === key);
+  if (index >= 0) {
+    // Manual tasks keep one history, in order.
+    const t = MANUAL_TASKS[index]!;
+    if (t.status === "DONE") throw new Error("This task is already done.");
+    MANUAL_TASKS[index] = { ...t, owner, ownerRole: undefined, history: [...t.history, { at: todayIso(), by, text: `Reassigned to ${owner}` }] };
+    return;
+  }
+  const previous = TASK_ASSIGNMENTS.get(key);
+  TASK_ASSIGNMENTS.set(key, {
+    owner,
+    history: [...(previous?.history ?? []), { at: todayIso(), by, text: `Reassigned to ${owner}` }],
+  });
+}
+
+export async function completeTask(id: string, note: string, by: string): Promise<void> {
+  const index = MANUAL_TASKS.findIndex((t) => t.id === id);
+  if (index < 0) throw new Error("This task closes by itself when the record moves on. Open the record to do the work.");
+  const t = MANUAL_TASKS[index]!;
+  if (t.status === "DONE") throw new Error("This task is already done.");
+  MANUAL_TASKS[index] = {
+    ...t,
+    status: "DONE",
+    completedAt: todayIso(),
+    completedBy: by,
+    history: [...t.history, { at: todayIso(), by, text: note.trim() ? `Completed: ${note.trim()}` : "Completed" }],
+  };
+}
+
+export type NewTaskInput = Pick<WorkTask, "title" | "detail" | "resourceType" | "resourceId" | "resourceRef" | "client" | "owner" | "dueDate">;
+
+export async function createTask(input: NewTaskInput, by: string): Promise<WorkTask> {
+  if (!input.title.trim()) throw new Error("Say what needs to be done.");
+  if (!input.owner) throw new Error("Choose who should do this.");
+  if (!input.dueDate) throw new Error("Choose a due date.");
+  const highest = MANUAL_TASKS.reduce((max, t) => Math.max(max, Number(t.id.split("-").at(-1)) || 0), 100);
+  const id = `TSK-${String(highest + 1).padStart(4, "0")}`;
+  const task: WorkTask = {
+    ...input,
+    title: input.title.trim(),
+    id,
+    key: `MANUAL:${id}`,
+    type: "MANUAL",
+    status: "OPEN",
+    source: "MANUAL",
+    createdAt: todayIso(),
+    history: [{ at: todayIso(), by, text: "Task created" }],
+  };
+  MANUAL_TASKS.unshift(task);
+  return task;
+}
+
+/* ------------------------------- Policy detail ------------------------------- */
+// Mock version of POL-02 to POL-05 (TC). Balance and commission are worked
+// out here, as the backend will: balance = total premium − amount paid,
+// commission = net premium × commission rate.
+
+export function policyFinancials(p: Policy): PolicyFinancials {
+  const terms = POLICY_TERMS[p.id];
+  const netPremium = p.netPremium ?? terms?.netPremium ?? null;
+  const amountPaid = p.amountPaid ?? terms?.amountPaid ?? null;
+  const commissionRate = p.commissionRate ?? terms?.commissionRate ?? null;
+  return {
+    sumInsured: p.sumInsured,
+    totalPremium: p.premium,
+    netPremium,
+    amountPaid,
+    commissionRate,
+    balance: amountPaid === null ? null : p.premium - amountPaid,
+    commission: netPremium === null || commissionRate === null ? null : Math.round(netPremium * commissionRate),
+  };
+}
+
+export async function getPolicyDetail(policyId: string): Promise<PolicyDetail | null> {
+  const client = allKnownClients().find((c) => c.policies.some((p) => sameText(p.id, policyId)));
+  if (!client) return null;
+  const policy = client.policies.find((p) => sameText(p.id, policyId))!;
+  const terms = POLICY_TERMS[policy.id];
+  const financials = policyFinancials(policy);
+  const earlier = terms?.earlierPeriods ?? [];
+
+  const current: PolicyPeriod = {
+    periodId: `PER-${policy.id}-current`,
+    from: displayToIso(policy.start),
+    to: displayToIso(policy.renewal),
+    sumInsured: policy.sumInsured,
+    netPremium: financials.netPremium ?? 0,
+    totalPremium: policy.premium,
+    movement: earlier.length ? "RENEWAL" : "NEW",
+    current: true,
+  };
+  const periods = [current, ...earlier.map((p) => ({ ...p, current: false }))];
+
+  const movements: PolicyMovement[] = [
+    ...periods.map((p) => ({
+      id: `MOV-${p.periodId}`,
+      date: p.from,
+      type: p.movement,
+      description:
+        p.movement === "NEW"
+          ? `Policy placed with ${policy.insurer}`
+          : `Renewed for ${formatIsoRange(p.from, p.to)}`,
+      by: "Imported",
+    })),
+    ...(terms?.movements ?? []),
+  ].sort((a, b) => b.date.localeCompare(a.date));
+
+  return {
+    policy,
+    clientId: client.id,
+    client: client.name,
+    financials,
+    periods,
+    movements,
+    claims: CLAIMS.filter((c) => c.policyId === policy.id).map(toClaimSummary),
+    renewalCaseId: RENEWAL_CASES.find((r) => r.policyId === policy.id)?.id,
+  };
+}
+
+function formatIsoRange(from: string, to: string) {
+  return `${from.slice(0, 4)}–${to.slice(0, 4)}`;
+}
+
+/* --------------------------------- Documents --------------------------------- */
+// Client documents use the backend (/api/v1/documents, DOC-01 to DOC-03),
+// which only accepts CLIENT records so far. Everything else, and demo mode,
+// keeps files in this browser tab until refresh.
+
+/** The backend's rules: PDF, PNG or JPEG, up to 10 MB (document.upload.max-bytes). */
+export const DOCUMENT_RULES = {
+  maxBytes: 10 * 1024 * 1024,
+  mediaTypes: ["application/pdf", "image/png", "image/jpeg"],
+  accept: ".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg",
+};
+
+const LOCAL_DOCUMENTS = new Map<string, StoredDocument[]>([
+  [
+    "POLICY:POL-2025-412",
+    [
+      {
+        id: "doc-412-schedule",
+        version: 2,
+        originalFileName: "Policy schedule 2025-26.pdf",
+        mediaType: "application/pdf",
+        sizeBytes: 482113,
+        classification: "POLICY_SCHEDULE",
+        purpose: "POLICY_SCHEDULE",
+        uploadedAt: "2025-09-24T09:12:00Z",
+        previous: [{ version: 1, originalFileName: "Policy schedule draft.pdf", uploadedAt: "2025-09-19T15:40:00Z" }],
+      },
+    ],
+  ],
+]);
+const LOCAL_FILES = new Map<string, Blob>();
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function usesDocumentBackend(subject: DocumentSubject) {
+  return !MOCK_AUTH && subject.type === "CLIENT" && UUID_PATTERN.test(subject.id);
+}
+
+function subjectKey(subject: DocumentSubject) {
+  return `${subject.type}:${subject.id}`;
+}
+
+/** Checks a file before upload, with the same rules as the backend. */
+export function documentProblem(file: File): string | null {
+  if (file.size === 0) return "This file is empty.";
+  if (file.size > DOCUMENT_RULES.maxBytes) return "This file is larger than 10 MB.";
+  if (file.type && !DOCUMENT_RULES.mediaTypes.includes(file.type)) return "Only PDF, PNG or JPEG files can be uploaded.";
+  if (!file.type && !/\.(pdf|png|jpe?g)$/i.test(file.name)) return "Only PDF, PNG or JPEG files can be uploaded.";
+  return null;
+}
+
+async function documentError(res: Response, fallback: string) {
+  const problem = await readProblem(res);
+  if (res.status === 401) return "Your session has ended. Please sign in again.";
+  if (res.status === 403) return "You do not have permission to upload or read documents here.";
+  if (res.status === 409) return "Someone else replaced this file. Refresh the list and try again.";
+  if (res.status === 413 || problem.code === "FILE_TOO_LARGE") return "This file is larger than 10 MB.";
+  if (res.status === 415 || problem.code === "UNSUPPORTED_FILE_TYPE") return "Only PDF, PNG or JPEG files can be uploaded.";
+  return fallback;
+}
+
+type BackendDocumentItem = {
+  id: string;
+  version: number;
+  originalFileName: string;
+  mediaType: string;
+  sizeBytes: number;
+  classification: DocumentClassification;
+  uploadedAt: string;
+  purpose?: string;
+};
+
+/** Groups versions of the same document: the newest is shown, older ones go in "previous". */
+function groupVersions(items: BackendDocumentItem[]): StoredDocument[] {
+  const byId = new Map<string, BackendDocumentItem[]>();
+  for (const item of items) byId.set(item.id, [...(byId.get(item.id) ?? []), item]);
+  return [...byId.values()]
+    .map((versions) => {
+      const sorted = [...versions].sort((a, b) => b.version - a.version);
+      const latest = sorted[0]!;
+      return {
+        ...latest,
+        purpose: latest.purpose ?? "",
+        previous: sorted.slice(1).map((v) => ({ version: v.version, originalFileName: v.originalFileName, uploadedAt: v.uploadedAt })),
+      };
+    })
+    .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
+}
+
+export async function listDocuments(subject: DocumentSubject): Promise<StoredDocument[]> {
+  if (!usesDocumentBackend(subject)) return [...(LOCAL_DOCUMENTS.get(subjectKey(subject)) ?? [])];
+  const params = new URLSearchParams({ subjectType: subject.type, subjectId: subject.id, size: "100" });
+  const res = await apiFetch(`/api/v1/documents?${params}`);
+  if (!res.ok) throw new Error(await documentError(res, "Could not load the documents."));
+  return groupVersions(((await res.json()) as { items: BackendDocumentItem[] }).items ?? []);
+}
+
+export type UploadOptions = { classification: DocumentClassification; purpose: string };
+
+export async function uploadDocument(subject: DocumentSubject, file: File, options: UploadOptions): Promise<StoredDocument> {
+  const problem = documentProblem(file);
+  if (problem) throw new Error(problem);
+
+  if (!usesDocumentBackend(subject)) {
+    const doc: StoredDocument = {
+      id: crypto.randomUUID(),
+      version: 1,
+      originalFileName: file.name,
+      mediaType: file.type || "application/octet-stream",
+      sizeBytes: file.size,
+      classification: options.classification,
+      purpose: options.purpose,
+      uploadedAt: new Date().toISOString(),
+      previous: [],
+    };
+    LOCAL_FILES.set(`${doc.id}:1`, file);
+    LOCAL_DOCUMENTS.set(subjectKey(subject), [doc, ...(LOCAL_DOCUMENTS.get(subjectKey(subject)) ?? [])]);
+    return doc;
+  }
+
+  const body = new FormData();
+  body.append("file", file);
+  const params = new URLSearchParams({
+    subjectType: subject.type,
+    subjectId: subject.id,
+    purpose: options.purpose,
+    classification: options.classification,
+  });
+  const res = await apiFetch(`/api/v1/documents?${params}`, { method: "POST", body });
+  if (!res.ok) throw new Error(await documentError(res, "Could not upload the file. Please try again."));
+  const view = (await res.json()) as BackendDocumentItem;
+  return { ...view, purpose: options.purpose, previous: [] };
+}
+
+/** Upload a replacement. The old file stays available as an earlier version (DOC-03). */
+export async function replaceDocument(subject: DocumentSubject, doc: StoredDocument, file: File): Promise<StoredDocument> {
+  const problem = documentProblem(file);
+  if (problem) throw new Error(problem);
+
+  if (!usesDocumentBackend(subject)) {
+    const list = LOCAL_DOCUMENTS.get(subjectKey(subject)) ?? [];
+    const current = list.find((d) => d.id === doc.id);
+    if (!current || current.version !== doc.version) throw new Error("Someone else replaced this file. Refresh the list and try again.");
+    const next: StoredDocument = {
+      ...current,
+      version: current.version + 1,
+      originalFileName: file.name,
+      mediaType: file.type || "application/octet-stream",
+      sizeBytes: file.size,
+      uploadedAt: new Date().toISOString(),
+      previous: [{ version: current.version, originalFileName: current.originalFileName, uploadedAt: current.uploadedAt }, ...current.previous],
+    };
+    LOCAL_FILES.set(`${doc.id}:${next.version}`, file);
+    LOCAL_DOCUMENTS.set(subjectKey(subject), list.map((d) => (d.id === doc.id ? next : d)));
+    return next;
+  }
+
+  const body = new FormData();
+  body.append("file", file);
+  const params = new URLSearchParams({
+    expectedVersion: String(doc.version),
+    subjectType: subject.type,
+    subjectId: subject.id,
+    purpose: doc.purpose,
+    classification: doc.classification,
+  });
+  const res = await apiFetch(`/api/v1/documents/${doc.id}/versions?${params}`, { method: "PUT", body });
+  if (!res.ok) throw new Error(await documentError(res, "Could not replace the file. Please try again."));
+  const view = (await res.json()) as BackendDocumentItem;
+  return {
+    ...view,
+    purpose: doc.purpose,
+    previous: [{ version: doc.version, originalFileName: doc.originalFileName, uploadedAt: doc.uploadedAt }, ...doc.previous],
+  };
+}
+
+/** Download an exact version of a document. */
+export async function downloadDocument(
+  subject: DocumentSubject,
+  doc: StoredDocument,
+  version = doc.version,
+): Promise<void> {
+  const name = version === doc.version ? doc.originalFileName : doc.previous.find((p) => p.version === version)?.originalFileName ?? doc.originalFileName;
+  let blob: Blob | undefined;
+  if (!usesDocumentBackend(subject)) {
+    blob = LOCAL_FILES.get(`${doc.id}:${version}`);
+    if (!blob) throw new Error("This is a sample record; there is no file to download.");
+  } else {
+    const params = new URLSearchParams({ subjectType: subject.type, subjectId: subject.id, purpose: doc.purpose });
+    const res = await apiFetch(`/api/v1/documents/${doc.id}/versions/${version}/content?${params}`);
+    if (!res.ok) throw new Error(await documentError(res, "Could not download the file."));
+    blob = await res.blob();
+  }
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 /* --------------------------------- Overview ---------------------------------- */
 
+/** Short claim rows for the Overview, search and client file (open claims only). */
 export async function listClaimsSummary(): Promise<ClientClaim[]> {
-  return CLIENT_CLAIMS;
+  return CLAIMS.filter((c) => !isClosed(c)).map(toClaimSummary);
+}
+
+function toClaimSummary(c: Claim): ClientClaim {
+  const sla = claimSla(c);
+  return {
+    id: c.id,
+    client: c.client,
+    classOfInsurance: c.classOfInsurance,
+    amount: c.amount,
+    step: stepDef(c.step).n,
+    stage: stageLabel(c),
+    sla: sla === "closed" ? "ontrack" : sla,
+  };
+}
+
+/* ---------------------------------- Claims ----------------------------------- */
+// Mock versions following GRAL's SOP; changes are kept in memory until the
+// page is refreshed. Backend: CLM-01 to CLM-07 (Christian). The backend must
+// enforce the same rules: documents before submission, follow-ups every 10
+// working days, disputes decided by the Claims Committee, sign-off before
+// payment, and evidence to close. Every change is added to the claim history.
+
+function findClaim(id: string): Claim {
+  const found = CLAIMS.find((c) => c.id === id);
+  if (!found) throw new Error("This claim could not be found.");
+  return found;
+}
+
+function saveClaim(updated: Claim, by: string, event: string): Claim {
+  const withHistory = { ...updated, history: [...updated.history, { at: todayIso(), by, text: event }] };
+  CLAIMS[CLAIMS.findIndex((c) => c.id === updated.id)] = withHistory;
+  return withHistory;
+}
+
+function requireOpen(c: Claim) {
+  if (isClosed(c)) throw new Error("This claim is closed.");
+}
+
+export async function listClaims(): Promise<Claim[]> {
+  return [...CLAIMS];
+}
+
+export type NewClaimInput = {
+  clientId: string;
+  client: string;
+  policyId?: string;
+  classOfInsurance: string;
+  insurer: string;
+  dateOfLoss: string;
+  dateReported: string;
+  amount: number;
+  priority: ClaimPriority;
+  handler: string;
+  description: string;
+};
+
+/** Register a claim (step 1). Standard documents are added as the checklist. */
+export async function createClaim(input: NewClaimInput, by: string): Promise<Claim> {
+  if (input.dateOfLoss > todayIso()) throw new Error("The date of loss cannot be in the future.");
+  if (input.dateReported < input.dateOfLoss) throw new Error("The claim cannot be reported before the loss happened.");
+  const year = new Date().getFullYear();
+  const highest = CLAIMS.reduce((max, c) => Math.max(max, Number(c.id.split("-").at(-1)) || 0), 0);
+  const claim: Claim = {
+    ...input,
+    id: `CLM-${year}-${String(highest + 1).padStart(3, "0")}`,
+    step: "REGISTER",
+    stepStartedAt: todayIso(),
+    documents: [
+      { name: "Notification of loss", required: true },
+      { name: "Supporting report (police, fire or medical)", required: true },
+      { name: "Repair or replacement quotation", required: true },
+    ],
+    followUps: [],
+    notes: [],
+    history: [{ at: todayIso(), by, text: "Claim registered" }],
+  };
+  CLAIMS.unshift(claim);
+  return claim;
+}
+
+/** Step 1 → 2: registration checked, start collecting documents. */
+export async function confirmClaimRegistration(id: string, by: string): Promise<Claim> {
+  const c = findClaim(id);
+  requireOpen(c);
+  if (c.step !== "REGISTER") throw new Error("This claim is already registered.");
+  return saveClaim({ ...c, step: "DOCUMENTS", stepStartedAt: todayIso() }, by, "Registration confirmed; moved to Documents");
+}
+
+export async function fileClaimDocument(id: string, name: string, evidence: string, by: string): Promise<Claim> {
+  const c = findClaim(id);
+  requireOpen(c);
+  const documents = c.documents.map((d) => (d.name === name ? { ...d, filedAt: todayIso(), evidence } : d));
+  return saveClaim({ ...c, documents }, by, `${name} received`);
+}
+
+/** Step 2 → 3: only once every required document is in. */
+export async function markClaimReadyToSubmit(id: string, by: string): Promise<Claim> {
+  const c = findClaim(id);
+  requireOpen(c);
+  const missing = missingDocuments(c);
+  if (missing.length) throw new Error(`Still missing: ${missing.map((d) => d.name).join(", ")}.`);
+  return saveClaim({ ...c, step: "SUBMIT", stepStartedAt: todayIso() }, by, "All documents received; moved to Submit");
+}
+
+/** Step 3 → 4: submitted to the insurer with the formal intimation letter. */
+export async function submitClaimToInsurer(
+  id: string,
+  input: { insurerClaimNo?: string; evidence: string },
+  by: string,
+): Promise<Claim> {
+  const c = findClaim(id);
+  requireOpen(c);
+  if (c.step !== "SUBMIT") throw new Error("This claim is not ready to submit.");
+  return saveClaim(
+    { ...c, step: "FOLLOW_UP", stepStartedAt: todayIso(), submission: { submittedAt: todayIso(), ...input } },
+    by,
+    `Submitted to ${c.insurer}`,
+  );
+}
+
+export async function logClaimFollowUp(id: string, input: Omit<ClaimFollowUp, "date" | "by">, by: string): Promise<Claim> {
+  const c = findClaim(id);
+  requireOpen(c);
+  const followUp: ClaimFollowUp = { ...input, date: todayIso(), by };
+  return saveClaim(
+    { ...c, followUps: [...c.followUps, followUp] },
+    by,
+    `Follow-up by ${input.channel.toLowerCase()}${input.insurerResponded ? " (insurer responded)" : " (no response)"}`,
+  );
+}
+
+/** Step 4 → 5: the insurer offered a settlement. */
+export async function recordSettlementOffer(id: string, amount: number, by: string): Promise<Claim> {
+  const c = findClaim(id);
+  requireOpen(c);
+  if (c.step !== "FOLLOW_UP" || isDisputed(c)) throw new Error("A settlement can only be recorded during follow-up.");
+  if (!(amount > 0)) throw new Error("Enter the settlement amount.");
+  return saveClaim(
+    { ...c, step: "SETTLEMENT", stepStartedAt: todayIso(), settlement: { advisedAt: todayIso(), amount, signedBy: [] } },
+    by,
+    `Settlement offer of RWF ${amount.toLocaleString("en-US")} recorded`,
+  );
+}
+
+/** The insurer rejected the claim: it goes to the Claims Committee. */
+export async function recordInsurerRejection(id: string, reason: string, by: string): Promise<Claim> {
+  const c = findClaim(id);
+  requireOpen(c);
+  if (c.step !== "FOLLOW_UP" || isDisputed(c)) throw new Error("A rejection can only be recorded during follow-up.");
+  if (!reason.trim()) throw new Error("Give the insurer's reason for rejecting.");
+  return saveClaim({ ...c, dispute: { raisedAt: todayIso(), reason } }, by, "Insurer rejected the claim; sent to Claims Committee");
+}
+
+/** Claims Committee decision: appeal (back to follow-up) or accept the rejection (close). */
+export async function decideDispute(
+  id: string,
+  input: { decision: "APPEAL" | "ACCEPT_REJECTION"; note: string; evidence?: string },
+  by: string,
+): Promise<Claim> {
+  const c = findClaim(id);
+  requireOpen(c);
+  if (!isDisputed(c)) throw new Error("This claim is not waiting for a committee decision.");
+  if (!input.note.trim()) throw new Error("Record the committee's reasons.");
+  const dispute = { ...c.dispute!, decision: input.decision, decidedAt: todayIso(), decidedBy: by, note: input.note };
+  if (input.decision === "APPEAL") {
+    return saveClaim({ ...c, dispute, stepStartedAt: todayIso() }, by, "Claims Committee decided to appeal; back to follow-up");
+  }
+  if (!input.evidence?.trim()) throw new Error("Attach the committee decision record.");
+  return saveClaim(
+    {
+      ...c,
+      dispute,
+      step: "CLOSE",
+      stepStartedAt: todayIso(),
+      closure: { closedAt: todayIso(), by, outcome: "REJECTION_ACCEPTED", evidence: input.evidence },
+    },
+    by,
+    "Claims Committee accepted the rejection; claim closed",
+  );
+}
+
+/** Settlement sign-off by the next role in the chain. */
+export async function signClaimSettlement(id: string, role: string, by: string): Promise<Claim> {
+  const c = findClaim(id);
+  requireOpen(c);
+  const signer = nextSigner(c);
+  if (!signer) throw new Error("Sign-off is already complete.");
+  if (signer !== role && !(signer === "Board" && role === "MD")) {
+    throw new Error(`This needs ${signer} sign-off.`);
+  }
+  return saveClaim(
+    { ...c, settlement: { ...c.settlement!, signedBy: [...c.settlement!.signedBy, signer] } },
+    by,
+    signer === "Board" ? "Board informed (recorded by MD)" : `${signer} sign-off given`,
+  );
+}
+
+/** Step 5 → 6: payment passed to the client, after full sign-off. */
+export async function recordPaidToClient(id: string, evidence: string, by: string): Promise<Claim> {
+  const c = findClaim(id);
+  requireOpen(c);
+  if (c.step !== "SETTLEMENT" || !c.settlement) throw new Error("This claim is not at settlement.");
+  if (nextSigner(c)) throw new Error(`Waiting for ${nextSigner(c)} sign-off.`);
+  if (!evidence.trim()) throw new Error("Attach the payment advice.");
+  return saveClaim(
+    { ...c, step: "CLOSE", stepStartedAt: todayIso(), settlement: { ...c.settlement, paidToClientAt: todayIso(), evidence } },
+    by,
+    "Settlement paid to client; moved to Close",
+  );
+}
+
+/** Step 6: close a settled claim with the discharge voucher. */
+export async function closeClaim(id: string, evidence: string, by: string): Promise<Claim> {
+  const c = findClaim(id);
+  requireOpen(c);
+  if (c.step !== "CLOSE") throw new Error("This claim is not ready to close.");
+  if (!evidence.trim()) throw new Error("Attach the discharge voucher.");
+  return saveClaim({ ...c, closure: { closedAt: todayIso(), by, outcome: "SETTLED", evidence } }, by, "Claim closed (settled)");
+}
+
+export async function setClaimFraudFlag(id: string, flagged: boolean, by: string): Promise<Claim> {
+  const c = findClaim(id);
+  return saveClaim({ ...c, fraudFlag: flagged }, by, flagged ? "Fraud flag raised" : "Fraud flag cleared");
+}
+
+export async function addClaimNote(id: string, text: string, by: string): Promise<Claim> {
+  const c = findClaim(id);
+  if (!text.trim()) throw new Error("Write a note first.");
+  return saveClaim({ ...c, notes: [...c.notes, { at: todayIso(), by, text: text.trim() }] }, by, "Internal note added");
 }
 
 export async function getClaimSteps(): Promise<ClaimStep[]> {

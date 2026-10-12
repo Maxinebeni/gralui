@@ -41,6 +41,7 @@ import {
   listRenewals,
 } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
+import { canAccessPath } from "@/lib/permissions";
 import { currentMilestone, daysOverdue, daysToExpiry, renewalHealth } from "@/lib/renewals";
 import type { ActivityItem, ClaimMonth, ClaimStep, Client, ClientClaim, RenewalCase } from "@/lib/types";
 
@@ -70,11 +71,11 @@ function buildAttention(claims: ClientClaim[], renewals: RenewalCase[], clients:
     if (c.step === 5) {
       items.push({
         dot: "blue",
-        text: `${c.id} ${c.client} needs approval (${formatRwf(c.amount)})`,
+        text: `${c.id} ${c.client} at settlement (${formatRwf(c.amount)})`,
         module: "Claims",
-        when: "Waiting on approval",
-        action: "Approve",
-        href: "/claims",
+        when: "Sign-off or payment",
+        action: "Open",
+        href: `/claims?claim=${encodeURIComponent(c.id)}`,
         kind: "approval",
       });
     } else if (c.sla === "breached") {
@@ -84,7 +85,7 @@ function buildAttention(claims: ClientClaim[], renewals: RenewalCase[], clients:
         module: "Claims",
         when: "Overdue",
         action: "Open",
-        href: "/claims",
+        href: `/claims?claim=${encodeURIComponent(c.id)}`,
         kind: "claim",
       });
     }
@@ -149,14 +150,18 @@ export function OverviewView() {
   const [renewals, setRenewals] = useState<RenewalCase[]>([]);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
 
+  // Only load client data for users who can see clients, so the backend is
+  // never asked for data it would refuse (e.g. administrator accounts).
+  const canSeeClients = canAccessPath(user, "/clients");
+
   useEffect(() => {
     listClaimsSummary().then(setClaims);
     getClaimSteps().then(setSteps);
     getClaimMonthly().then(setMonthly);
-    listClients().then(setClients);
+    if (canSeeClients) listClients().then(setClients);
     listRenewals().then(setRenewals);
     listRecentActivity().then(setActivity);
-  }, []);
+  }, [canSeeClients]);
 
   const now = new Date();
   const firstName = user.name.split(" ")[0];

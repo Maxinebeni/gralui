@@ -44,6 +44,11 @@ export type Policy = {
   start: string;
   renewal: string;
   status: PolicyStatus;
+  /** Financial terms from the import template. Optional: older sample records do not have them. */
+  netPremium?: number;
+  amountPaid?: number;
+  /** For example 0.15 for 15%. */
+  commissionRate?: number;
 };
 
 /** Primary contact person at the client (requirements doc, section 4). */
@@ -93,6 +98,8 @@ export type ClientClaim = {
   classOfInsurance: string;
   amount: number;
   step: number;
+  /** Where the claim is, e.g. "4 · Follow up" or "Closed · settled". */
+  stage: string;
   sla: "breached" | "approaching" | "ontrack";
 };
 
@@ -156,6 +163,264 @@ export type RenewalCase = {
 };
 
 export type RenewalMonth = { month: string; premium: number; policies: number };
+
+/* ---------------------------------- Claims ----------------------------------- */
+// Proposed contract for the claims API (backlog CLM-01 to CLM-07), following
+// GRAL's SOP: six steps plus a dispute path to the Claims Committee. Agree the
+// final field names with the backend team before connecting.
+
+export type ClaimStepCode = "REGISTER" | "DOCUMENTS" | "SUBMIT" | "FOLLOW_UP" | "SETTLEMENT" | "CLOSE";
+
+export type ClaimPriority = "P1" | "P2" | "P3";
+
+export type ClaimDocument = {
+  name: string;
+  required: boolean;
+  filedAt?: string; // ISO date; missing = not received yet
+  evidence?: string;
+};
+
+export type ClaimFollowUp = {
+  date: string; // ISO date
+  by: string;
+  channel: "Email" | "Call" | "Letter" | "Meeting";
+  note: string;
+  insurerResponded: boolean;
+};
+
+/** Rejected claim sent to the Claims Committee (DMD chairs). */
+export type ClaimDispute = {
+  raisedAt: string;
+  reason: string;
+  decision?: "APPEAL" | "ACCEPT_REJECTION";
+  decidedAt?: string;
+  decidedBy?: string;
+  note?: string;
+};
+
+export type ClaimSettlement = {
+  advisedAt: string;
+  amount: number;
+  /** Roles that have signed off, in order (see claimSignOffChain). */
+  signedBy: string[];
+  paidToClientAt?: string;
+  evidence?: string;
+};
+
+export type ClaimClosure = {
+  closedAt: string;
+  by: string;
+  outcome: "SETTLED" | "REJECTION_ACCEPTED";
+  evidence: string;
+};
+
+export type ClaimEvent = { at: string; by: string; text: string };
+
+export type Claim = {
+  id: string; // e.g. CLM-2025-089
+  clientId: string;
+  client: string;
+  policyId?: string; // unknown at registration is allowed
+  classOfInsurance: string;
+  insurer: string;
+  dateOfLoss: string; // ISO date
+  dateReported: string; // ISO date
+  amount: number; // estimated loss in RWF
+  priority: ClaimPriority;
+  step: ClaimStepCode;
+  stepStartedAt: string; // ISO date the current step began
+  handler: string;
+  description: string;
+  documents: ClaimDocument[];
+  submission?: { submittedAt: string; insurerClaimNo?: string; evidence: string };
+  followUps: ClaimFollowUp[];
+  dispute?: ClaimDispute;
+  settlement?: ClaimSettlement;
+  closure?: ClaimClosure;
+  /** Visible only to Technical Director, Risk & Compliance Manager and MD. */
+  fraudFlag?: boolean;
+  notes: ClaimEvent[];
+  history: ClaimEvent[];
+};
+
+/* --------------------------------- Approvals --------------------------------- */
+// Proposed contract for the approvals API (backlog APR-01 to APR-04,
+// Christian). See docs/approvals-and-my-work-fields.md.
+
+export type ApprovalSubjectType = "RENEWAL" | "CLAIM_SETTLEMENT" | "KYC" | "POLICY_ENDORSEMENT";
+export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED" | "RETURNED";
+export type ApprovalDecision = "APPROVE" | "REJECT" | "RETURN";
+
+export type ApprovalStep = {
+  order: number;
+  /** Role that must decide this step, e.g. "Technical Director". */
+  role: string;
+  /** "Board" steps are informed, not asked to decide. */
+  informOnly?: boolean;
+  status: "WAITING" | "PENDING" | "APPROVED" | "REJECTED" | "RETURNED" | "INFORMED";
+  decidedBy?: string;
+  decidedAt?: string; // ISO date
+  comment?: string;
+};
+
+/** A document attached as evidence, pinned to an exact version (APR-03). */
+export type EvidenceRef = { name: string; documentId?: string; version?: number };
+
+export type ApprovalRequest = {
+  id: string; // e.g. APR-2026-014
+  subjectType: ApprovalSubjectType;
+  /** ID of the record being approved (renewal, claim, client or policy). */
+  subjectId: string;
+  /** Reference shown on screen, e.g. REN-2026-004. */
+  subjectRef: string;
+  /** Revision of the record when approval was requested; a changed record needs a new approval. */
+  subjectRevision: number;
+  title: string;
+  summary: string;
+  clientId?: string;
+  client?: string;
+  amount?: number;
+  /** What the amount means, e.g. "Annual commission" or "Settlement". */
+  amountLabel?: string;
+  /** Version of the approval rules used to build the steps, e.g. "RENEWAL-2026.1". */
+  policyVersion: string;
+  requestedBy: string;
+  requestedAt: string; // ISO date
+  dueAt: string; // ISO date
+  status: ApprovalStatus;
+  steps: ApprovalStep[];
+  evidenceRequired: boolean;
+  evidence: EvidenceRef[];
+  /** Changes when the request changes; sent back with each decision. */
+  version: number;
+  history: ClaimEvent[];
+};
+
+/* --------------------------------- My Work ----------------------------------- */
+// Proposed contract for workflow tasks (backlog WFL-02 and WFL-04, Christian).
+
+export type TaskType =
+  | "CLAIM_STEP"
+  | "CLAIM_FOLLOW_UP"
+  | "CLAIM_DISPUTE"
+  | "CLAIM_SIGN_OFF"
+  | "RENEWAL_MILESTONE"
+  | "APPROVAL"
+  | "KYC_DOCUMENT"
+  | "MANUAL";
+
+export type TaskResourceType = "CLAIM" | "RENEWAL" | "CLIENT" | "POLICY" | "APPROVAL";
+
+export type WorkTask = {
+  id: string;
+  /** Logical key, so the same piece of work never appears twice, e.g. CLAIM:CLM-2025-089:DOCUMENTS. */
+  key: string;
+  type: TaskType;
+  title: string;
+  detail?: string;
+  resourceType: TaskResourceType;
+  resourceId: string;
+  resourceRef: string;
+  client?: string;
+  /** Person the task is assigned to. Empty when it belongs to a role (e.g. "MD"). */
+  owner?: string;
+  ownerRole?: string;
+  dueDate: string; // ISO date
+  status: "OPEN" | "DONE";
+  /** SYSTEM tasks close when the record moves on; MANUAL tasks are completed by hand. */
+  source: "SYSTEM" | "MANUAL";
+  createdAt: string;
+  completedAt?: string;
+  completedBy?: string;
+  history: ClaimEvent[];
+};
+
+/* ------------------------------- Policy detail ------------------------------- */
+// Proposed contract for policy detail (backlog POL-02 to POL-05, TC).
+
+export type PolicyMovementType = "NEW" | "RENEWAL" | "ENDORSEMENT" | "END_R" | "END_N" | "CANCELLATION";
+
+/** One cover period. A renewal adds a new period of the same policy. */
+export type PolicyPeriod = {
+  periodId: string;
+  from: string; // ISO date
+  to: string; // ISO date
+  sumInsured: number;
+  netPremium: number;
+  totalPremium: number;
+  movement: PolicyMovementType;
+  bookingNote?: string;
+  current: boolean;
+};
+
+export type PolicyMovement = {
+  id: string;
+  date: string; // ISO date the change takes effect
+  type: PolicyMovementType;
+  description: string;
+  premiumChange?: number;
+  evidence?: string;
+  by: string;
+};
+
+/**
+ * Balance and commission are worked out by the system, never typed in (Import
+ * Template v3.1). null means the value has not been recorded yet.
+ */
+export type PolicyFinancials = {
+  sumInsured: number;
+  totalPremium: number;
+  netPremium: number | null;
+  amountPaid: number | null;
+  /** For example 0.15 for 15%. */
+  commissionRate: number | null;
+  balance: number | null; // totalPremium − amountPaid
+  commission: number | null; // netPremium × commissionRate
+};
+
+export type PolicyDetail = {
+  policy: Policy;
+  clientId: string;
+  client: string;
+  financials: PolicyFinancials;
+  /** Newest first; the first one is the current period. */
+  periods: PolicyPeriod[];
+  /** Newest first. */
+  movements: PolicyMovement[];
+  claims: ClientClaim[];
+  renewalCaseId?: string;
+};
+
+/* --------------------------------- Documents --------------------------------- */
+// Matches the backend's document API (DOC-01 to DOC-03, /api/v1/documents).
+
+export type DocumentClassification =
+  | "KYC"
+  | "POLICY_SCHEDULE"
+  | "CLAIM_EVIDENCE"
+  | "CLIENT_ACCEPTANCE"
+  | "APPROVAL_EVIDENCE"
+  | "CORRESPONDENCE";
+
+/** The record a document belongs to. The backend accepts CLIENT only so far. */
+export type DocumentSubject = {
+  type: "CLIENT" | "POLICY" | "CLAIM" | "RENEWAL" | "APPROVAL";
+  /** Backend UUID when the record comes from the backend, otherwise its reference. */
+  id: string;
+};
+
+export type StoredDocument = {
+  id: string;
+  version: number;
+  originalFileName: string;
+  mediaType: string;
+  sizeBytes: number;
+  classification: DocumentClassification;
+  purpose: string;
+  uploadedAt: string; // ISO date-time
+  /** Earlier versions, newest first (kept when a file is replaced). */
+  previous: { version: number; originalFileName: string; uploadedAt: string }[];
+};
 
 /* ------------------------------ Overview extras ------------------------------ */
 

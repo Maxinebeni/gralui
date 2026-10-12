@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Check, Circle, Clock, FileText, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -10,7 +11,11 @@ import {
   completeRenewalMilestone,
   recommendRenewalQuote,
   recordRenewalAcceptance,
+  renewalApproval,
+  requestRenewalApproval,
 } from "@/lib/api";
+import { statusLabel } from "@/lib/approvals";
+import type { ApprovalRequest } from "@/lib/types";
 import { useCurrentUser } from "@/lib/auth-context";
 import { renewalPermissions } from "@/lib/permissions";
 import { INSURER_GROUPS } from "@/lib/reference-data";
@@ -216,6 +221,8 @@ function MilestonesTab({
                 ) : null}
                 {blocker ? (
                   <p className="text-[11px] text-warning">{blocker}</p>
+                ) : m.code === "APPROVAL" ? (
+                  <ApprovalRequestBox renewalId={renewal.id} userName={userName} />
                 ) : (
                   <>
                     <textarea
@@ -428,6 +435,49 @@ function AcceptanceTab({
       ) : (
         <p className="text-xs text-muted-foreground">Not yet accepted.</p>
       )}
+    </div>
+  );
+}
+
+/** The renewal's internal approval goes through the Approvals inbox (APR-01). */
+function ApprovalRequestBox({ renewalId, userName }: { renewalId: string; userName: string }) {
+  const [request, setRequest] = useState<ApprovalRequest | null | undefined>(undefined);
+
+  useEffect(() => {
+    renewalApproval(renewalId).then(setRequest);
+  }, [renewalId]);
+
+  if (request === undefined) return null;
+  const live = request && request.status === "PENDING";
+  return (
+    <div className="space-y-2">
+      <p className="text-[11px] text-muted-foreground">
+        Internal approval is decided in the Approvals inbox, by commission: under RWF 1M the Technical Director, RWF 1M to
+        10M the MD, over 10M the MD with the Board informed.
+      </p>
+      {request ? (
+        <p className="text-[11px]">
+          <Link href={`/approvals?request=${encodeURIComponent(request.id)}`} className="font-medium text-primary underline underline-offset-2">
+            {request.id}
+          </Link>{" "}
+          · {statusLabel(request)}
+        </p>
+      ) : null}
+      {!live ? (
+        <NavyButton
+          onClick={async () => {
+            try {
+              const created = await requestRenewalApproval(renewalId, userName);
+              setRequest(created);
+              toast.success(`Approval requested (${created.id}).`);
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : "Could not request approval.");
+            }
+          }}
+        >
+          {request ? "Request approval again" : "Request approval"}
+        </NavyButton>
+      ) : null}
     </div>
   );
 }

@@ -3,11 +3,14 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Bell, ChevronDown, LogOut, Search, Settings } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/format";
 import { useCurrentUser } from "@/lib/auth-context";
-import { navItemsFor, usesBackendPermissions } from "@/lib/permissions";
+import { NAV_ITEMS, navChildrenFor, navItemsFor, usesBackendPermissions, type NavItem } from "@/lib/permissions";
+import { listApprovals } from "@/lib/api";
+import { canDecide } from "@/lib/approvals";
+import { GlobalSearch } from "./global-search";
 import { FilterPill } from "./ui";
 
 import {
@@ -22,8 +25,32 @@ export function Shell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { user, signOut } = useCurrentUser();
   const tabs = navItemsFor(user);
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  // Ctrl+K (Cmd+K on Mac) opens the platform search from any page.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const isActive = (href: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
+  // In a dropdown, "/claims" should not also light up on "/claims/all".
+  const isActiveExact = (href: string) =>
+    href === "/" ? pathname === "/" : pathname === href || (pathname.startsWith(href) && !NAV_HREFS.some((h) => h !== href && h.startsWith(href) && pathname.startsWith(h)));
+
+  // Approvals waiting for this person, shown as a count in the menus.
+  const [waiting, setWaiting] = useState(0);
+  useEffect(() => {
+    listApprovals()
+      .then((list) => setWaiting(list.filter((r) => canDecide(r, user.role)).length))
+      .catch(() => setWaiting(0));
+  }, [user.role, pathname]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -40,27 +67,55 @@ export function Shell({ children }: { children: ReactNode }) {
           </Link>
 
           <nav className="float-pill col-span-2 row-start-2 flex w-full min-w-0 items-center justify-between gap-0.5 overflow-x-auto p-1.5 lg:col-auto lg:row-auto lg:w-auto lg:justify-start lg:gap-1">
-            {tabs.map((t) => (
-              <Link
-                key={t.href}
-                href={t.href}
-                className={cn(
-                  "shrink-0 rounded-full px-2.5 py-2 text-xs font-medium transition-colors sm:px-4 sm:text-sm",
-                  isActive(t.href)
-                    ? "bg-primary text-primary-foreground hover:text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <span className="flex items-center gap-1.5">
-                  {t.label}
-                  <ChevronDown className="hidden size-3.5 opacity-70 sm:block" />
-                </span>
-              </Link>
-            ))}
+            {tabs.map((t) => {
+              const children = navChildrenFor(user, t.href);
+              const active = isActive(t.href) || children.some((c) => isActive(c.href));
+              const pillClass = cn(
+                "shrink-0 rounded-full px-2.5 py-2 text-xs font-medium transition-colors outline-none sm:px-4 sm:text-sm",
+                active
+                  ? "bg-primary text-primary-foreground hover:text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              );
+              if (children.length === 0) {
+                return (
+                  <Link key={t.href} href={t.href} className={pillClass}>
+                    {t.label}
+                  </Link>
+                );
+              }
+              // The chevron opens the item's pages, e.g. Overview, My Work and Approvals.
+              const current = children.find((c) => isActive(c.href));
+              return (
+                <DropdownMenu key={t.href}>
+                  <DropdownMenuTrigger className={pillClass}>
+                    <span className="flex items-center gap-1.5">
+                      {current ? current.label : t.label}
+                      <ChevronDown className="size-3.5 opacity-70" />
+                    </span>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" sideOffset={8} className="min-w-56 rounded-2xl p-2 shadow-[var(--shadow-float)]">
+                    {[{ label: firstLabel(t), href: t.href }, ...children].map((c) => (
+                      <DropdownMenuItem
+                        key={c.href}
+                        onSelect={() => router.push(c.href)}
+                        className={cn("justify-between rounded-xl px-3 py-2.5 text-sm", isActiveExact(c.href) && "font-medium text-primary")}
+                      >
+                        {c.label}
+                        {c.href === "/approvals" && waiting > 0 ? (
+                          <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-semibold text-primary-foreground">
+                            {waiting}
+                          </span>
+                        ) : null}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              );
+            })}
           </nav>
 
           <div className="flex shrink-0 items-center gap-2">
-            <IconBtn label="Search clients" onClick={() => router.push("/clients")}>
+            <IconBtn label="Search (Ctrl+K)" mobile onClick={() => setSearchOpen(true)}>
               <Search className="size-4" />
             </IconBtn>
             <IconBtn label="Notifications">
@@ -82,17 +137,41 @@ export function Shell({ children }: { children: ReactNode }) {
             >
               <LogOut className="size-4" />
             </IconBtn>
-            <span
-              title={`${user.name} · ${user.role}`}
-              className="flex size-10 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground shadow-[var(--shadow-pill)]"
-            >
-              {initials(user.name).toUpperCase()}
-            </span>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                aria-label={`${user.name}, ${user.role}. Open your menu`}
+                className="relative flex size-10 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground shadow-[var(--shadow-pill)] outline-none"
+              >
+                {initials(user.name).toUpperCase()}
+                {waiting > 0 ? (
+                  <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-danger text-[9px] text-white ring-2 ring-background">
+                    {waiting}
+                  </span>
+                ) : null}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" sideOffset={8} className="min-w-60 rounded-2xl p-2 shadow-[var(--shadow-float)]">
+                <div className="px-3 py-2">
+                  <p className="text-sm font-semibold">{user.name}</p>
+                  <p className="text-xs text-muted-foreground">{user.role}</p>
+                </div>
+                <div className="my-1 h-px bg-border" />
+                <DropdownMenuItem onSelect={() => router.push("/my-work")} className="rounded-xl px-3 py-2.5 text-sm">
+                  My Work
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => router.push("/approvals")} className="justify-between rounded-xl px-3 py-2.5 text-sm">
+                  Approvals
+                  {waiting > 0 ? (
+                    <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-semibold text-primary-foreground">{waiting}</span>
+                  ) : null}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
 
-        <main className="mt-6 pb-24">{children}</main>
+        <main className="mt-10 pb-24 sm:mt-14">{children}</main>
       </div>
+      <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
     </div>
   );
 }
@@ -234,4 +313,11 @@ export function NoAccess() {
       </div>
     </div>
   );
+}
+
+const NAV_HREFS = NAV_ITEMS.map((i) => i.href);
+
+/** The first entry of a dropdown repeats the item itself, under a clearer name. */
+function firstLabel(item: NavItem) {
+  return { "/": "Overview", "/claims": "Claims Queue", "/clients": "Client Records" }[item.href] ?? item.label;
 }
