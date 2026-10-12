@@ -1,6 +1,9 @@
 // Shared front-end types. Keep these in line with the backend's OpenAPI
 // contract once the Spring Boot team publishes it.
 
+// The first six come from the original design. The rest are GRAL roles the
+// backend defines (roles table, migration V9). Commercial and Finance Director
+// exist only in the design so far — confirm with GRAL whether they are real.
 export const ROLES = [
   "MD",
   "DMD",
@@ -8,6 +11,13 @@ export const ROLES = [
   "Commercial Director",
   "Finance Director",
   "Risk & Compliance Manager",
+  "Accounts Executive",
+  "CRM Manager",
+  "Client Relation Records Officer",
+  "GI Underwriting Manager",
+  "Claims Manager",
+  "Claims Underwriter",
+  "Internal Audit Manager",
 ] as const;
 
 export type Role = (typeof ROLES)[number];

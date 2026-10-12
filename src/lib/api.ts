@@ -18,6 +18,13 @@ import {
   RENEWAL_CASES,
   RENEWAL_MONTHLY,
 } from "./mock-data";
+import {
+  mockCreateClient,
+  mockGetClient,
+  mockListClients,
+  mockListManagers,
+  mockUpdateClient,
+} from "./mock-clients";
 import { completionBlocker, currentMilestone, todayIso } from "./renewals";
 import type {
   ActivityItem,
@@ -38,6 +45,13 @@ import type {
 
 // Empty means "same address as the frontend". The /api route forwards to the backend.
 const API_URL = "";
+
+/**
+ * Demo mode: set NEXT_PUBLIC_MOCK_AUTH=true in .env.local to sign in with any
+ * email and password and use sample clients, with no backend at all. Handy for
+ * presentations and for front-end work offline.
+ */
+export const MOCK_AUTH = process.env.NEXT_PUBLIC_MOCK_AUTH === "true";
 
 /* ---------------------------------- Clients ---------------------------------- */
 // Connected to the backend: /api/v1/clients. The screens keep using the
@@ -194,6 +208,7 @@ async function fetchClientView(uuid: string): Promise<ClientView> {
 
 /** Search clients on the backend (name, reference and more). */
 export async function listClients(query = ""): Promise<Client[]> {
+  if (MOCK_AUTH) return mockListClients(query);
   try {
     const params = new URLSearchParams({ size: "100", sort: "name" });
     if (query.trim()) params.set("q", query.trim());
@@ -217,6 +232,7 @@ export async function listClients(query = ""): Promise<Client[]> {
 }
 
 export async function getClient(id: string): Promise<Client | null> {
+  if (MOCK_AUTH) return mockGetClient(id);
   const cached = CLIENT_CACHE.get(id);
   if (cached?.uuid) return toClient(await fetchClientView(cached.uuid), await loadManagers());
   return (await listClients(id)).find((c) => c.id === id) ?? null;
@@ -224,6 +240,7 @@ export async function getClient(id: string): Promise<Client | null> {
 
 /** Account manager names for the dropdown, from the backend. */
 export async function listManagers(): Promise<string[]> {
+  if (MOCK_AUTH) return mockListManagers();
   return (await loadManagers()).map((m) => m.fullName).sort();
 }
 
@@ -263,6 +280,7 @@ async function managerIdFor(name: string): Promise<string> {
 
 /** Add a new client: POST /api/v1/clients. */
 export async function createClient(input: ClientInput): Promise<Client> {
+  if (MOCK_AUTH) return mockCreateClient(input);
   const body = {
     // Lets the backend ignore an accidental double submit.
     commandId: crypto.randomUUID(),
@@ -280,6 +298,7 @@ export async function createClient(input: ClientInput): Promise<Client> {
  * contact and account manager. Each step needs the latest version number.
  */
 export async function updateClient(id: string, input: ClientInput): Promise<Client> {
+  if (MOCK_AUTH) return mockUpdateClient(id, input);
   const current = CLIENT_CACHE.get(id);
   if (!current?.uuid || current.version === undefined) {
     throw new Error("This client could not be found. Close it and open it again.");
@@ -578,6 +597,14 @@ const BACKEND_TO_FRONTEND_ROLE: Record<string, Role> = {
   RCM: "Risk & Compliance Manager",
   RISK_AND_COMPLIANCE_MANAGER: "Risk & Compliance Manager",
   RISK_COMPLIANCE_MANAGER: "Risk & Compliance Manager",
+  // Business roles in the backend's roles table (migration V9).
+  ACCOUNTS_EXECUTIVE: "Accounts Executive",
+  CRM_MANAGER: "CRM Manager",
+  CLIENT_RELATION_RECORDS_OFFICER: "Client Relation Records Officer",
+  GI_UNDERWRITING_MANAGER: "GI Underwriting Manager",
+  CLAIMS_MANAGER: "Claims Manager",
+  CLAIMS_UNDERWRITER: "Claims Underwriter",
+  INTERNAL_AUDIT_MANAGER: "Internal Audit Manager",
 };
 
 function toFrontendRole(backendRoles: string[]): Role | undefined {
@@ -609,14 +636,26 @@ function toSessionUser(me: MeResponse): SessionUser {
  * can send the user to the login page. Used when the page loads or refreshes.
  */
 export async function getCurrentUser(): Promise<SessionUser | null> {
+  if (MOCK_AUTH) return null; // demo sessions live in the browser (auth-context.tsx)
   const res = await apiFetch("/api/v1/me");
   if (res.status === 401) return null;
   if (!res.ok) throw new Error("Could not check who is signed in.");
   return toSessionUser((await res.json()) as MeResponse);
 }
 
+/** Demo-mode user: the name comes from the email, and everyone is MD. */
+function demoUser(email: string): SessionUser {
+  const name = (email.split("@")[0] ?? "")
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((p) => p[0]!.toUpperCase() + p.slice(1))
+    .join(" ");
+  return { email, name: name || "GRAL User", role: "MD", permissions: [] };
+}
+
 /** Real sign-in: POST /api/v1/auth/login with a fresh CSRF token. */
 export async function signIn(email: string, password: string): Promise<SessionUser> {
+  if (MOCK_AUTH) return demoUser(email);
   const res = await apiFetch("/api/v1/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
@@ -638,18 +677,23 @@ export async function signOut(): Promise<void> {
   // Forget cached clients and managers so the next user starts fresh.
   CLIENT_CACHE.clear();
   MANAGERS = null;
+  if (MOCK_AUTH) return;
   const res = await apiFetch("/api/v1/auth/logout", { method: "POST" });
   // 401 means the session had already ended, which is fine.
   if (!res.ok && res.status !== 401) throw new Error("Could not sign out on the server.");
 }
 
+/** Thrown when an invitation or reset link is invalid, used or expired. */
+export class InvalidLinkError extends Error {}
+
 /** Shared error messages for the invitation and password reset links. */
 async function confirmChallenge(path: string, token: string, password: string): Promise<void> {
+  if (MOCK_AUTH) return; // demo mode: any link works
   const res = await apiFetch(path, { method: "POST", body: JSON.stringify({ token, password }) });
   if (res.ok) return;
   const problem = await readProblem(res);
   if (problem.code === "INVALID_OR_EXPIRED_TOKEN") {
-    throw new Error("This link is invalid or has expired. Please ask for a new one.");
+    throw new InvalidLinkError("This link is invalid or has expired. Please ask for a new one.");
   }
   if (res.status === 429) throw new Error("Too many attempts. Please wait a few minutes and try again.");
   if (res.status === 400) {
@@ -681,6 +725,7 @@ export async function acceptInvitation(token: string, password: string): Promise
  * screen shows the same message either way.
  */
 export async function requestPasswordReset(email: string): Promise<void> {
+  if (MOCK_AUTH) return;
   const res = await apiFetch("/api/v1/auth/password-reset/request", {
     method: "POST",
     body: JSON.stringify({ email }),
