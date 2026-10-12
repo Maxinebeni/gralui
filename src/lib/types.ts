@@ -145,7 +145,13 @@ export type ClaimMonth = { month: string; amount: number; count: number };
 export type ActivityItem = { who: string; what: string; when: string };
 
 export type SessionUser = {
+  /** Backend user ID (UUID). */
+  id?: string;
   email: string;
   name: string;
   role: Role;
+  /** Role codes exactly as the backend sends them, e.g. ADMINISTRATOR. */
+  backendRoles?: string[];
+  /** Effective permission codes from the backend, e.g. CLIENT_CREATE. */
+  permissions?: string[];
 };

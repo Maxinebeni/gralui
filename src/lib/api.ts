@@ -6,8 +6,9 @@
 // /api/..., which next.config.ts forwards to the backend. The screens will
 // not need to change as long as the response shapes match src/lib/types.ts.
 //
-// STATUS: signIn is connected to the real backend. Everything else still
-// uses mock data until the backend has the matching endpoints.
+// STATUS: authentication (login, who am I, logout, invitations and password
+// reset) is connected to the real backend. Everything else still uses mock
+// data until it is connected.
 
 import {
   CLAIM_MONTHLY,
@@ -39,12 +40,6 @@ import type {
 
 // Empty means "same address as the frontend". next.config.ts forwards /api to the backend.
 const API_URL = "";
-
-// Backend role names translated to the frontend's role names.
-// Add more here as the backend team creates new roles.
-const BACKEND_TO_FRONTEND_ROLE: Record<string, Role> = {
-  ADMINISTRATOR: "MD",
-};
 
 /* ---------------------------------- Clients ---------------------------------- */
 
@@ -293,61 +288,194 @@ export async function listRecentActivity(): Promise<ActivityItem[]> {
 }
 
 /* ------------------------------- Authentication ------------------------------ */
+// The backend uses a browser session (SESSION cookie) plus a CSRF token.
+// Every POST or PUT must send a fresh CSRF token in the header the backend
+// names (X-CSRF-TOKEN). The backend says not to cache it, so we fetch one
+// before each request that changes something.
 
-/**
- * Set a new password from a reset email link (backend: POST
- * /api/v1/auth/password-reset/confirm, needs the CSRF header).
- * Mock version: accepts any token. Rachel connects this to the backend.
- */
-export async function confirmPasswordReset(_token: string, _password: string): Promise<void> {
-  await new Promise((r) => setTimeout(r, 400));
+type MeResponse = {
+  id: string;
+  email: string;
+  fullName: string;
+  status: string;
+  profileCategory: "ADMINISTRATION" | "BUSINESS";
+  roles: string[];
+  permissions: string[];
+};
+
+/** Problem details the backend sends with errors, e.g. { code: "LOGIN_FAILED" }. */
+type ApiProblem = { title?: string; status?: number; code?: string; fields?: string[] };
+
+async function readProblem(res: Response): Promise<ApiProblem> {
+  try {
+    return (await res.json()) as ApiProblem;
+  } catch {
+    return {};
+  }
 }
 
-/**
- * Set a first password from an invitation email link (backend: POST
- * /api/v1/auth/invitations/accept, needs the CSRF header).
- * Mock version: accepts any token. Rachel connects this to the backend.
- */
-export async function acceptInvitation(_token: string, _password: string): Promise<void> {
-  await new Promise((r) => setTimeout(r, 400));
-}
-
-/**
- * Mock password-reset request. The real version will POST the email to the
- * backend, which emails a reset link if the account exists. The UI shows the
- * same message either way so it never reveals which emails have accounts.
- */
-export async function requestPasswordReset(_email: string): Promise<void> {
-  await new Promise((r) => setTimeout(r, 400));
-}
-
-/**
- * Real sign-in: sends the email and password to the Spring Boot backend.
- * The backend keeps the login in a cookie, so credentials: "include"
- * makes the browser store it and send it back on later requests.
- */
-export async function signIn(email: string, password: string): Promise<SessionUser> {
-  const res = await fetch(`${API_URL}/api/v1/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+/** Get a fresh CSRF token and the header name to send it in. */
+async function getCsrf(): Promise<{ headerName: string; token: string }> {
+  const res = await fetch(`${API_URL}/api/v1/auth/csrf`, {
     credentials: "include",
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error("Could not reach the server. Please try again.");
+  const data = (await res.json()) as { token: string; headerName?: string };
+  return { headerName: data.headerName || "X-CSRF-TOKEN", token: data.token };
+}
+
+/**
+ * fetch() for the backend. Always sends the session cookie. For anything that
+ * is not a GET, it adds a fresh CSRF token, and retries once if the backend
+ * says the token was invalid (it changes after login and logout).
+ */
+export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const method = (init.method ?? "GET").toUpperCase();
+
+  const send = async () => {
+    const headers = new Headers(init.headers);
+    if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
+      headers.set("Content-Type", "application/json");
+    }
+    if (method !== "GET" && method !== "HEAD") {
+      const csrf = await getCsrf();
+      headers.set(csrf.headerName, csrf.token);
+    }
+    return fetch(`${API_URL}${path}`, { ...init, method, headers, credentials: "include", cache: "no-store" });
+  };
+
+  let res = await send();
+  if (res.status === 403 && method !== "GET") {
+    const problem = await readProblem(res.clone());
+    if (problem.code === "CSRF_INVALID") res = await send();
+  }
+  return res;
+}
+
+// Backend role codes translated to the frontend's role names. Add codes here
+// as the backend team confirms them (PLN-02). Codes are compared in upper
+// case with spaces and dashes turned into underscores.
+const BACKEND_TO_FRONTEND_ROLE: Record<string, Role> = {
+  ADMINISTRATOR: "MD",
+  ADMIN: "MD",
+  MD: "MD",
+  MANAGING_DIRECTOR: "MD",
+  DMD: "DMD",
+  DEPUTY_MANAGING_DIRECTOR: "DMD",
+  TD: "Technical Director",
+  TECHNICAL_DIRECTOR: "Technical Director",
+  CD: "Commercial Director",
+  COMMERCIAL_DIRECTOR: "Commercial Director",
+  FD: "Finance Director",
+  FINANCE_DIRECTOR: "Finance Director",
+  RCM: "Risk & Compliance Manager",
+  RISK_AND_COMPLIANCE_MANAGER: "Risk & Compliance Manager",
+  RISK_COMPLIANCE_MANAGER: "Risk & Compliance Manager",
+};
+
+function toFrontendRole(backendRoles: string[]): Role | undefined {
+  return backendRoles
+    .map((r) => BACKEND_TO_FRONTEND_ROLE[r.trim().toUpperCase().replace(/[\s-]+/g, "_")])
+    .find(Boolean);
+}
+
+function toSessionUser(me: MeResponse): SessionUser {
+  const role = toFrontendRole(me.roles ?? []);
+  if (!role) {
+    // Shows the backend's role codes so they can be added to the list above.
+    throw new Error(
+      `Your account's role (${(me.roles ?? []).join(", ") || "none"}) is not set up in this app yet. Please contact the administrator.`,
+    );
+  }
+  return {
+    id: me.id,
+    email: me.email,
+    name: me.fullName,
+    role,
+    backendRoles: me.roles ?? [],
+    permissions: me.permissions ?? [],
+  };
+}
+
+/**
+ * Who is signed in (GET /api/v1/me). Returns null when nobody is, so the app
+ * can send the user to the login page. Used when the page loads or refreshes.
+ */
+export async function getCurrentUser(): Promise<SessionUser | null> {
+  const res = await apiFetch("/api/v1/me");
+  if (res.status === 401) return null;
+  if (!res.ok) throw new Error("Could not check who is signed in.");
+  return toSessionUser((await res.json()) as MeResponse);
+}
+
+/** Real sign-in: POST /api/v1/auth/login with a fresh CSRF token. */
+export async function signIn(email: string, password: string): Promise<SessionUser> {
+  const res = await apiFetch("/api/v1/auth/login", {
+    method: "POST",
     body: JSON.stringify({ email, password }),
   });
 
   if (!res.ok) {
-    throw new Error(
-      res.status === 401 || res.status === 403
-        ? "Incorrect email or password."
-        : "Could not sign in right now. Please try again.",
-    );
+    if (res.status === 401) throw new Error("Incorrect email or password.");
+    if (res.status === 429) {
+      throw new Error("Too many sign-in attempts. Please wait a few minutes and try again.");
+    }
+    throw new Error("Could not sign in right now. Please try again.");
   }
 
-  const data: { id: number; email: string; fullName: string; roles: string[] } = await res.json();
+  return toSessionUser((await res.json()) as MeResponse);
+}
 
-  const role = data.roles.map((r) => BACKEND_TO_FRONTEND_ROLE[r]).find(Boolean);
-  if (!role) {
-    throw new Error("Your account does not have a role set up in this system yet.");
+/** Real sign-out: POST /api/v1/auth/logout ends the session on the backend. */
+export async function signOut(): Promise<void> {
+  const res = await apiFetch("/api/v1/auth/logout", { method: "POST" });
+  // 401 means the session had already ended, which is fine.
+  if (!res.ok && res.status !== 401) throw new Error("Could not sign out on the server.");
+}
+
+/** Shared error messages for the invitation and password reset links. */
+async function confirmChallenge(path: string, token: string, password: string): Promise<void> {
+  const res = await apiFetch(path, { method: "POST", body: JSON.stringify({ token, password }) });
+  if (res.ok) return;
+  const problem = await readProblem(res);
+  if (problem.code === "INVALID_OR_EXPIRED_TOKEN") {
+    throw new Error("This link is invalid or has expired. Please ask for a new one.");
   }
+  if (res.status === 429) throw new Error("Too many attempts. Please wait a few minutes and try again.");
+  if (res.status === 400) {
+    throw new Error("Please check your password. It must be at least 15 characters long.");
+  }
+  throw new Error("Something went wrong. Please try again.");
+}
 
-  return { email: data.email, name: data.fullName, role };
+/**
+ * Set a new password from a reset email link
+ * (POST /api/v1/auth/password-reset/confirm). The backend signs the user out
+ * everywhere afterwards, so they sign in again with the new password.
+ */
+export async function confirmPasswordReset(token: string, password: string): Promise<void> {
+  await confirmChallenge("/api/v1/auth/password-reset/confirm", token, password);
+}
+
+/**
+ * Set a first password from an invitation email link
+ * (POST /api/v1/auth/invitations/accept). Does not sign the user in.
+ */
+export async function acceptInvitation(token: string, password: string): Promise<void> {
+  await confirmChallenge("/api/v1/auth/invitations/accept", token, password);
+}
+
+/**
+ * Ask for a password reset email (POST /api/v1/auth/password-reset/request).
+ * The backend answers the same way whether or not the account exists, so the
+ * screen shows the same message either way.
+ */
+export async function requestPasswordReset(email: string): Promise<void> {
+  const res = await apiFetch("/api/v1/auth/password-reset/request", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+  if (res.status === 429) throw new Error("Too many requests. Please wait a few minutes and try again.");
+  if (!res.ok && res.status !== 202) throw new Error("Could not send the reset email. Please try again.");
 }
