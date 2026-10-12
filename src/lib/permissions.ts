@@ -16,6 +16,8 @@ export type NavItem = {
   permission: string | null;
   /** Used until the backend defines this module's permissions. PROVISIONAL. */
   roles: readonly Role[];
+  /** Set for pages listed in another item's dropdown instead of the top bar. */
+  parent?: string;
 };
 
 /**
@@ -25,42 +27,50 @@ export type NavItem = {
  */
 const BACKEND_MODULES = ["CLIENT"];
 
+const CLAIM_ROLES: readonly Role[] = [
+  "MD",
+  "DMD",
+  "Technical Director",
+  "Finance Director",
+  "Risk & Compliance Manager",
+  "Claims Manager",
+  "Claims Underwriter",
+  "Internal Audit Manager",
+];
+
+const RENEWAL_ROLES: readonly Role[] = [
+  "MD",
+  "DMD",
+  // Approves renewals under RWF 1M commission, so needs to see the case.
+  "Technical Director",
+  "Commercial Director",
+  "Finance Director",
+  "Accounts Executive",
+  "CRM Manager",
+  "Client Relation Records Officer",
+  "GI Underwriting Manager",
+];
+
 // CLIENT_READ is a real backend code. CLAIM_READ and RENEWAL_READ are
 // proposed names — confirm them with the backend team (PLN-02).
+// Items with a parent appear in that item's dropdown, not in the top bar.
 export const NAV_ITEMS: NavItem[] = [
   { label: "Overview", href: "/", permission: null, roles: ROLES },
-  {
-    label: "Claims",
-    href: "/claims",
-    permission: "CLAIM_READ",
-    roles: [
-      "MD",
-      "DMD",
-      "Technical Director",
-      "Finance Director",
-      "Risk & Compliance Manager",
-      "Claims Manager",
-      "Claims Underwriter",
-      "Internal Audit Manager",
-    ],
-  },
+  // Everyone has work assigned to them; the list only shows what they may see.
+  { label: "My Work", href: "/my-work", permission: null, roles: ROLES, parent: "/" },
+  // Everyone can follow the requests they sent; deciding depends on the step's role.
+  { label: "Approvals", href: "/approvals", permission: null, roles: ROLES, parent: "/" },
+  { label: "Claims", href: "/claims", permission: "CLAIM_READ", roles: CLAIM_ROLES },
+  { label: "All Claims", href: "/claims/all", permission: "CLAIM_READ", roles: CLAIM_ROLES, parent: "/claims" },
   { label: "Clients", href: "/clients", permission: "CLIENT_READ", roles: ROLES },
-  {
-    label: "Renewals",
-    href: "/renewals",
-    permission: "RENEWAL_READ",
-    roles: [
-      "MD",
-      "DMD",
-      "Commercial Director",
-      "Finance Director",
-      "Accounts Executive",
-      "CRM Manager",
-      "Client Relation Records Officer",
-      "GI Underwriting Manager",
-    ],
-  },
+  { label: "All Clients", href: "/clients/all", permission: "CLIENT_READ", roles: ROLES, parent: "/clients" },
+  { label: "Renewals", href: "/renewals", permission: "RENEWAL_READ", roles: RENEWAL_ROLES },
 ];
+
+/** Pages without a menu item of their own, and the menu item that controls them. */
+const PAGE_OWNERS: Record<string, string> = {
+  "/policies": "/clients",
+};
 
 /** True when the user signed in through a backend that sends permissions. */
 export function usesBackendPermissions(user: SessionUser) {
@@ -84,12 +94,20 @@ function canSee(user: SessionUser, item: NavItem) {
   return item.roles.includes(user.role);
 }
 
+/** Top-bar items this user can see. */
 export function navItemsFor(user: SessionUser) {
-  return NAV_ITEMS.filter((item) => canSee(user, item));
+  return NAV_ITEMS.filter((item) => !item.parent && canSee(user, item));
+}
+
+/** Dropdown entries under a top-bar item that this user can see. */
+export function navChildrenFor(user: SessionUser, parentHref: string) {
+  return NAV_ITEMS.filter((item) => item.parent === parentHref && canSee(user, item));
 }
 
 /** Whether the user may open a given path (matches the menu item that owns it). */
 export function canAccessPath(user: SessionUser, pathname: string) {
+  const owner = Object.keys(PAGE_OWNERS).find((p) => pathname.startsWith(p));
+  if (owner) pathname = PAGE_OWNERS[owner]!;
   const item = [...NAV_ITEMS]
     .sort((a, b) => b.href.length - a.href.length)
     .find((i) => (i.href === "/" ? pathname === "/" : pathname.startsWith(i.href)));
@@ -114,10 +132,67 @@ export function renewalPermissions(role: Role) {
   };
 }
 
+/**
+ * Who can work on claims. PROVISIONAL — the design's roles plus the SOP's
+ * claims roles; replace with CLAIM_* permissions once the backend has them.
+ * DMD chairs the Claims Committee; the fraud flag is limited to Technical
+ * Director, Risk & Compliance Manager and MD (data-shapes proposal).
+ */
+export function claimPermissions(role: Role) {
+  return {
+    canUpdateClaims: ["Technical Director", "DMD", "MD", "Claims Manager", "Claims Underwriter"].includes(role),
+    canDecideDisputes: role === "DMD" || role === "MD",
+    canSeeFraudFlag: ["Technical Director", "Risk & Compliance Manager", "MD"].includes(role),
+    seesDocumentDetail: role !== "Finance Director",
+    /** Whether this role may give the next settlement sign-off. */
+    canSign: (signer: string | null) => !!signer && (signer === role || (signer === "Board" && role === "MD")),
+  };
+}
+
 /** Fine-grained permissions used inside the client screens (from the design). */
 export function clientPermissions(role: Role) {
   return {
     canFlagNonCompliant: role === "Risk & Compliance Manager",
     seesDocumentDetail: role !== "Finance Director",
+  };
+}
+
+/**
+ * Approvals. PROVISIONAL until the backend has APPROVAL_* permissions. Who
+ * decides is set per step by the approval rules (lib/approvals.ts); these
+ * roles can also see every request, for oversight and audit.
+ */
+export function approvalPermissions(role: Role) {
+  return {
+    seesAllRequests: ["MD", "DMD", "Technical Director", "Risk & Compliance Manager", "Internal Audit Manager"].includes(role),
+  };
+}
+
+/** My Work. PROVISIONAL until the backend has TASK_* permissions (WFL-02). */
+export function taskPermissions(role: Role) {
+  return {
+    /** Can see the whole team's tasks and hand them to someone else. */
+    managesTeamWork: [
+      "MD",
+      "DMD",
+      "Technical Director",
+      "Commercial Director",
+      "Claims Manager",
+      "CRM Manager",
+      "GI Underwriting Manager",
+    ].includes(role),
+  };
+}
+
+/**
+ * Documents. With the backend, uploading needs DOCUMENT_UPLOAD (not granted to
+ * any role yet — ask TC). In demo mode, everyone except the read-only
+ * oversight roles may upload.
+ */
+export function documentPermissions(user: SessionUser) {
+  return {
+    canUpload: usesBackendPermissions(user)
+      ? hasPermission(user, "DOCUMENT_UPLOAD")
+      : user.role !== "Internal Audit Manager" && user.role !== "Finance Director",
   };
 }

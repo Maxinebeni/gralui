@@ -1,17 +1,24 @@
 // Sample data copied from the Lovable design. Front end only — this is
 // replaced by real API calls in src/lib/api.ts once the backend is merged.
 
+import { APPROVAL_POLICY_VERSION, buildSteps, renewalApprovers } from "./approvals";
+import { CLAIM_STEP_DEFS, addWorkingDays } from "./claims";
 import { RENEWAL_MILESTONES, addDays, todayIso } from "./renewals";
 import type {
   ActivityItem,
+  ApprovalRequest,
+  Claim,
+  ClaimDocument,
   ClaimMonth,
   ClaimStep,
   Client,
-  ClientClaim,
   CompletedMilestone,
   InsurerSummary,
+  PolicyMovement,
+  PolicyPeriod,
   RenewalCase,
   RenewalMonth,
+  WorkTask,
 } from "./types";
 
 export const CLIENTS: Client[] = [
@@ -210,16 +217,293 @@ export const CLIENTS: Client[] = [
   },
 ];
 
-// Only the claim fields the client profile needs.
-export const CLIENT_CLAIMS: ClientClaim[] = [
-  { id: "CLM-2025-089", client: "Kigali Steel Industries Ltd", classOfInsurance: "Industrial All Risk", amount: 42000000, step: 2, sla: "breached" },
-  { id: "CLM-2025-078", client: "Rwanda Energy Group", classOfInsurance: "Motor Fleet", amount: 4200000, step: 5, sla: "breached" },
-  { id: "CLM-2025-071", client: "Bralirwa PLC", classOfInsurance: "Property All Risk", amount: 8500000, step: 3, sla: "approaching" },
-  { id: "CLM-2025-064", client: "Bank of Kigali", classOfInsurance: "Professional Indemnity", amount: 1200000, step: 1, sla: "ontrack" },
-  { id: "CLM-2025-061", client: "Rwanda Energy Group", classOfInsurance: "Public Liability", amount: 6750000, step: 5, sla: "approaching" },
-  { id: "CLM-2025-057", client: "Kigali Steel Industries Ltd", classOfInsurance: "Marine Cargo", amount: 19400000, step: 4, sla: "ontrack" },
-  { id: "CLM-2025-052", client: "Bralirwa PLC", classOfInsurance: "Group Personal Accident", amount: 480000, step: 6, sla: "ontrack" },
-  { id: "CLM-2025-046", client: "Bank of Kigali", classOfInsurance: "Money Insurance", amount: 15300000, step: 5, sla: "approaching" },
+/* ---------------------------------- Claims ----------------------------------- */
+// The design's eight claims, placed on GRAL's six SOP steps. Dates are set in
+// working days relative to today so the demo always shows a breached claim,
+// an escalation, a dispute, a sign-off waiting and so on.
+
+const wd = (n: number) => addWorkingDays(todayIso(), n);
+
+function docs(list: [name: string, filedDaysAgo: number | null, required?: boolean][]): ClaimDocument[] {
+  return list.map(([name, ago, required = true]) => ({
+    name,
+    required,
+    filedAt: ago === null ? undefined : wd(-ago),
+    evidence: ago === null ? undefined : `${name}.pdf`,
+  }));
+}
+
+export const CLAIMS: Claim[] = [
+  {
+    id: "CLM-2025-089",
+    clientId: "CLT-001",
+    client: "Kigali Steel Industries Ltd",
+    policyId: "POL-2025-412",
+    classOfInsurance: "Industrial All Risk",
+    insurer: "SONARWA",
+    dateOfLoss: wd(-8),
+    dateReported: wd(-7),
+    amount: 42000000,
+    priority: "P1",
+    step: "DOCUMENTS",
+    stepStartedAt: wd(-5),
+    handler: "Jean-Paul Habimana",
+    description: "Fire damage to rolling mill section B; business interruption under review.",
+    documents: docs([
+      ["Notification of loss", 7],
+      ["Fire brigade report", null],
+      ["Loss adjuster report", null],
+      ["Repair quotation", 4],
+    ]),
+    followUps: [],
+    notes: [{ at: wd(-5), by: "Jean-Paul Habimana", text: "Loss adjuster visit booked; report expected next week." }],
+    history: [
+      { at: wd(-7), by: "Jean-Paul Habimana", text: "Claim registered" },
+      { at: wd(-5), by: "Jean-Paul Habimana", text: "Moved to Documents" },
+    ],
+  },
+  {
+    id: "CLM-2025-078",
+    clientId: "CLT-002",
+    client: "Rwanda Energy Group",
+    policyId: "POL-2025-299",
+    classOfInsurance: "Motor Fleet",
+    insurer: "RADIANT",
+    dateOfLoss: wd(-30),
+    dateReported: wd(-29),
+    amount: 4200000,
+    priority: "P1",
+    step: "SETTLEMENT",
+    stepStartedAt: wd(-4),
+    handler: "Marie Claire Uwimana",
+    description: "Three-vehicle collision on Kigali–Musanze road; third party liability agreed.",
+    documents: docs([
+      ["Notification of loss", 29],
+      ["Police report", 27],
+      ["Loss adjuster report", 24],
+      ["Repair quotation", 24],
+    ]),
+    submission: { submittedAt: wd(-22), insurerClaimNo: "RAD/MF/2026/1187", evidence: "Claim submission letter.pdf" },
+    followUps: [
+      { date: wd(-12), by: "Marie Claire Uwimana", channel: "Email", note: "Asked for assessment outcome.", insurerResponded: true },
+      { date: wd(-4), by: "Marie Claire Uwimana", channel: "Call", note: "Insurer offered RWF 4,000,000.", insurerResponded: true },
+    ],
+    settlement: { advisedAt: wd(-4), amount: 4000000, signedBy: ["DMD"] },
+    notes: [],
+    history: [
+      { at: wd(-29), by: "Marie Claire Uwimana", text: "Claim registered" },
+      { at: wd(-22), by: "Marie Claire Uwimana", text: "Submitted to RADIANT" },
+      { at: wd(-4), by: "Marie Claire Uwimana", text: "Settlement offer of RWF 4,000,000 recorded" },
+      { at: wd(-3), by: "DMD", text: "DMD sign-off given" },
+    ],
+  },
+  {
+    id: "CLM-2025-071",
+    clientId: "CLT-003",
+    client: "Bralirwa PLC",
+    policyId: "POL-2025-188",
+    classOfInsurance: "Property All Risk",
+    insurer: "UAP",
+    dateOfLoss: wd(-9),
+    dateReported: wd(-8),
+    amount: 8500000,
+    priority: "P2",
+    step: "SUBMIT",
+    stepStartedAt: wd(-1),
+    handler: "Eric Niyonzima",
+    description: "Storm damage to bottling plant roof sheeting.",
+    documents: docs([
+      ["Notification of loss", 8],
+      ["Photos of damage", 7],
+      ["Repair quotation", 2],
+    ]),
+    followUps: [],
+    notes: [],
+    history: [
+      { at: wd(-8), by: "Eric Niyonzima", text: "Claim registered" },
+      { at: wd(-1), by: "Eric Niyonzima", text: "All documents received; moved to Submit" },
+    ],
+  },
+  {
+    id: "CLM-2025-064",
+    clientId: "CLT-004",
+    client: "Bank of Kigali",
+    policyId: "POL-2025-107",
+    classOfInsurance: "Professional Indemnity",
+    insurer: "SORAS",
+    dateOfLoss: wd(-2),
+    dateReported: wd(0),
+    amount: 1200000,
+    priority: "P3",
+    step: "REGISTER",
+    stepStartedAt: wd(0),
+    handler: "Isabelle Mukamana",
+    description: "Alleged advisory error on a corporate credit facility.",
+    documents: docs([
+      ["Notification of loss", 0],
+      ["Letter of claim from third party", null],
+    ]),
+    followUps: [],
+    notes: [],
+    history: [{ at: wd(0), by: "Isabelle Mukamana", text: "Claim registered" }],
+  },
+  {
+    id: "CLM-2025-061",
+    clientId: "CLT-002",
+    client: "Rwanda Energy Group",
+    policyId: "POL-2025-341",
+    classOfInsurance: "Public Liability",
+    insurer: "CORAR",
+    dateOfLoss: wd(-25),
+    dateReported: wd(-24),
+    amount: 6750000,
+    priority: "P2",
+    step: "FOLLOW_UP",
+    stepStartedAt: wd(-15),
+    handler: "Jean-Paul Habimana",
+    description: "Third party property damage during substation maintenance works.",
+    documents: docs([
+      ["Notification of loss", 24],
+      ["Third party claim letter", 22],
+      ["Contractor statement", 18],
+    ]),
+    submission: { submittedAt: wd(-15), insurerClaimNo: "COR/PL/2026/0412", evidence: "Claim submission letter.pdf" },
+    followUps: [
+      { date: wd(-5), by: "Jean-Paul Habimana", channel: "Email", note: "Chased decision.", insurerResponded: true },
+    ],
+    dispute: {
+      raisedAt: wd(-3),
+      reason: "Insurer rejected: damage attributed to contractor negligence, outside policy cover.",
+    },
+    notes: [],
+    history: [
+      { at: wd(-24), by: "Jean-Paul Habimana", text: "Claim registered" },
+      { at: wd(-15), by: "Jean-Paul Habimana", text: "Submitted to CORAR" },
+      { at: wd(-3), by: "Jean-Paul Habimana", text: "Insurer rejected the claim; sent to Claims Committee" },
+    ],
+  },
+  {
+    id: "CLM-2025-057",
+    clientId: "CLT-001",
+    client: "Kigali Steel Industries Ltd",
+    policyId: "POL-2025-418",
+    classOfInsurance: "Marine Cargo",
+    insurer: "SONARWA",
+    dateOfLoss: wd(-14),
+    dateReported: wd(-13),
+    amount: 19400000,
+    priority: "P2",
+    step: "FOLLOW_UP",
+    stepStartedAt: wd(-9),
+    handler: "Eric Niyonzima",
+    description: "Shortage on imported billet consignment via Mombasa corridor.",
+    documents: docs([
+      ["Notification of loss", 13],
+      ["Bill of lading", 12],
+      ["Survey report", 10],
+    ]),
+    submission: { submittedAt: wd(-9), insurerClaimNo: "SON/MC/2026/0093", evidence: "Claim submission letter.pdf" },
+    followUps: [
+      { date: wd(-4), by: "Eric Niyonzima", channel: "Call", note: "Insurer reviewing the survey report.", insurerResponded: true },
+    ],
+    notes: [],
+    history: [
+      { at: wd(-13), by: "Eric Niyonzima", text: "Claim registered" },
+      { at: wd(-9), by: "Eric Niyonzima", text: "Submitted to SONARWA" },
+    ],
+  },
+  {
+    id: "CLM-2025-052",
+    clientId: "CLT-003",
+    client: "Bralirwa PLC",
+    classOfInsurance: "Group Personal Accident",
+    insurer: "RADIANT",
+    dateOfLoss: wd(-20),
+    dateReported: wd(-19),
+    amount: 480000,
+    priority: "P3",
+    step: "SETTLEMENT",
+    stepStartedAt: wd(-1),
+    handler: "Marie Claire Uwimana",
+    description: "Warehouse operative injury; medical reports filed.",
+    documents: docs([
+      ["Notification of loss", 19],
+      ["Medical report", 17],
+    ]),
+    submission: { submittedAt: wd(-16), evidence: "Claim submission letter.pdf" },
+    followUps: [
+      { date: wd(-1), by: "Marie Claire Uwimana", channel: "Email", note: "Insurer confirmed full payment.", insurerResponded: true },
+    ],
+    settlement: { advisedAt: wd(-1), amount: 480000, signedBy: ["DMD"] },
+    notes: [],
+    history: [
+      { at: wd(-19), by: "Marie Claire Uwimana", text: "Claim registered" },
+      { at: wd(-1), by: "Marie Claire Uwimana", text: "Settlement of RWF 480,000 recorded; DMD signed off" },
+    ],
+  },
+  {
+    id: "CLM-2025-046",
+    clientId: "CLT-004",
+    client: "Bank of Kigali",
+    classOfInsurance: "Money / Cash in Transit",
+    insurer: "SORAS",
+    dateOfLoss: wd(-24),
+    dateReported: wd(-23),
+    amount: 15300000,
+    priority: "P1",
+    step: "FOLLOW_UP",
+    stepStartedAt: wd(-17),
+    handler: "Isabelle Mukamana",
+    description: "Cash-in-transit loss between Nyabugogo branch and head office.",
+    documents: docs([
+      ["Notification of loss", 23],
+      ["Police report", 21],
+      ["Cash movement log", 20],
+    ]),
+    submission: { submittedAt: wd(-17), insurerClaimNo: "SOR/MO/2026/0021", evidence: "Claim submission letter.pdf" },
+    followUps: [
+      { date: wd(-11), by: "Isabelle Mukamana", channel: "Letter", note: "Formal reminder sent; no reply.", insurerResponded: false },
+    ],
+    fraudFlag: true,
+    notes: [{ at: wd(-11), by: "Isabelle Mukamana", text: "Escort company statement differs from branch log." }],
+    history: [
+      { at: wd(-23), by: "Isabelle Mukamana", text: "Claim registered" },
+      { at: wd(-17), by: "Isabelle Mukamana", text: "Submitted to SORAS" },
+    ],
+  },
+  {
+    id: "CLM-2025-040",
+    clientId: "CLT-005",
+    client: "Horizon Logistics Rwanda",
+    policyId: "POL-2025-455",
+    classOfInsurance: "Goods in Transit",
+    insurer: "RADIANT",
+    dateOfLoss: wd(-40),
+    dateReported: wd(-39),
+    amount: 2100000,
+    priority: "P3",
+    step: "CLOSE",
+    stepStartedAt: wd(-8),
+    handler: "Eric Niyonzima",
+    description: "Damaged consignment of electronics on the Kigali–Rubavu route.",
+    documents: docs([
+      ["Notification of loss", 39],
+      ["Delivery note", 38],
+      ["Discharge voucher", 8, false],
+    ]),
+    submission: { submittedAt: wd(-34), insurerClaimNo: "RAD/GT/2026/0310", evidence: "Claim submission letter.pdf" },
+    followUps: [
+      { date: wd(-24), by: "Eric Niyonzima", channel: "Email", note: "Insurer agreed to pay in full.", insurerResponded: true },
+    ],
+    settlement: { advisedAt: wd(-12), amount: 2100000, signedBy: ["DMD", "MD"], paidToClientAt: wd(-9), evidence: "Payment advice.pdf" },
+    closure: { closedAt: wd(-6), by: "Eric Niyonzima", outcome: "SETTLED", evidence: "Discharge voucher.pdf" },
+    notes: [],
+    history: [
+      { at: wd(-39), by: "Eric Niyonzima", text: "Claim registered" },
+      { at: wd(-9), by: "Eric Niyonzima", text: "Paid to client" },
+      { at: wd(-6), by: "Eric Niyonzima", text: "Claim closed (settled)" },
+    ],
+  },
 ];
 
 export const POLICIES_BY_INSURER: InsurerSummary[] = [
@@ -361,15 +645,8 @@ export const RENEWAL_MONTHLY: RenewalMonth[] = [
 
 /* --------------------------------- Overview ---------------------------------- */
 
-export const CLAIM_STEPS: ClaimStep[] = [
-  { n: 1, name: "FNOL Received", sla: "24 hrs" },
-  { n: 2, name: "Documentation", sla: "3 days" },
-  { n: 3, name: "Assessment", sla: "2 days" },
-  { n: 4, name: "Negotiation", sla: "ongoing" },
-  { n: 5, name: "Adjudication", sla: "2 days" },
-  { n: 6, name: "Settlement", sla: "5 days" },
-  { n: 7, name: "Closed", sla: "—" },
-];
+// GRAL's six SOP claim steps (see lib/claims.ts for the full rules).
+export const CLAIM_STEPS: ClaimStep[] = CLAIM_STEP_DEFS.map((s) => ({ n: s.n, name: s.name, sla: s.slaLabel }));
 
 export const CLAIM_MONTHLY: ClaimMonth[] = [
   { month: "Oct", amount: 128, count: 14 },
@@ -392,4 +669,247 @@ export const RECENT_ACTIVITY: ActivityItem[] = [
   { who: "Eric Niyonzima", what: "added a UAP quote on REN-2026-005", when: "Yesterday" },
   { who: "Isabelle Mukamana", what: "flagged Bank of Kigali as non-compliant", when: "Yesterday" },
   { who: "Marie Claire Uwimana", what: "recorded client acceptance on REN-2026-003", when: "2 days ago" },
+];
+
+/* ------------------------------ Policy details ------------------------------- */
+// Financial terms and history for the sample policies. Net premium, amount
+// paid and commission rate are columns of the import template (v3.1); the
+// earlier periods and movements show what POL-04/POL-05 will return.
+
+export const POLICY_TERMS: Record<
+  string,
+  {
+    netPremium: number;
+    amountPaid: number;
+    commissionRate: number;
+    earlierPeriods?: Omit<PolicyPeriod, "current">[];
+    movements?: PolicyMovement[];
+  }
+> = {
+  "POL-2025-412": {
+    netPremium: 28100000,
+    amountPaid: 31200000,
+    commissionRate: 0.15,
+    earlierPeriods: [
+      { periodId: "PER-412-2024", from: "2024-09-21", to: "2025-09-20", sumInsured: 1650000000, netPremium: 26400000, totalPremium: 29300000, movement: "RENEWAL", bookingNote: "BN/SON/24/0912" },
+      { periodId: "PER-412-2023", from: "2023-09-21", to: "2024-09-20", sumInsured: 1500000000, netPremium: 24300000, totalPremium: 27000000, movement: "NEW", bookingNote: "BN/SON/23/0877" },
+    ],
+    movements: [
+      { id: "MOV-412-3", date: "2026-02-10", type: "ENDORSEMENT", description: "New warehouse in Masoro added to the schedule", premiumChange: 1250000, evidence: "Endorsement 02 - Masoro warehouse.pdf", by: "Jean-Paul Habimana" },
+    ],
+  },
+  "POL-2025-418": { netPremium: 6650000, amountPaid: 5000000, commissionRate: 0.1 },
+  "POL-2025-299": {
+    netPremium: 7830000,
+    amountPaid: 8700000,
+    commissionRate: 0.125,
+    earlierPeriods: [
+      { periodId: "PER-299-2024", from: "2024-10-20", to: "2025-10-19", sumInsured: 880000000, netPremium: 7200000, totalPremium: 8000000, movement: "NEW", bookingNote: "BN/RAD/24/1044" },
+    ],
+    movements: [
+      { id: "MOV-299-3", date: "2026-03-04", type: "ENDORSEMENT", description: "4 vehicles added to the fleet (now 42)", premiumChange: 640000, evidence: "Fleet endorsement March 2026.pdf", by: "Marie Claire Uwimana" },
+      { id: "MOV-299-4", date: "2026-06-18", type: "END_N", description: "1 vehicle sold and removed from cover", premiumChange: -95000, evidence: "Vehicle removal letter.pdf", by: "Marie Claire Uwimana" },
+    ],
+  },
+  "POL-2025-341": { netPremium: 3240000, amountPaid: 1800000, commissionRate: 0.15 },
+  "POL-2025-188": { netPremium: 12870000, amountPaid: 14300000, commissionRate: 0.15 },
+  "POL-2025-107": {
+    netPremium: 19890000,
+    amountPaid: 11050000,
+    commissionRate: 0.125,
+    earlierPeriods: [
+      { periodId: "PER-107-2024", from: "2024-10-03", to: "2025-10-02", sumInsured: 2400000000, netPremium: 18900000, totalPremium: 21000000, movement: "NEW", bookingNote: "BN/SOR/24/0310" },
+    ],
+  },
+  "POL-2025-455": { netPremium: 3690000, amountPaid: 0, commissionRate: 0.1 },
+};
+
+/* --------------------------------- Approvals --------------------------------- */
+// Sample approval requests (APR-01 to APR-04). Claim settlement sign-offs are
+// not listed here: the inbox builds them from the claims, so both screens
+// always agree.
+
+const rd = (n: number) => addWorkingDays(todayIso(), n);
+
+export const APPROVALS: ApprovalRequest[] = [
+  {
+    id: "APR-2026-014",
+    subjectType: "RENEWAL",
+    subjectId: "REN-2026-004",
+    subjectRef: "REN-2026-004",
+    subjectRevision: 3,
+    title: "Renewal recommendation · Public Liability",
+    summary: "Renew with CORAR at RWF 3,600,000 (limit RWF 500m). SONARWA offered RWF 3,450,000 but with a lower limit of RWF 400m.",
+    clientId: "CLT-002",
+    client: "Rwanda Energy Group",
+    amount: 540000,
+    amountLabel: "Annual commission",
+    policyVersion: APPROVAL_POLICY_VERSION.RENEWAL,
+    requestedBy: "Marie Claire Uwimana",
+    requestedAt: rd(-1),
+    dueAt: rd(1),
+    status: "PENDING",
+    steps: buildSteps(renewalApprovers(540000)),
+    evidenceRequired: true,
+    evidence: [{ name: "Quote comparison.xlsx", version: 1 }, { name: "Approval memo.pdf", version: 1 }],
+    version: 1,
+    history: [{ at: rd(-1), by: "Marie Claire Uwimana", text: "Approval requested" }],
+  },
+  {
+    id: "APR-2026-015",
+    subjectType: "KYC",
+    subjectId: "CLT-004",
+    subjectRef: "CLT-004",
+    subjectRevision: 7,
+    title: "KYC readiness · Bank of Kigali",
+    summary: "Certificate of Incorporation on file. The BNR licence was renewed and the new copy is attached. Tax clearance and the signatory list are still missing.",
+    clientId: "CLT-004",
+    client: "Bank of Kigali",
+    policyVersion: APPROVAL_POLICY_VERSION.KYC,
+    requestedBy: "Isabelle Mukamana",
+    requestedAt: rd(-3),
+    dueAt: rd(-1),
+    status: "PENDING",
+    steps: buildSteps([{ role: "Risk & Compliance Manager" }]),
+    evidenceRequired: true,
+    evidence: [{ name: "BNR Operating Licence 2026.pdf", version: 2 }],
+    version: 1,
+    history: [{ at: rd(-3), by: "Isabelle Mukamana", text: "Approval requested" }],
+  },
+  {
+    id: "APR-2026-016",
+    subjectType: "POLICY_ENDORSEMENT",
+    subjectId: "POL-2025-418",
+    subjectRef: "POL-2025-418",
+    subjectRevision: 2,
+    title: "Endorsement · add the Dar es Salaam route to Marine Cargo",
+    summary: "Add the Dar es Salaam to Kigali road route. Extra premium RWF 820,000 for the rest of the period.",
+    clientId: "CLT-001",
+    client: "Kigali Steel Industries Ltd",
+    amount: 820000,
+    amountLabel: "Extra premium",
+    policyVersion: APPROVAL_POLICY_VERSION.POLICY_ENDORSEMENT,
+    requestedBy: "Jean-Paul Habimana",
+    requestedAt: todayIso(),
+    dueAt: rd(2),
+    status: "PENDING",
+    steps: buildSteps([{ role: "Technical Director" }, { role: "DMD" }]),
+    evidenceRequired: false,
+    evidence: [],
+    version: 1,
+    history: [{ at: todayIso(), by: "Jean-Paul Habimana", text: "Approval requested" }],
+  },
+  {
+    id: "APR-2026-011",
+    subjectType: "RENEWAL",
+    subjectId: "REN-2026-003",
+    subjectRef: "REN-2026-003",
+    subjectRevision: 4,
+    title: "Renewal recommendation · Motor Fleet",
+    summary: "Renew with RADIANT at RWF 8,700,000 for 42 vehicles, comprehensive.",
+    clientId: "CLT-002",
+    client: "Rwanda Energy Group",
+    amount: 1087500,
+    amountLabel: "Annual commission",
+    policyVersion: APPROVAL_POLICY_VERSION.RENEWAL,
+    requestedBy: "Marie Claire Uwimana",
+    requestedAt: rd(-14),
+    dueAt: rd(-12),
+    status: "APPROVED",
+    steps: [{ order: 1, role: "MD", status: "APPROVED", decidedBy: "Claudine Mukamana", decidedAt: rd(-13), comment: "Agreed. Same insurer, clean claims record." }],
+    evidenceRequired: true,
+    evidence: [{ name: "Approval memo.pdf", version: 1 }],
+    version: 2,
+    history: [
+      { at: rd(-14), by: "Marie Claire Uwimana", text: "Approval requested" },
+      { at: rd(-13), by: "Claudine Mukamana", text: "Approved by MD" },
+    ],
+  },
+  {
+    id: "APR-2026-009",
+    subjectType: "POLICY_ENDORSEMENT",
+    subjectId: "POL-2025-188",
+    subjectRef: "POL-2025-188",
+    subjectRevision: 1,
+    title: "Endorsement · raise the sum insured to RWF 1.1bn",
+    summary: "Raise the sum insured after the new bottling line. Extra premium RWF 1,400,000.",
+    clientId: "CLT-003",
+    client: "Bralirwa PLC",
+    amount: 1400000,
+    amountLabel: "Extra premium",
+    policyVersion: APPROVAL_POLICY_VERSION.POLICY_ENDORSEMENT,
+    requestedBy: "Eric Niyonzima",
+    requestedAt: rd(-9),
+    dueAt: rd(-7),
+    status: "RETURNED",
+    steps: [
+      { order: 1, role: "Technical Director", status: "RETURNED", decidedBy: "Patrick Nkurunziza", decidedAt: rd(-8), comment: "Attach the valuation report before I can approve." },
+      { order: 2, role: "DMD", status: "WAITING" },
+    ],
+    evidenceRequired: false,
+    evidence: [],
+    version: 2,
+    history: [
+      { at: rd(-9), by: "Eric Niyonzima", text: "Approval requested" },
+      { at: rd(-8), by: "Patrick Nkurunziza", text: "Returned by Technical Director" },
+    ],
+  },
+];
+
+/* --------------------------------- My Work ----------------------------------- */
+// Tasks people add by hand. Tasks from claims, renewals, approvals and KYC
+// are built from those records (see listTasks in api.ts), as WFL-02 will do.
+
+export const MANUAL_TASKS: WorkTask[] = [
+  {
+    id: "TSK-0101",
+    key: "MANUAL:TSK-0101",
+    type: "MANUAL",
+    title: "Call the client about the fire brigade report",
+    detail: "Kigali Steel needs the report for CLM-2025-089; the fire brigade promised it this week.",
+    resourceType: "CLAIM",
+    resourceId: "CLM-2025-089",
+    resourceRef: "CLM-2025-089",
+    client: "Kigali Steel Industries Ltd",
+    owner: "Jean-Paul Habimana",
+    dueDate: rd(0),
+    status: "OPEN",
+    source: "MANUAL",
+    createdAt: rd(-2),
+    history: [{ at: rd(-2), by: "Jean-Paul Habimana", text: "Task created" }],
+  },
+  {
+    id: "TSK-0102",
+    key: "MANUAL:TSK-0102",
+    type: "MANUAL",
+    title: "Prepare the renewal visit agenda",
+    detail: "Horizon Logistics renewal visit: cover review and new routes.",
+    resourceType: "RENEWAL",
+    resourceId: "REN-2026-006",
+    resourceRef: "REN-2026-006",
+    client: "Horizon Logistics Rwanda",
+    owner: "Eric Niyonzima",
+    dueDate: rd(3),
+    status: "OPEN",
+    source: "MANUAL",
+    createdAt: rd(-1),
+    history: [{ at: rd(-1), by: "Eric Niyonzima", text: "Task created" }],
+  },
+  {
+    id: "TSK-0103",
+    key: "MANUAL:TSK-0103",
+    type: "MANUAL",
+    title: "Send the premium reminder for POL-2025-341",
+    detail: "RWF 1,800,000 is still unpaid.",
+    resourceType: "POLICY",
+    resourceId: "POL-2025-341",
+    resourceRef: "POL-2025-341",
+    client: "Rwanda Energy Group",
+    owner: "Marie Claire Uwimana",
+    dueDate: rd(-2),
+    status: "OPEN",
+    source: "MANUAL",
+    createdAt: rd(-6),
+    history: [{ at: rd(-6), by: "Marie Claire Uwimana", text: "Task created" }],
+  },
 ];

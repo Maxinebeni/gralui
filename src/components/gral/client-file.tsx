@@ -1,17 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Check, Clock, Flag, Mail, MapPin, Pencil, Phone, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
 import { listClientClaims } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
-import { clientPermissions } from "@/lib/permissions";
+import { canAccessPath, clientPermissions, documentPermissions } from "@/lib/permissions";
 import type { Client, ClientClaim, Policy } from "@/lib/types";
 import { Chip, NavyButton, OutlineButton, Person, SegmentedTabs, TextLink } from "./ui";
 import { canManageClients } from "./client-form";
 import { PolicyForm } from "./policy-form";
+import { DocumentPanel } from "./documents";
 
 const TABS = ["KYC & Compliance", "Policies", "Claims", "Correspondence"] as const;
 export type ClientFileTab = (typeof TABS)[number];
@@ -36,6 +38,8 @@ export function ClientFile({
   // null: show the policy table. "new": Add Policy form. A policy: Edit Policy form.
   const [policyEditor, setPolicyEditor] = useState<Policy | "new" | null>(null);
   const { user } = useCurrentUser();
+  const canOpenClaims = canAccessPath(user, "/claims");
+  const { canUpload: canUploadDocuments } = documentPermissions(user);
   const { canFlagNonCompliant, seesDocumentDetail } = clientPermissions(user.role);
   const canManage = canManageClients(user.role);
 
@@ -149,6 +153,17 @@ export function ClientFile({
                   <Flag className="size-3.5" /> Flag as Non-Compliant
                 </NavyButton>
               ) : null}
+              <div className="pt-4">
+                {/* Backend clients use the real document API; sample clients keep files in this tab. */}
+                <DocumentPanel
+                  subject={{ type: "CLIENT", id: client.uuid ?? client.id }}
+                  classification="KYC"
+                  purpose="KYC_EVIDENCE"
+                  canUpload={canUploadDocuments}
+                  title="KYC Files"
+                  emptyText="No KYC files uploaded yet."
+                />
+              </div>
             </div>
           ) : (
             <p className="mt-4 text-xs text-muted-foreground">
@@ -205,7 +220,14 @@ export function ClientFile({
                     <tbody>
                       {client.policies.map((p) => (
                         <tr key={p.id}>
-                          <td className="border-b border-border px-3 py-3 text-xs font-medium">{p.id}</td>
+                          <td className="border-b border-border px-3 py-3 text-xs font-medium">
+                            <Link
+                              href={`/policies/${encodeURIComponent(p.id)}`}
+                              className="text-primary underline underline-offset-2 hover:opacity-70"
+                            >
+                              {p.id}
+                            </Link>
+                          </td>
                           <td className="border-b border-border px-3 py-3 text-xs">{p.classOfInsurance}</td>
                           <td className="border-b border-border px-3 py-3 text-xs">{p.insurer}</td>
                           <td className="border-b border-border px-3 py-3 text-xs whitespace-nowrap">
@@ -254,10 +276,7 @@ export function ClientFile({
               <p className="text-xs text-muted-foreground">No claims on record.</p>
             ) : (
               claims.map((c) => (
-                <div
-                  key={c.id}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2.5"
-                >
+                <ClaimRow key={c.id} id={c.id} linked={canOpenClaims}>
                   <div>
                     <p className="text-xs font-medium">{c.id}</p>
                     <p className="text-[11px] text-muted-foreground">
@@ -265,9 +284,9 @@ export function ClientFile({
                     </p>
                   </div>
                   <Chip tone={c.sla === "breached" ? "danger" : c.sla === "approaching" ? "warning" : "success"}>
-                    Step {c.step}
+                    {c.stage}
                   </Chip>
-                </div>
+                </ClaimRow>
               ))
             )}
           </div>
@@ -293,5 +312,16 @@ export function ClientFile({
         ) : null}
       </div>
     </div>
+  );
+}
+
+/** A claim on the client file; opens the claim when the user can see the Claims pages. */
+function ClaimRow({ id, linked, children }: { id: string; linked: boolean; children: React.ReactNode }) {
+  const className = "flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2.5";
+  if (!linked) return <div className={className}>{children}</div>;
+  return (
+    <Link href={`/claims?claim=${encodeURIComponent(id)}`} className={cn(className, "transition-colors hover:bg-pale/50")}>
+      {children}
+    </Link>
   );
 }
