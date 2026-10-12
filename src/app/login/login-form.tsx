@@ -15,9 +15,10 @@ export function LoginForm() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Already signed in — skip the login screen.
+  // Already signed in — skip the login screen. Overview is the landing page
+  // because every role can see it (not every role has client access).
   useEffect(() => {
-    if (ready && user) router.replace("/clients");
+    if (ready && user) router.replace("/");
   }, [ready, user, router]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -30,7 +31,7 @@ export function LoginForm() {
     setSubmitting(true);
     try {
       await signIn(email.trim(), password);
-      router.replace("/clients");
+      router.replace("/");
     } catch (err) {
       // Show the backend's message (wrong password, no role, server down) on the page.
       const message =

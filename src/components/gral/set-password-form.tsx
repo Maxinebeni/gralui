@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ArrowLeft, Check, Circle, KeyRound, LinkIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { acceptInvitation, confirmPasswordReset } from "@/lib/api";
+import { InvalidLinkError, acceptInvitation, confirmPasswordReset } from "@/lib/api";
 import { NavyButton } from "./ui";
 
 // Backend rule (IdentityRecoveryService): 15+ characters, at most 72 bytes,
@@ -72,10 +72,15 @@ export function SetPasswordForm({ mode }: { mode: "reset" | "invitation" }) {
     try {
       await (mode === "reset" ? confirmPasswordReset(token, password) : acceptInvitation(token, password));
       setDone(true);
-    } catch {
-      // The backend gives the same answer for used, expired and invalid links.
-      setLinkError(true);
-      toast.error("This link is no longer valid.");
+    } catch (err) {
+      // Used, expired or invalid links get the "link isn't valid" screen; any
+      // other problem (password rule, too many attempts, server) is shown as is.
+      if (err instanceof InvalidLinkError) {
+        setLinkError(true);
+        toast.error("This link is no longer valid.");
+      } else {
+        toast.error(err instanceof Error ? err.message : "Could not save your password right now.");
+      }
     } finally {
       setSubmitting(false);
     }

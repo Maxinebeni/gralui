@@ -1,6 +1,9 @@
 // Shared front-end types. Keep these in line with the backend's OpenAPI
 // contract once the Spring Boot team publishes it.
 
+// The first six come from the original design. The rest are GRAL roles the
+// backend defines (roles table, migration V9). Commercial and Finance Director
+// exist only in the design so far — confirm with GRAL whether they are real.
 export const ROLES = [
   "MD",
   "DMD",
@@ -8,6 +11,13 @@ export const ROLES = [
   "Commercial Director",
   "Finance Director",
   "Risk & Compliance Manager",
+  "Accounts Executive",
+  "CRM Manager",
+  "Client Relation Records Officer",
+  "GI Underwriting Manager",
+  "Claims Manager",
+  "Claims Underwriter",
+  "Internal Audit Manager",
 ] as const;
 
 export type Role = (typeof ROLES)[number];
@@ -45,12 +55,21 @@ export type ClientContact = {
 };
 
 export type Client = {
+  /** The client reference shown on screen, e.g. CLT-001. */
   id: string;
+  /** Backend client ID (UUID). Only set for clients loaded from the backend. */
+  uuid?: string;
+  /** Backend version number, needed when saving changes. Only set for backend clients. */
+  version?: number;
+  /** Backend ID of the assigned relationship manager. */
+  managerId?: string;
   name: string;
   type: ClientType;
   sector: string;
   /** Physical address. Optional because the older sample records do not have one. */
   address?: string;
+  /** Free text remarks stored on the backend client profile. */
+  remarks?: string;
   /** Primary contact person. Optional because the older sample records do not have one. */
   contact?: ClientContact;
   activePolicies: number;
@@ -113,7 +132,7 @@ export type RenewalQuote = {
   recommended: boolean;
 };
 
-/** Written client acceptance — required before placement. */
+/** Written client acceptance, required before placement. */
 export type RenewalAcceptance = {
   quoteId: string;
   acceptedAt: string; // ISO date
@@ -145,7 +164,13 @@ export type ClaimMonth = { month: string; amount: number; count: number };
 export type ActivityItem = { who: string; what: string; when: string };
 
 export type SessionUser = {
+  /** Backend user ID (UUID). */
+  id?: string;
   email: string;
   name: string;
   role: Role;
+  /** Role codes exactly as the backend sends them, e.g. ADMINISTRATOR. */
+  backendRoles?: string[];
+  /** Effective permission codes from the backend, e.g. CLIENT_CREATE. */
+  permissions?: string[];
 };

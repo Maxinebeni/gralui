@@ -23,6 +23,8 @@ export function ForgotPasswordForm() {
     try {
       await requestPasswordReset(value);
       setSentTo(value);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not send the reset email right now. Please try again.");
     } finally {
       setSubmitting(false);
     }

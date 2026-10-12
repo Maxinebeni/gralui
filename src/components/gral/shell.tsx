@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/format";
 import { useCurrentUser } from "@/lib/auth-context";
-import { navItemsFor } from "@/lib/permissions";
+import { navItemsFor, usesBackendPermissions } from "@/lib/permissions";
 import { FilterPill } from "./ui";
 
 import {
@@ -21,7 +21,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const { user, signOut } = useCurrentUser();
-  const tabs = navItemsFor(user.role);
+  const tabs = navItemsFor(user);
 
   const isActive = (href: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
 
@@ -72,9 +72,12 @@ export function Shell({ children }: { children: ReactNode }) {
             <IconBtn
               label="Sign out"
               mobile
-              onClick={() => {
-                signOut();
-                router.replace("/login");
+              onClick={async () => {
+                try {
+                  await signOut();
+                } finally {
+                  router.replace("/login");
+                }
               }}
             >
               <LogOut className="size-4" />
@@ -142,30 +145,33 @@ export function PageHeader({
       </div>
 
       <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">
-        {/* Demo-only role switcher (from the design). Remove once real roles come from the backend. */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="float-pill flex max-w-full items-center gap-1.5 px-3.5 py-2 text-xs font-medium"
-            >
-              <span className="text-muted-foreground">Role:</span>
-              <span className="truncate">{user.role}</span>
-              <ChevronDown className="size-3.5 text-subtle" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="rounded-xl">
-            {roles.map((r) => (
-              <DropdownMenuItem
-                key={r}
-                onSelect={() => setRole(r)}
-                className={cn("text-xs", r === user.role && "text-primary")}
+        {/* Demo-only role switcher (from the design). Hidden once the backend sends
+            real permissions, because switching roles would no longer change anything. */}
+        {!usesBackendPermissions(user) ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="float-pill flex max-w-full items-center gap-1.5 px-3.5 py-2 text-xs font-medium"
               >
-                {r}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+                <span className="text-muted-foreground">Role:</span>
+                <span className="truncate">{user.role}</span>
+                <ChevronDown className="size-3.5 text-subtle" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="rounded-xl">
+              {roles.map((r) => (
+                <DropdownMenuItem
+                  key={r}
+                  onSelect={() => setRole(r)}
+                  className={cn("text-xs", r === user.role && "text-primary")}
+                >
+                  {r}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
         {extraPills}
         <FilterPill label="Date Range" value="Last 30 days" />
         {action}
@@ -215,13 +221,15 @@ export function NoAccess() {
       <div className="float-card rise-in max-w-md p-5 text-center sm:p-8">
         <h1 className="text-xl font-semibold tracking-tight">No access</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          The {user.role} role does not have access to this page.
+          {usesBackendPermissions(user)
+            ? "Your account does not have access to this page. Ask your administrator if you need it."
+            : `The ${user.role} role does not have access to this page.`}
         </p>
         <Link
-          href="/clients"
+          href="/"
           className="mt-6 inline-flex items-center justify-center rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
         >
-          Go to Clients
+          Go to Overview
         </Link>
       </div>
     </div>

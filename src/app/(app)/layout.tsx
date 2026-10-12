@@ -19,5 +19,5 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
   if (!ready || !user) return <div className="min-h-screen bg-background" />;
 
-  return <Shell>{canAccessPath(user.role, pathname) ? children : <NoAccess />}</Shell>;
+  return <Shell>{canAccessPath(user, pathname) ? children : <NoAccess />}</Shell>;
 }
