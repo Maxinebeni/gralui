@@ -39,8 +39,9 @@ export type Policy = {
   id: string;
   classOfInsurance: string;
   insurer: string;
-  sumInsured: number;
-  premium: number;
+  /** Optional: the backend's first policy API does not record amounts yet. */
+  sumInsured?: number;
+  premium?: number;
   start: string;
   renewal: string;
   status: PolicyStatus;
@@ -345,9 +346,9 @@ export type PolicyPeriod = {
   periodId: string;
   from: string; // ISO date
   to: string; // ISO date
-  sumInsured: number;
-  netPremium: number;
-  totalPremium: number;
+  sumInsured: number | null;
+  netPremium: number | null;
+  totalPremium: number | null;
   movement: PolicyMovementType;
   bookingNote?: string;
   current: boolean;
@@ -368,8 +369,8 @@ export type PolicyMovement = {
  * Template v3.1). null means the value has not been recorded yet.
  */
 export type PolicyFinancials = {
-  sumInsured: number;
-  totalPremium: number;
+  sumInsured: number | null;
+  totalPremium: number | null;
   netPremium: number | null;
   amountPaid: number | null;
   /** For example 0.15 for 15%. */

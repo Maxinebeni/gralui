@@ -369,3 +369,14 @@ export function QuickActionRow({
     </div>
   );
 }
+
+/** Shown wherever a value has not been captured yet, so a gap is never just a blank. */
+export function NotRecorded() {
+  return <span className="text-subtle italic">Not recorded</span>;
+}
+
+/** The value, or "Not recorded" when it is missing or empty. */
+export function Recorded({ value }: { value: ReactNode }) {
+  if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) return <NotRecorded />;
+  return <>{value}</>;
+}

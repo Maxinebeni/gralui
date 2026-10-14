@@ -962,12 +962,12 @@ export function policyFinancials(p: Policy): PolicyFinancials {
   const amountPaid = p.amountPaid ?? terms?.amountPaid ?? null;
   const commissionRate = p.commissionRate ?? terms?.commissionRate ?? null;
   return {
-    sumInsured: p.sumInsured,
-    totalPremium: p.premium,
+    sumInsured: p.sumInsured ?? null,
+    totalPremium: p.premium ?? null,
     netPremium,
     amountPaid,
     commissionRate,
-    balance: amountPaid === null ? null : p.premium - amountPaid,
+    balance: amountPaid === null || p.premium === undefined ? null : p.premium - amountPaid,
     commission: netPremium === null || commissionRate === null ? null : Math.round(netPremium * commissionRate),
   };
 }
@@ -984,9 +984,9 @@ export async function getPolicyDetail(policyId: string): Promise<PolicyDetail | 
     periodId: `PER-${policy.id}-current`,
     from: displayToIso(policy.start),
     to: displayToIso(policy.renewal),
-    sumInsured: policy.sumInsured,
-    netPremium: financials.netPremium ?? 0,
-    totalPremium: policy.premium,
+    sumInsured: policy.sumInsured ?? null,
+    netPremium: financials.netPremium,
+    totalPremium: policy.premium ?? null,
     movement: earlier.length ? "RENEWAL" : "NEW",
     current: true,
   };

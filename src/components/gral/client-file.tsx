@@ -10,7 +10,7 @@ import { listClientClaims } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { canAccessPath, clientPermissions, documentPermissions } from "@/lib/permissions";
 import type { Client, ClientClaim, Policy } from "@/lib/types";
-import { Chip, NavyButton, OutlineButton, Person, SegmentedTabs, TextLink } from "./ui";
+import { Chip, NavyButton, NotRecorded, OutlineButton, Person, Recorded, SegmentedTabs, TextLink } from "./ui";
 import { canManageClients } from "./client-form";
 import { PolicyForm } from "./policy-form";
 import { DocumentPanel } from "./documents";
@@ -65,32 +65,46 @@ export function ClientFile({
             {client.nonCompliant ? <Chip tone="danger">Non-Compliant</Chip> : <Chip tone="success">Compliant</Chip>}
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            {client.id} · {client.type} · {client.sector} · {client.activePolicies} active{" "}
+            {client.id} · {client.type} · <Recorded value={client.sector} /> · {client.activePolicies} active{" "}
             {client.activePolicies === 1 ? "policy" : "policies"}
           </p>
-          {client.address ? (
-            <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <MapPin className="size-3.5 shrink-0" /> {client.address}
-            </p>
-          ) : null}
+          <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+            <MapPin className="size-3.5 shrink-0" /> <Recorded value={client.address} />
+          </p>
           {client.contact ? (
             <div className="mt-2 rounded-xl bg-pale px-3 py-2 text-xs">
               <p className="font-medium">
-                {client.contact.name} <span className="font-normal text-muted-foreground">· {client.contact.title}</span>
+                <Recorded value={client.contact.name} />{" "}
+                <span className="font-normal text-muted-foreground">
+                  · <Recorded value={client.contact.title} />
+                </span>
               </p>
               <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
-                <a
-                  href={`mailto:${client.contact.email}`}
-                  className="flex items-center gap-1 text-primary underline underline-offset-2 hover:opacity-70"
-                >
-                  <Mail className="size-3.5" /> {client.contact.email}
-                </a>
+                {client.contact.email ? (
+                  <a
+                    href={`mailto:${client.contact.email}`}
+                    className="flex items-center gap-1 text-primary underline underline-offset-2 hover:opacity-70"
+                  >
+                    <Mail className="size-3.5" /> {client.contact.email}
+                  </a>
+                ) : (
+                  <span className="flex items-center gap-1">
+                    <Mail className="size-3.5" /> <NotRecorded />
+                  </span>
+                )}
                 <span className="flex items-center gap-1">
-                  <Phone className="size-3.5" /> {client.contact.phone}
+                  <Phone className="size-3.5" /> <Recorded value={client.contact.phone} />
                 </span>
               </p>
             </div>
-          ) : null}
+          ) : (
+            <p className="mt-2 rounded-xl bg-pale px-3 py-2 text-xs text-muted-foreground">
+              Primary contact: <NotRecorded />
+            </p>
+          )}
+          <p className="mt-2 text-xs text-muted-foreground">
+            Remarks: <Recorded value={client.remarks} />
+          </p>
           <div className="mt-2">
             <Person name={client.manager} />
           </div>
@@ -228,17 +242,23 @@ export function ClientFile({
                               {p.id}
                             </Link>
                           </td>
-                          <td className="border-b border-border px-3 py-3 text-xs">{p.classOfInsurance}</td>
-                          <td className="border-b border-border px-3 py-3 text-xs">{p.insurer}</td>
-                          <td className="border-b border-border px-3 py-3 text-xs whitespace-nowrap">
-                            {formatRwf(p.sumInsured)}
+                          <td className="border-b border-border px-3 py-3 text-xs">
+                            <Recorded value={p.classOfInsurance} />
+                          </td>
+                          <td className="border-b border-border px-3 py-3 text-xs">
+                            <Recorded value={p.insurer} />
                           </td>
                           <td className="border-b border-border px-3 py-3 text-xs whitespace-nowrap">
-                            {formatRwf(p.premium)}
+                            {p.sumInsured === undefined ? <NotRecorded /> : formatRwf(p.sumInsured)}
                           </td>
-                          <td className="border-b border-border px-3 py-3 text-xs whitespace-nowrap">{p.start}</td>
                           <td className="border-b border-border px-3 py-3 text-xs whitespace-nowrap">
-                            {p.renewal}
+                            {p.premium === undefined ? <NotRecorded /> : formatRwf(p.premium)}
+                          </td>
+                          <td className="border-b border-border px-3 py-3 text-xs whitespace-nowrap">
+                            <Recorded value={p.start} />
+                          </td>
+                          <td className="border-b border-border px-3 py-3 text-xs whitespace-nowrap">
+                            <Recorded value={p.renewal} />
                           </td>
                           <td className="border-b border-border px-3 py-3">
                             <Chip

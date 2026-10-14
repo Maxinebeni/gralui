@@ -10,7 +10,7 @@ import { Search } from "lucide-react";
 import { ClientFile } from "@/components/gral/client-file";
 import { ClientFormPanel } from "@/components/gral/client-form";
 import { SlideOver } from "@/components/gral/shell";
-import { Chip, Person, TextLink } from "@/components/gral/ui";
+import { Chip, NotRecorded, Person, Recorded, TextLink } from "@/components/gral/ui";
 import { listClients } from "@/lib/api";
 import type { Client } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -123,7 +123,9 @@ export function ClientsTable({
                   <span className="block max-w-[90px] truncate">{c.type}</span>
                 </Td>
                 <Td className="text-xs">
-                  <span className="block max-w-[80px] truncate">{c.sector}</span>
+                  <span className="block max-w-[80px] truncate">
+                    <Recorded value={c.sector} />
+                  </span>
                 </Td>
                 <Td className="text-xs">{c.activePolicies}</Td>
                 <Td>
@@ -153,7 +155,7 @@ export function ClientsTable({
                 </Td>
                 <Td>
                   <div className="max-w-[70px] truncate">
-                    <Person name={c.manager} />
+                    {c.manager ? <Person name={c.manager} /> : <NotRecorded />}
                   </div>
                 </Td>
               </tr>
