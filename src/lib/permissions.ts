@@ -25,7 +25,7 @@ export type NavItem = {
  * table, dev branch). Add "CLAIM" and "RENEWAL" when the backend adds
  * CLAIM_READ and RENEWAL_READ — then those menus follow the backend too.
  */
-const BACKEND_MODULES = ["CLIENT"];
+const BACKEND_MODULES = ["CLIENT", "USER", "ROLE"];
 
 const CLAIM_ROLES: readonly Role[] = [
   "MD",
@@ -54,6 +54,9 @@ const RENEWAL_ROLES: readonly Role[] = [
 // CLIENT_READ is a real backend code. CLAIM_READ and RENEWAL_READ are
 // proposed names — confirm them with the backend team (PLN-02).
 // Items with a parent appear in that item's dropdown, not in the top bar.
+/** Parent for pages listed in the name menu at the top right. */
+export const ACCOUNT_MENU = "account";
+
 export const NAV_ITEMS: NavItem[] = [
   { label: "Overview", href: "/", permission: null, roles: ROLES },
   // Everyone has work assigned to them; the list only shows what they may see.
@@ -65,6 +68,10 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Clients", href: "/clients", permission: "CLIENT_READ", roles: ROLES },
   { label: "All Clients", href: "/clients/all", permission: "CLIENT_READ", roles: ROLES, parent: "/clients" },
   { label: "Renewals", href: "/renewals", permission: "RENEWAL_READ", roles: RENEWAL_ROLES },
+  // Admin pages sit in the name (account) menu, not the top bar. Real backend
+  // permissions; in demo mode only the MD sees them.
+  { label: "Users", href: "/admin", permission: "USER_READ", roles: ["MD"], parent: ACCOUNT_MENU },
+  { label: "Roles & Permissions", href: "/admin/roles", permission: "ROLE_READ", roles: ["MD"], parent: ACCOUNT_MENU },
 ];
 
 /** Pages without a menu item of their own, and the menu item that controls them. */
@@ -194,5 +201,21 @@ export function documentPermissions(user: SessionUser) {
     canUpload: usesBackendPermissions(user)
       ? hasPermission(user, "DOCUMENT_UPLOAD")
       : user.role !== "Internal Audit Manager" && user.role !== "Finance Director",
+  };
+}
+
+/**
+ * Administration actions, straight from the backend's permission codes. In
+ * demo mode the MD can do everything, so the screens can be shown.
+ */
+export function adminPermissions(user: SessionUser) {
+  const has = (code: string) => (usesBackendPermissions(user) ? hasPermission(user, code) : user.role === "MD");
+  return {
+    canInvite: has("USER_CREATE") && has("USER_ASSIGN_ROLES"),
+    canResendInvite: has("USER_INVITE"),
+    canAssignRoles: has("USER_ASSIGN_ROLES"),
+    canDeactivate: has("USER_DEACTIVATE"),
+    canCreateRole: has("ROLE_CREATE"),
+    canUpdateRole: has("ROLE_UPDATE"),
   };
 }

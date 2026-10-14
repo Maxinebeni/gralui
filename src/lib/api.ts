@@ -5,8 +5,8 @@
 // the backend. The screens will not need to change as long as the response
 // shapes match src/lib/types.ts.
 //
-// STATUS: authentication, clients and client documents are connected to the
-// real backend. Policies, claims, renewals, approvals, tasks and the overview
+// STATUS: authentication, clients, client documents and administration
+// (users, roles) are connected to the real backend. Policies, claims, renewals, approvals, tasks and the overview
 // still use mock data.
 
 import {
@@ -29,6 +29,7 @@ import {
   mockListManagers,
   mockUpdateClient,
 } from "./mock-clients";
+import { DEMO_ADMIN_ID, PERMISSIONS, ROLES_DATA, USERS_DATA } from "./mock-admin";
 import {
   APPROVAL_POLICY_VERSION,
   DECISION_DAYS,
@@ -56,6 +57,7 @@ import {
 import { displayToIso } from "./format";
 import { completionBlocker, currentMilestone, milestoneDue, todayIso } from "./renewals";
 import type {
+  AccessCategory,
   ActivityItem,
   ApprovalDecision,
   ApprovalRequest,
@@ -74,6 +76,9 @@ import type {
   DocumentSubject,
   EvidenceRef,
   InsurerSummary,
+  ManagedRole,
+  ManagedUser,
+  PermissionDefinition,
   Policy,
   PolicyDetail,
   PolicyFinancials,
@@ -1223,6 +1228,257 @@ export async function downloadDocument(
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/* ------------------------------- Administration ------------------------------ */
+// Connected to the backend's /api/v1/admin endpoints (TC). In demo mode the
+// same rules run on sample data in memory. Backend rules the screens follow:
+// an account is Business or Administration for good, and all its roles must
+// match; nobody changes their own account; the last active administrator
+// stays; the built-in ADMINISTRATOR role cannot be edited; nobody changes the
+// permissions of a role they hold; every change needs a reason (audit log).
+
+type AdminProblem = { status?: number; code?: string; fields?: string[] };
+
+const ADMIN_MESSAGES: Record<string, string> = {
+  DUPLICATE: "An account or role with these details already exists.",
+  ACCOUNT_CATEGORY_MISMATCH: "An account's roles must all be Business roles or all Administration roles.",
+  ROLE_CATEGORY_MISMATCH: "A Business role can only have Business permissions, and an Administration role only Administration ones.",
+  SELF_OPERATION: "You can't change or deactivate your own account. Ask another administrator.",
+  LAST_ADMINISTRATOR: "This is the last active administrator, so it must keep the administrator role.",
+  STALE_VERSION: "Someone else changed this just now. Close it and open it again to see the latest.",
+  INVALID_TRANSITION: "This account can't do that in its current state.",
+  PROTECTED_ROLE: "The built-in System Administrator role can't be edited.",
+  SELF_ROLE_GRANTS: "You can't change the permissions of a role you hold yourself.",
+  FORBIDDEN_GRANT: "You can only grant administration permissions that you hold yourself.",
+  UNKNOWN_ROLE: "One of the roles no longer exists. Refresh the page.",
+  UNKNOWN_PERMISSION: "One of the permissions no longer exists. Refresh the page.",
+  ACCESS_DENIED: "You do not have permission to do this.",
+};
+
+async function adminError(res: Response, fallback: string): Promise<string> {
+  const problem = (await readProblem(res)) as AdminProblem;
+  if (res.status === 401) return "Your session has ended. Please sign in again.";
+  if (res.status === 429) return "Too many attempts. Please wait a few minutes and try again.";
+  if (problem.code && ADMIN_MESSAGES[problem.code]) return ADMIN_MESSAGES[problem.code]!;
+  if (res.status === 403) return ADMIN_MESSAGES.ACCESS_DENIED!;
+  if (res.status === 400 && problem.fields?.length) return `Please check these fields: ${problem.fields.join(", ")}.`;
+  return fallback;
+}
+
+/** Loads every page of an admin list (the backend allows at most 100 per page). */
+async function allPages<T>(path: string): Promise<T[]> {
+  const items: T[] = [];
+  for (let page = 0; page < 50; page++) {
+    const res = await apiFetch(`${path}?page=${page}&size=100`);
+    if (!res.ok) throw new Error(await adminError(res, "Could not load the list."));
+    const data = (await res.json()) as { items: T[]; totalPages: number };
+    items.push(...(data.items ?? []));
+    if (page + 1 >= (data.totalPages ?? 1)) break;
+  }
+  return items;
+}
+
+async function adminSend<T>(path: string, body: unknown, fallback: string): Promise<T | null> {
+  const res = await apiFetch(path, { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(await adminError(res, fallback));
+  return res.status === 202 || res.status === 204 ? null : ((await res.json()) as T);
+}
+
+function requireReason(reason: string) {
+  if (!reason.trim()) throw new Error("Give a reason. It is kept in the audit log.");
+}
+
+/** The signed-in admin's account ID, used for the "not your own account" rule. */
+export function adminSelfId(user: SessionUser): string | undefined {
+  return MOCK_AUTH ? DEMO_ADMIN_ID : user.id;
+}
+
+/* Demo-mode store and checks, mirroring the backend. */
+
+const DEMO = { users: USERS_DATA, roles: ROLES_DATA };
+
+function demoAccount(id: string) {
+  const found = DEMO.users.find((u) => u.id === id);
+  if (!found) throw new Error("This account could not be found.");
+  return found;
+}
+
+function demoCheckRoles(codes: string[], category: AccessCategory) {
+  if (codes.length === 0) throw new Error("Choose at least one role.");
+  const roles = codes.map((c) => DEMO.roles.find((r) => r.code === c));
+  if (roles.some((r) => !r)) throw new Error(ADMIN_MESSAGES.UNKNOWN_ROLE);
+  if (roles.some((r) => r!.category !== category)) throw new Error(ADMIN_MESSAGES.ACCOUNT_CATEGORY_MISMATCH);
+}
+
+function demoSaveUser(updated: ManagedUser): ManagedUser {
+  const saved = { ...updated, version: updated.version + 1, updatedAt: new Date().toISOString() };
+  DEMO.users[DEMO.users.findIndex((u) => u.id === updated.id)] = saved;
+  return saved;
+}
+
+function demoActiveAdmins() {
+  return DEMO.users.filter((u) => u.status === "ACTIVE" && u.roles.includes("ADMINISTRATOR")).length;
+}
+
+/* Users */
+
+export async function listManagedUsers(): Promise<ManagedUser[]> {
+  if (MOCK_AUTH) return [...DEMO.users];
+  return allPages<ManagedUser>("/api/v1/admin/users");
+}
+
+export type InviteInput = { email: string; fullName: string; roles: string[]; category: AccessCategory; reason: string };
+
+/** Creates the account and emails the person a link to set their password. */
+export async function inviteUser(input: InviteInput): Promise<ManagedUser> {
+  requireReason(input.reason);
+  if (MOCK_AUTH) {
+    demoCheckRoles(input.roles, input.category);
+    if (DEMO.users.some((u) => u.email.toLowerCase() === input.email.trim().toLowerCase())) {
+      throw new Error("Someone with this email already has an account.");
+    }
+    const now = new Date().toISOString();
+    const created: ManagedUser = {
+      id: crypto.randomUUID(),
+      email: input.email.trim().toLowerCase(),
+      fullName: input.fullName.trim(),
+      status: "INVITED",
+      profileCategory: input.category,
+      roles: input.roles,
+      version: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    DEMO.users.unshift(created);
+    return created;
+  }
+  const created = await adminSend<ManagedUser>(
+    "/api/v1/admin/users",
+    { email: input.email.trim().toLowerCase(), fullName: input.fullName.trim(), roles: input.roles, reason: input.reason.trim() },
+    // The backend answers a non-staff email (e.g. a personal Gmail) with a plain 400.
+    "Check the details. The email must be a GRAL staff address (for example name@globalrisk.rw); personal emails are not accepted.",
+  );
+  return created!;
+}
+
+export async function resendInvitation(u: ManagedUser): Promise<void> {
+  if (MOCK_AUTH) {
+    const current = demoAccount(u.id);
+    if (current.version !== u.version) throw new Error(ADMIN_MESSAGES.STALE_VERSION);
+    if (current.status !== "INVITED") throw new Error("Only people who have not accepted their invitation yet can get a new one.");
+    demoSaveUser(current);
+    return;
+  }
+  await adminSend(`/api/v1/admin/users/${u.id}/resend-invitation`, { version: u.version }, "Could not resend the invitation.");
+}
+
+export async function assignUserRoles(u: ManagedUser, roles: string[], reason: string, selfId?: string): Promise<ManagedUser> {
+  requireReason(reason);
+  if (MOCK_AUTH) {
+    const current = demoAccount(u.id);
+    if (current.version !== u.version) throw new Error(ADMIN_MESSAGES.STALE_VERSION);
+    if (current.id === selfId) throw new Error(ADMIN_MESSAGES.SELF_OPERATION);
+    demoCheckRoles(roles, current.profileCategory);
+    if (current.roles.includes("ADMINISTRATOR") && !roles.includes("ADMINISTRATOR") && current.status === "ACTIVE" && demoActiveAdmins() <= 1) {
+      throw new Error(ADMIN_MESSAGES.LAST_ADMINISTRATOR);
+    }
+    return demoSaveUser({ ...current, roles });
+  }
+  const saved = await adminSend<ManagedUser>(
+    `/api/v1/admin/users/${u.id}/assign-roles`,
+    { version: u.version, roles, reason: reason.trim() },
+    "Could not change the roles.",
+  );
+  return saved!;
+}
+
+export async function deactivateUser(u: ManagedUser, selfId?: string): Promise<ManagedUser> {
+  if (MOCK_AUTH) {
+    const current = demoAccount(u.id);
+    if (current.version !== u.version) throw new Error(ADMIN_MESSAGES.STALE_VERSION);
+    if (current.id === selfId) throw new Error(ADMIN_MESSAGES.SELF_OPERATION);
+    if (current.status === "INACTIVE") throw new Error("This account is already deactivated.");
+    if (current.roles.includes("ADMINISTRATOR") && current.status === "ACTIVE" && demoActiveAdmins() <= 1) {
+      throw new Error(ADMIN_MESSAGES.LAST_ADMINISTRATOR);
+    }
+    return demoSaveUser({ ...current, status: "INACTIVE" });
+  }
+  const saved = await adminSend<ManagedUser>(
+    `/api/v1/admin/users/${u.id}/deactivate`,
+    { version: u.version },
+    "Could not deactivate the account.",
+  );
+  return saved!;
+}
+
+/* Roles and permissions */
+
+export async function listManagedRoles(): Promise<ManagedRole[]> {
+  if (MOCK_AUTH) return [...DEMO.roles];
+  return allPages<ManagedRole>("/api/v1/admin/roles");
+}
+
+export async function listPermissionDefinitions(): Promise<PermissionDefinition[]> {
+  if (MOCK_AUTH) return [...PERMISSIONS];
+  const res = await apiFetch("/api/v1/admin/permissions");
+  if (!res.ok) throw new Error(await adminError(res, "Could not load the permissions."));
+  return (await res.json()) as PermissionDefinition[];
+}
+
+function demoCheckPermissions(codes: string[], category: AccessCategory) {
+  const defs = codes.map((c) => PERMISSIONS.find((p) => p.code === c));
+  if (defs.some((d) => !d)) throw new Error(ADMIN_MESSAGES.UNKNOWN_PERMISSION);
+  if (defs.some((d) => d!.category !== category)) throw new Error(ADMIN_MESSAGES.ROLE_CATEGORY_MISMATCH);
+}
+
+export type RoleInput = { code: string; name: string; category: AccessCategory; permissions: string[]; reason: string };
+
+export async function createRole(input: RoleInput): Promise<ManagedRole> {
+  requireReason(input.reason);
+  if (!/^[A-Z][A-Z0-9_]{0,63}$/.test(input.code)) {
+    throw new Error("The code must start with a letter and use only capital letters, numbers and underscores.");
+  }
+  if (MOCK_AUTH) {
+    if (DEMO.roles.some((r) => r.code === input.code)) throw new Error("A role with this code already exists.");
+    demoCheckPermissions(input.permissions, input.category);
+    const created: ManagedRole = { id: crypto.randomUUID(), code: input.code, name: input.name.trim(), category: input.category, permissions: input.permissions, version: 0 };
+    DEMO.roles.push(created);
+    return created;
+  }
+  const created = await adminSend<ManagedRole>(
+    "/api/v1/admin/roles",
+    { code: input.code, name: input.name.trim(), category: input.category, permissions: input.permissions, reason: input.reason.trim() },
+    "Could not create the role.",
+  );
+  return created!;
+}
+
+export async function updateRole(
+  role: ManagedRole,
+  input: { name: string; permissions: string[]; reason: string },
+  heldRoleCodes: string[] = [],
+): Promise<ManagedRole> {
+  requireReason(input.reason);
+  if (MOCK_AUTH) {
+    const index = DEMO.roles.findIndex((r) => r.id === role.id);
+    const current = DEMO.roles[index];
+    if (!current) throw new Error(ADMIN_MESSAGES.UNKNOWN_ROLE);
+    if (current.version !== role.version) throw new Error(ADMIN_MESSAGES.STALE_VERSION);
+    if (current.code === "ADMINISTRATOR") throw new Error(ADMIN_MESSAGES.PROTECTED_ROLE);
+    const changed = [...current.permissions].sort().join() !== [...input.permissions].sort().join();
+    if (changed && heldRoleCodes.includes(current.code)) throw new Error(ADMIN_MESSAGES.SELF_ROLE_GRANTS);
+    demoCheckPermissions(input.permissions, current.category);
+    const saved = { ...current, name: input.name.trim(), permissions: input.permissions, version: current.version + 1 };
+    DEMO.roles[index] = saved;
+    return saved;
+  }
+  const saved = await adminSend<ManagedRole>(
+    `/api/v1/admin/roles/${role.id}/update`,
+    { version: role.version, name: input.name.trim(), permissions: input.permissions, reason: input.reason.trim() },
+    "Could not save the role.",
+  );
+  return saved!;
+}
+
 /* --------------------------------- Overview ---------------------------------- */
 
 /** Short claim rows for the Overview, search and client file (open claims only). */
@@ -1573,13 +1829,9 @@ function toFrontendRole(backendRoles: string[]): Role | undefined {
 }
 
 function toSessionUser(me: MeResponse): SessionUser {
-  const role = toFrontendRole(me.roles ?? []);
-  if (!role) {
-    // Shows the backend's role codes so they can be added to the list above.
-    throw new Error(
-      `Your account's role (${(me.roles ?? []).join(", ") || "none"}) is not set up in this app yet. Please contact the administrator.`,
-    );
-  }
+  // Roles this app does not know yet (e.g. a custom role made in Admin) sign in
+  // as "Staff": their menus then follow their backend permissions only.
+  const role = toFrontendRole(me.roles ?? []) ?? "Staff";
   return {
     id: me.id,
     email: me.email,
