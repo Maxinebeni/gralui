@@ -165,7 +165,7 @@ export function SetPasswordForm({ mode }: { mode: "reset" | "invitation" }) {
 
               <ul className="space-y-1 text-[11px]">
                 <Rule ok={longEnough}>At least {MIN_CHARS} characters ({chars} so far)</Rule>
-                {!notTooLong ? <Rule ok={false}>Too long — use a shorter password</Rule> : null}
+                {!notTooLong ? <Rule ok={false}>Too long. Use a shorter password</Rule> : null}
                 <Rule ok={matches}>Both passwords match</Rule>
               </ul>
 

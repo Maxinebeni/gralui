@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { MyWorkView } from "./my-work-view";
 
 export const metadata: Metadata = {
-  title: "My Work — GRAL Operations Platform",
+  title: "My Work / GRAL Operations Platform",
   description: "Tasks assigned to you from claims, renewals, approvals and your own list.",
 };
 

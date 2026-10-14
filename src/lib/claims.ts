@@ -193,5 +193,5 @@ export function claimBlocker(c: Claim): string | null {
 
 export function dueLabel(c: Claim) {
   const due = dueDate(c);
-  return due ? formatDate(due) : "—";
+  return due ? formatDate(due) : "Closed";
 }

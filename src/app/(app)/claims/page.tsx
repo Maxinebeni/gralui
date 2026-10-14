@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { ClaimsView } from "./claims-view";
 
 export const metadata: Metadata = {
-  title: "Claims Queue — GRAL Operations Platform",
+  title: "Claims Queue / GRAL Operations Platform",
   description: "Track open claims, SLA breaches, disputes and settlement sign-off across GRAL's claims process.",
 };
 

@@ -303,7 +303,7 @@ export function OverviewView() {
           </FloatCard>
 
           <FloatCard className="p-4 sm:p-5" delay={240}>
-            <h2 className="text-base font-semibold tracking-tight">Upcoming Renewals — next 90 days</h2>
+            <h2 className="text-base font-semibold tracking-tight">Upcoming Renewals (next 90 days)</h2>
             <div className="relative mt-8 mb-2 h-10">
               <div className="absolute top-4 h-0.5 w-full rounded-full bg-border" />
               {renewals

@@ -110,13 +110,13 @@ export function ApprovalsView() {
                     <Td>
                       <Chip tone="sky">{SUBJECT_LABEL[r.subjectType]}</Chip>
                     </Td>
-                    <Td className="max-w-[160px] truncate text-xs">{r.client ?? "—"}</Td>
-                    <Td className="text-xs whitespace-nowrap">{r.amount !== undefined ? r.amount.toLocaleString("en-US") : "—"}</Td>
+                    <Td className="max-w-[160px] truncate text-xs">{r.client ?? "No client"}</Td>
+                    <Td className="text-xs whitespace-nowrap">{r.amount !== undefined ? r.amount.toLocaleString("en-US") : "No amount"}</Td>
                     <Td>
                       <Chip tone={statusTone(r)}>{statusLabel(r)}</Chip>
                     </Td>
                     <Td className={cn("text-xs whitespace-nowrap", late && "font-medium text-danger")}>
-                      {r.status === "PENDING" ? formatDate(r.dueAt) : "—"}
+                      {r.status === "PENDING" ? formatDate(r.dueAt) : "Decided"}
                     </Td>
                     <Td>
                       <TextLink>{canDecide(r, user.role) ? "Review & decide" : "View"}</TextLink>
