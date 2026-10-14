@@ -12,14 +12,18 @@ import {
 import { CardHeader, FloatCard, SegmentedTabs } from "@/components/gral/ui";
 
 export function AllClientsView() {
-  const { allClients, rows, tab, setTab, query, setQuery, emptyMessage, reload } = useClientList();
+  const { allClients, rows, tab, setTab, query, setQuery, emptyMessage, reload, loading } = useClientList();
   const { open, setOpen } = useOpenClient(allClients);
 
   return (
     <>
       <PageHeader
         title="All Client Records"
-        subtitle={`${rows.length} ${rows.length === 1 ? "record" : "records"}`}
+        subtitle={
+          loading && rows.length === 0
+            ? "Loading…"
+            : `${rows.length} ${rows.length === 1 ? "record" : "records"}`
+        }
       />
       <FloatCard className="mt-5 overflow-hidden">
         <CardHeader

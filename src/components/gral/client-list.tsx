@@ -1,3 +1,4 @@
+
 "use client";
 
 // Shared pieces for the Clients dashboard and the All Client Records page:
@@ -24,18 +25,39 @@ export function useClientList() {
   const [query, setQuery] = useState("");
   const [allClients, setAllClients] = useState<Client[]>([]);
   const [matches, setMatches] = useState<Client[]>([]);
+  // True while the table's rows are loading, so the table can say
+  // "Loading clients…" instead of "No clients match this filter".
+  const [loading, setLoading] = useState(true);
   // Bumped after a client is added or edited, so the lists load again.
   const [version, setVersion] = useState(0);
 
   useEffect(() => {
-    listClients().then(setAllClients);
+    let cancelled = false;
+    listClients()
+      .then((r) => {
+        if (!cancelled) setAllClients(r);
+      })
+      .catch(() => {
+        if (!cancelled) setAllClients([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [version]);
 
   useEffect(() => {
     let cancelled = false;
-    listClients(query).then((r) => {
-      if (!cancelled) setMatches(r);
-    });
+    setLoading(true);
+    listClients(query)
+      .then((r) => {
+        if (!cancelled) setMatches(r);
+      })
+      .catch(() => {
+        if (!cancelled) setMatches([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -50,9 +72,14 @@ export function useClientList() {
     return matches;
   }, [tab, matches]);
 
-  const emptyMessage = `No clients match ${query ? `“${query}”` : "this filter"}.`;
+  // While loading, the table shows this text in place of the empty message.
+  // Rows already on screen stay visible during a reload or a new search.
+  const emptyMessage =
+    loading && matches.length === 0
+      ? "Loading clients…"
+      : `No clients match ${query ? `“${query}”` : "this filter"}.`;
 
-  return { allClients, rows, tab, setTab, query, setQuery, emptyMessage, reload };
+  return { allClients, rows, tab, setTab, query, setQuery, emptyMessage, reload, loading };
 }
 
 export function ClientSearch({ value, onChange }: { value: string; onChange: (v: string) => void }) {

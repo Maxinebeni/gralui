@@ -149,6 +149,34 @@ export function claimPermissions(role: Role) {
   };
 }
 
+/**
+ * Who can add or edit clients and policies.
+ * With the backend these follow the user's permission codes:
+ *   Add Client    -> CLIENT_CREATE
+ *   Edit Client   -> CLIENT_UPDATE
+ *   Add Policy    -> POLICY_CREATE
+ *   Edit Policy   -> POLICY_UPDATE, or POLICY_CREATE until the backend has an edit permission
+ * In demo mode (sample logins with no permissions) the requirements doc rule
+ * stays: only the MD and the Commercial Director.
+ */
+export function clientEditPermissions(user: SessionUser) {
+  if (usesBackendPermissions(user)) {
+    return {
+      canAddClient: hasPermission(user, "CLIENT_CREATE"),
+      canEditClient: hasPermission(user, "CLIENT_UPDATE"),
+      canAddPolicy: hasPermission(user, "POLICY_CREATE"),
+      canEditPolicy: hasPermission(user, "POLICY_UPDATE") || hasPermission(user, "POLICY_CREATE"),
+    };
+  }
+  const demoManager = user.role === "MD" || user.role === "Commercial Director";
+  return {
+    canAddClient: demoManager,
+    canEditClient: demoManager,
+    canAddPolicy: demoManager,
+    canEditPolicy: demoManager,
+  };
+}
+
 /** Fine-grained permissions used inside the client screens (from the design). */
 export function clientPermissions(role: Role) {
   return {
