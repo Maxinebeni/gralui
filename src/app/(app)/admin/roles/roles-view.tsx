@@ -5,7 +5,6 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Plus } from "lucide-react";
 import { PageHeader, SlideOver } from "@/components/gral/shell";
 import { Td, Th } from "@/components/gral/claim-list";
-import { CATEGORY_LABEL } from "@/components/gral/admin-users";
 import { NewRoleForm, RolePanel } from "@/components/gral/admin-roles";
 import { CardHeader, Chip, FloatCard, NavyButton, SegmentedTabs, TextLink } from "@/components/gral/ui";
 import { MOCK_AUTH, listManagedRoles, listManagedUsers, listPermissionDefinitions } from "@/lib/api";
@@ -82,7 +81,6 @@ export function RolesView() {
             <thead>
               <tr className="bg-pale text-[11px] text-muted-foreground">
                 <Th className="rounded-l-xl">Role</Th>
-                <Th>Type</Th>
                 <Th>Permissions</Th>
                 <Th>People</Th>
                 <Th className="rounded-r-xl">Action</Th>
@@ -98,7 +96,6 @@ export function RolesView() {
                     </div>
                     <div className="text-[11px] text-muted-foreground">{r.code}</div>
                   </Td>
-                  <Td className="text-xs">{CATEGORY_LABEL[r.category]}</Td>
                   <Td className="text-xs">{r.permissions.length}</Td>
                   <Td className="text-xs">{people(r.code)}</Td>
                   <Td>
@@ -108,7 +105,7 @@ export function RolesView() {
               ))}
               {rows.length === 0 ? (
                 <tr>
-                  <Td className={error ? "text-xs text-danger" : "text-xs text-muted-foreground"} colSpan={5}>
+                  <Td className={error ? "text-xs text-danger" : "text-xs text-muted-foreground"} colSpan={4}>
                     {error ?? (roles === null ? "Loading roles…" : "No roles of this type yet.")}
                   </Td>
                 </tr>

@@ -1797,8 +1797,10 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
 // as the backend team confirms them (PLN-02). Codes are compared in upper
 // case with spaces and dashes turned into underscores.
 const BACKEND_TO_FRONTEND_ROLE: Record<string, Role> = {
-  ADMINISTRATOR: "MD",
-  ADMIN: "MD",
+  // Administration accounts have no client access on the backend, so they get
+  // their own role and see only My Work, Approvals and the admin pages.
+  ADMINISTRATOR: "Administrator",
+  ADMIN: "Administrator",
   MD: "MD",
   MANAGING_DIRECTOR: "MD",
   DMD: "DMD",

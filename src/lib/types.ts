@@ -23,9 +23,10 @@ export const ROLES = [
 /**
  * "Staff" is for accounts whose backend roles this app does not know yet
  * (for example a custom role an administrator created). Their menus follow
- * their backend permissions only.
+ * their backend permissions only. "Administrator" is the technical
+ * Administration account: it manages users and roles and sees no client data.
  */
-export type Role = (typeof ROLES)[number] | "Staff";
+export type Role = (typeof ROLES)[number] | "Staff" | "Administrator";
 
 export type ClientType = "Corporate" | "State Enterprise" | "NGO" | "Financial Institution" | "SME";
 

@@ -7,11 +7,18 @@ import { useEffect, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/format";
 import { useCurrentUser } from "@/lib/auth-context";
-import { ACCOUNT_MENU, NAV_ITEMS, navChildrenFor, navItemsFor, usesBackendPermissions, type NavItem } from "@/lib/permissions";
+import {
+  ACCOUNT_MENU,
+  NAV_ITEMS,
+  homePathFor,
+  navChildrenFor,
+  navItemsFor,
+  usesBackendPermissions,
+  type NavItem,
+} from "@/lib/permissions";
 import { listApprovals } from "@/lib/api";
 import { canDecide } from "@/lib/approvals";
 import { GlobalSearch } from "./global-search";
-import { FilterPill } from "./ui";
 
 import {
   DropdownMenu,
@@ -68,6 +75,8 @@ export function Shell({ children }: { children: ReactNode }) {
             />
           </Link>
 
+          {/* Administration accounts have no top-bar pages; their pages are in the name menu. */}
+          {tabs.length > 0 ? (
           <nav className="float-pill col-span-2 row-start-2 flex w-full min-w-0 items-center justify-between gap-0.5 overflow-x-auto p-1.5 lg:col-auto lg:row-auto lg:w-auto lg:justify-start lg:gap-1">
             {tabs.map((t) => {
               const children = navChildrenFor(user, t.href);
@@ -115,6 +124,7 @@ export function Shell({ children }: { children: ReactNode }) {
               );
             })}
           </nav>
+          ) : null}
 
           <div className="flex shrink-0 items-center gap-2">
             <IconBtn label="Search (Ctrl+K)" mobile onClick={() => setSearchOpen(true)}>
@@ -290,7 +300,6 @@ export function PageHeader({
           </DropdownMenu>
         ) : null}
         {extraPills}
-        <FilterPill label="Date Range" value="Last 30 days" />
         {action}
       </div>
     </div>
@@ -333,6 +342,7 @@ export function SlideOver({
 /** Shown when the current role is not allowed on a page. */
 export function NoAccess() {
   const { user } = useCurrentUser();
+  const home = homePathFor(user);
   return (
     <div className="flex justify-center pt-16">
       <div className="float-card rise-in max-w-md p-5 text-center sm:p-8">
@@ -343,10 +353,10 @@ export function NoAccess() {
             : `The ${user.role} role does not have access to this page.`}
         </p>
         <Link
-          href="/"
+          href={home}
           className="mt-6 inline-flex items-center justify-center rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
         >
-          Go to Overview
+          {home === "/" ? "Go to Overview" : "Go to my home page"}
         </Link>
       </div>
     </div>

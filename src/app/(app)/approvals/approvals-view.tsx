@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AlarmClock, CheckCircle2, CornerUpLeft, Inbox } from "lucide-react";
 import { PageHeader, SlideOver } from "@/components/gral/shell";
+import { FilterMenu } from "@/components/gral/filter-menu";
+import { DATE_RANGE_OPTIONS, withinRange, type DateRange } from "@/lib/date-range";
 import { ApprovalPanel } from "@/components/gral/approval-panel";
 import { Td, Th } from "@/components/gral/claim-list";
 import { CardHeader, Chip, FloatCard, SegmentedTabs, StatTile, TextLink } from "@/components/gral/ui";
@@ -28,6 +30,8 @@ export function ApprovalsView() {
 
   const [requests, setRequests] = useState<ApprovalRequest[]>([]);
   const [tab, setTab] = useState<Tab>("Waiting for me");
+  // Date requested filter; applies to every tab and the counts.
+  const [range, setRange] = useState<DateRange>("all");
   const reload = useCallback(() => {
     listApprovals().then(setRequests);
   }, []);
@@ -38,11 +42,12 @@ export function ApprovalsView() {
     () =>
       requests.filter(
         (r) =>
-          seesAllRequests ||
-          r.requestedBy === user.name ||
-          r.steps.some((s) => s.role === user.role || (s.role === "Board" && user.role === "MD")),
+          withinRange(r.requestedAt, range) &&
+          (seesAllRequests ||
+            r.requestedBy === user.name ||
+            r.steps.some((s) => s.role === user.role || (s.role === "Board" && user.role === "MD"))),
       ),
-    [requests, seesAllRequests, user.name, user.role],
+    [requests, seesAllRequests, user.name, user.role, range],
   );
 
   const mine = visible.filter((r) => canDecide(r, user.role));
@@ -74,7 +79,18 @@ export function ApprovalsView() {
 
   return (
     <>
-      <PageHeader title="Approvals" subtitle="Requests waiting for a decision, and the ones you sent." />
+      <PageHeader
+        title="Approvals"
+        subtitle="Requests waiting for a decision, and the ones you sent."
+        extraPills={
+          <FilterMenu
+            label="Requested"
+            value={range}
+            options={DATE_RANGE_OPTIONS}
+            onChange={(v) => setRange(v as DateRange)}
+          />
+        }
+      />
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatTile icon={Inbox} label="Waiting for Me" value={String(mine.length)} />

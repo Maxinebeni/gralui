@@ -18,6 +18,8 @@ export type NavItem = {
   roles: readonly Role[];
   /** Set for pages listed in another item's dropdown instead of the top bar. */
   parent?: string;
+  /** Business pages with client data, hidden from Administration accounts. */
+  businessOnly?: boolean;
 };
 
 /**
@@ -58,16 +60,16 @@ const RENEWAL_ROLES: readonly Role[] = [
 export const ACCOUNT_MENU = "account";
 
 export const NAV_ITEMS: NavItem[] = [
-  { label: "Overview", href: "/", permission: null, roles: ROLES },
+  { label: "Overview", href: "/", permission: null, roles: ROLES, businessOnly: true },
   // Everyone has work assigned to them; the list only shows what they may see.
   { label: "My Work", href: "/my-work", permission: null, roles: ROLES, parent: "/" },
   // Everyone can follow the requests they sent; deciding depends on the step's role.
   { label: "Approvals", href: "/approvals", permission: null, roles: ROLES, parent: "/" },
-  { label: "Claims", href: "/claims", permission: "CLAIM_READ", roles: CLAIM_ROLES },
-  { label: "All Claims", href: "/claims/all", permission: "CLAIM_READ", roles: CLAIM_ROLES, parent: "/claims" },
-  { label: "Clients", href: "/clients", permission: "CLIENT_READ", roles: ROLES },
-  { label: "All Clients", href: "/clients/all", permission: "CLIENT_READ", roles: ROLES, parent: "/clients" },
-  { label: "Renewals", href: "/renewals", permission: "RENEWAL_READ", roles: RENEWAL_ROLES },
+  { label: "Claims", href: "/claims", permission: "CLAIM_READ", roles: CLAIM_ROLES, businessOnly: true },
+  { label: "All Claims", href: "/claims/all", permission: "CLAIM_READ", roles: CLAIM_ROLES, parent: "/claims", businessOnly: true },
+  { label: "Clients", href: "/clients", permission: "CLIENT_READ", roles: ROLES, businessOnly: true },
+  { label: "All Clients", href: "/clients/all", permission: "CLIENT_READ", roles: ROLES, parent: "/clients", businessOnly: true },
+  { label: "Renewals", href: "/renewals", permission: "RENEWAL_READ", roles: RENEWAL_ROLES, businessOnly: true },
   // Admin pages sit in the name (account) menu, not the top bar. Real backend
   // permissions; in demo mode only the MD sees them.
   { label: "Users", href: "/admin", permission: "USER_READ", roles: ["MD"], parent: ACCOUNT_MENU },
@@ -93,7 +95,13 @@ function moduleOf(permission: string) {
   return permission.split("_")[0]!;
 }
 
+/** The technical Administration account (manages users and roles, no client data). */
+export function isAdministrationAccount(user: SessionUser) {
+  return user.role === "Administrator";
+}
+
 function canSee(user: SessionUser, item: NavItem) {
+  if (item.businessOnly && isAdministrationAccount(user)) return false;
   if (item.permission === null) return true;
   if (usesBackendPermissions(user) && BACKEND_MODULES.includes(moduleOf(item.permission))) {
     return hasPermission(user, item.permission);
@@ -218,4 +226,9 @@ export function adminPermissions(user: SessionUser) {
     canCreateRole: has("ROLE_CREATE"),
     canUpdateRole: has("ROLE_UPDATE"),
   };
+}
+
+/** Where "home" is for this person: Overview, or the first page they can open. */
+export function homePathFor(user: SessionUser) {
+  return ["/", "/admin", "/my-work"].find((p) => canAccessPath(user, p)) ?? "/my-work";
 }
