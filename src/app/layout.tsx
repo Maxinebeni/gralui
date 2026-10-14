@@ -12,7 +12,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "GRAL — Operations Platform",
+  title: "GRAL Operations Platform",
   description:
     "Global Risk Advisors Ltd operations platform for claims, client records and renewals.",
   authors: [{ name: "Global Risk Advisors Ltd" }],

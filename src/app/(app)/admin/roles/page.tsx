@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { RolesView } from "./roles-view";
 
 export const metadata: Metadata = {
-  title: "Roles & Permissions — GRAL Operations Platform",
+  title: "Roles & Permissions / GRAL Operations Platform",
   description: "Choose what each role can do, and create new roles.",
 };
 

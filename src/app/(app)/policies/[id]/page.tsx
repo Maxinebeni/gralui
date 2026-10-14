@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { PolicyDetailView } from "./policy-detail-view";
 
 export const metadata: Metadata = {
-  title: "Policy — GRAL Operations Platform",
+  title: "Policy / GRAL Operations Platform",
   description: "Policy cover periods, movements, financial terms, claims and documents.",
 };
 

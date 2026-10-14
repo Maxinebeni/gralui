@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/gral/shell";
+import { FilterMenu } from "@/components/gral/filter-menu";
+import { DATE_RANGE_OPTIONS, withinRange, type DateRange } from "@/lib/date-range";
 import {
   CLAIM_TABS,
   ClaimSearch,
@@ -24,14 +26,29 @@ export function AllClaimsView() {
   const [tab, setTab] = useState<ClaimTab>("All");
   const [query, setQuery] = useState("");
 
+  const [range, setRange] = useState<DateRange>("all");
   const rows = useMemo(
-    () => filterClaims(claims, tab).filter((c) => matchesClaim(c, query)).sort(byUrgency),
-    [claims, tab, query],
+    () =>
+      filterClaims(claims, tab)
+        .filter((c) => matchesClaim(c, query) && withinRange(c.dateReported, range))
+        .sort(byUrgency),
+    [claims, tab, query, range],
   );
 
   return (
     <>
-      <PageHeader title="All Claims" subtitle={`${rows.length} ${rows.length === 1 ? "claim" : "claims"}`} />
+      <PageHeader
+        title="All Claims"
+        subtitle={`${rows.length} ${rows.length === 1 ? "claim" : "claims"}`}
+        extraPills={
+          <FilterMenu
+            label="Reported"
+            value={range}
+            options={DATE_RANGE_OPTIONS}
+            onChange={(v) => setRange(v as DateRange)}
+          />
+        }
+      />
       <FloatCard className="mt-5 overflow-hidden">
         <CardHeader
           title="Claims List"

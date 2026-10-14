@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { AllClientsView } from "./all-clients-view";
 
 export const metadata: Metadata = {
-  title: "All Client Records — GRAL Operations Platform",
+  title: "All Client Records / GRAL Operations Platform",
   description: "Complete list of GRAL client, KYC and compliance records.",
 };
 
