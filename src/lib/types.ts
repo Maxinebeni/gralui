@@ -20,7 +20,12 @@ export const ROLES = [
   "Internal Audit Manager",
 ] as const;
 
-export type Role = (typeof ROLES)[number];
+/**
+ * "Staff" is for accounts whose backend roles this app does not know yet
+ * (for example a custom role an administrator created). Their menus follow
+ * their backend permissions only.
+ */
+export type Role = (typeof ROLES)[number] | "Staff";
 
 export type ClientType = "Corporate" | "State Enterprise" | "NGO" | "Financial Institution" | "SME";
 
@@ -421,6 +426,42 @@ export type StoredDocument = {
   uploadedAt: string; // ISO date-time
   /** Earlier versions, newest first (kept when a file is replaced). */
   previous: { version: number; originalFileName: string; uploadedAt: string }[];
+};
+
+/* ------------------------------ Administration ------------------------------- */
+// Matches the backend's /api/v1/admin endpoints (users, roles, permissions).
+
+/** Every account and role is one or the other, fixed when it is created. */
+export type AccessCategory = "BUSINESS" | "ADMINISTRATION";
+
+export type ManagedUser = {
+  id: string;
+  email: string;
+  fullName: string;
+  status: "INVITED" | "ACTIVE" | "INACTIVE";
+  profileCategory: AccessCategory;
+  /** Role codes, e.g. CLAIMS_MANAGER. */
+  roles: string[];
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ManagedRole = {
+  id: string;
+  code: string;
+  name: string;
+  category: AccessCategory;
+  /** Permission codes, e.g. CLIENT_READ. */
+  permissions: string[];
+  version: number;
+};
+
+export type PermissionDefinition = {
+  code: string;
+  name: string;
+  category: AccessCategory;
+  description: string;
 };
 
 /* ------------------------------ Overview extras ------------------------------ */
