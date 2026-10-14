@@ -1,4 +1,3 @@
-
 "use client";
  
 // Add / Edit Policy form (task 18). Shown inside the Policies tab of the
@@ -437,4 +436,3 @@ function GroupedSelect({
     </select>
   );
 }
-

@@ -7,7 +7,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/format";
 import { useCurrentUser } from "@/lib/auth-context";
-import { NAV_ITEMS, navChildrenFor, navItemsFor, usesBackendPermissions, type NavItem } from "@/lib/permissions";
+import { ACCOUNT_MENU, NAV_ITEMS, navChildrenFor, navItemsFor, usesBackendPermissions, type NavItem } from "@/lib/permissions";
 import { listApprovals } from "@/lib/api";
 import { canDecide } from "@/lib/approvals";
 import { GlobalSearch } from "./global-search";
@@ -46,6 +46,8 @@ export function Shell({ children }: { children: ReactNode }) {
 
   // Approvals waiting for this person, shown as a count in the menus.
   const [waiting, setWaiting] = useState(0);
+  // Admin pages live in the name menu, not the top bar.
+  const adminLinks = navChildrenFor(user, ACCOUNT_MENU);
   useEffect(() => {
     listApprovals()
       .then((list) => setWaiting(list.filter((r) => canDecide(r, user.role)).length))
@@ -118,9 +120,35 @@ export function Shell({ children }: { children: ReactNode }) {
             <IconBtn label="Search (Ctrl+K)" mobile onClick={() => setSearchOpen(true)}>
               <Search className="size-4" />
             </IconBtn>
-            <IconBtn label="Notifications">
-              <Bell className="size-4" />
-            </IconBtn>
+            {/* Notifications: for now, approvals waiting for this person's decision. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                aria-label={waiting > 0 ? `Notifications, ${waiting} new` : "Notifications"}
+                className="relative flex size-10 items-center justify-center rounded-full bg-card text-muted-foreground shadow-[var(--shadow-pill)] outline-none transition-colors hover:text-primary"
+              >
+                <Bell className="size-4" />
+                {waiting > 0 ? (
+                  <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-danger text-[9px] font-semibold text-white ring-2 ring-background">
+                    {waiting}
+                  </span>
+                ) : null}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" sideOffset={8} className="w-72 rounded-2xl p-2 shadow-[var(--shadow-float)]">
+                <p className="px-3 py-2 text-sm font-semibold">Notifications</p>
+                <div className="my-1 h-px bg-border" />
+                {waiting > 0 ? (
+                  <DropdownMenuItem onSelect={() => router.push("/approvals")} className="items-start rounded-xl px-3 py-2.5 text-sm">
+                    <span className="mt-1.5 size-2 shrink-0 rounded-full bg-danger" />
+                    <span>
+                      {waiting} {waiting === 1 ? "approval is" : "approvals are"} waiting for your decision
+                      <span className="block text-xs text-muted-foreground">Open the Approvals inbox</span>
+                    </span>
+                  </DropdownMenuItem>
+                ) : (
+                  <p className="px-3 py-3 text-sm text-muted-foreground">You're all caught up.</p>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <IconBtn label="Settings">
               <Settings className="size-4" />
             </IconBtn>
@@ -140,14 +168,9 @@ export function Shell({ children }: { children: ReactNode }) {
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label={`${user.name}, ${user.role}. Open your menu`}
-                className="relative flex size-10 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground shadow-[var(--shadow-pill)] outline-none"
+                className="flex size-10 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground shadow-[var(--shadow-pill)] outline-none"
               >
                 {initials(user.name).toUpperCase()}
-                {waiting > 0 ? (
-                  <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-danger text-[9px] text-white ring-2 ring-background">
-                    {waiting}
-                  </span>
-                ) : null}
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" sideOffset={8} className="min-w-60 rounded-2xl p-2 shadow-[var(--shadow-float)]">
                 <div className="px-3 py-2">
@@ -164,6 +187,21 @@ export function Shell({ children }: { children: ReactNode }) {
                     <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-semibold text-primary-foreground">{waiting}</span>
                   ) : null}
                 </DropdownMenuItem>
+                {adminLinks.length > 0 ? (
+                  <>
+                    <div className="my-1 h-px bg-border" />
+                    <p className="px-3 pt-2 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">Admin</p>
+                    {adminLinks.map((a) => (
+                      <DropdownMenuItem
+                        key={a.href}
+                        onSelect={() => router.push(a.href)}
+                        className={cn("rounded-xl px-3 py-2.5 text-sm", isActiveExact(a.href) && "font-medium text-primary")}
+                      >
+                        {a.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>

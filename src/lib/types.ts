@@ -1,4 +1,3 @@
-
 // Shared front-end types. Keep these in line with the backend's OpenAPI
 // contract once the Spring Boot team publishes it.
  
@@ -20,9 +19,14 @@ export const ROLES = [
   "Claims Underwriter",
   "Internal Audit Manager",
 ] as const;
- 
-export type Role = (typeof ROLES)[number];
- 
+
+/**
+ * "Staff" is for accounts whose backend roles this app does not know yet
+ * (for example a custom role an administrator created). Their menus follow
+ * their backend permissions only.
+ */
+export type Role = (typeof ROLES)[number] | "Staff";
+
 export type ClientType = "Corporate" | "State Enterprise" | "NGO" | "Financial Institution" | "SME";
  
 export type ClientDoc = {
@@ -47,10 +51,9 @@ export type Policy = {
   version?: number;
   classOfInsurance: string;
   insurer: string;
-  /** 0 means not recorded yet (the backend does not store it so far). */
-  sumInsured: number;
-  /** Total premium. 0 means not recorded yet. */
-  premium: number;
+  /** Optional: the backend's first policy API does not record amounts yet. */
+  sumInsured?: number;
+  premium?: number;
   start: string;
   renewal: string;
   status: PolicyStatus;
@@ -355,9 +358,9 @@ export type PolicyPeriod = {
   periodId: string;
   from: string; // ISO date
   to: string; // ISO date
-  sumInsured: number;
-  netPremium: number;
-  totalPremium: number;
+  sumInsured: number | null;
+  netPremium: number | null;
+  totalPremium: number | null;
   movement: PolicyMovementType;
   bookingNote?: string;
   current: boolean;
@@ -378,8 +381,8 @@ export type PolicyMovement = {
  * Template v3.1). null means the value has not been recorded yet.
  */
 export type PolicyFinancials = {
-  sumInsured: number;
-  totalPremium: number;
+  sumInsured: number | null;
+  totalPremium: number | null;
   netPremium: number | null;
   amountPaid: number | null;
   /** For example 0.15 for 15%. */
@@ -431,7 +434,43 @@ export type StoredDocument = {
   /** Earlier versions, newest first (kept when a file is replaced). */
   previous: { version: number; originalFileName: string; uploadedAt: string }[];
 };
- 
+
+/* ------------------------------ Administration ------------------------------- */
+// Matches the backend's /api/v1/admin endpoints (users, roles, permissions).
+
+/** Every account and role is one or the other, fixed when it is created. */
+export type AccessCategory = "BUSINESS" | "ADMINISTRATION";
+
+export type ManagedUser = {
+  id: string;
+  email: string;
+  fullName: string;
+  status: "INVITED" | "ACTIVE" | "INACTIVE";
+  profileCategory: AccessCategory;
+  /** Role codes, e.g. CLAIMS_MANAGER. */
+  roles: string[];
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ManagedRole = {
+  id: string;
+  code: string;
+  name: string;
+  category: AccessCategory;
+  /** Permission codes, e.g. CLIENT_READ. */
+  permissions: string[];
+  version: number;
+};
+
+export type PermissionDefinition = {
+  code: string;
+  name: string;
+  category: AccessCategory;
+  description: string;
+};
+
 /* ------------------------------ Overview extras ------------------------------ */
  
 export type ClaimStep = { n: number; name: string; sla: string };
@@ -449,4 +488,3 @@ export type SessionUser = {
   /** Effective permission codes from the backend, e.g. CLIENT_CREATE. */
   permissions?: string[];
 };
-

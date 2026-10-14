@@ -25,3 +25,10 @@ export function formatBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/** Plain-text version for places that need a string, e.g. titles and CSV. */
+export const NOT_RECORDED = "Not recorded";
+
+export function rwfOrNotRecorded(amount: number | null | undefined) {
+  return amount === null || amount === undefined ? NOT_RECORDED : formatRwf(amount);
+}

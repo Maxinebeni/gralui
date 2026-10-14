@@ -6,9 +6,9 @@ import { ArrowLeft, Coins, Percent, ShieldCheck, Wallet } from "lucide-react";
 import { PageHeader } from "@/components/gral/shell";
 import { DocumentPanel } from "@/components/gral/documents";
 import { Td, Th } from "@/components/gral/claim-list";
-import { CardHeader, Chip, FloatCard, StatTile } from "@/components/gral/ui";
+import { CardHeader, Chip, FloatCard, NotRecorded, Recorded, StatTile } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
-import { formatRwf } from "@/lib/format";
+import { NOT_RECORDED, formatRwf } from "@/lib/format";
 import { getPolicyDetail } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { recordHref } from "@/lib/links";
@@ -25,8 +25,9 @@ const MOVEMENT_LABEL: Record<PolicyMovementType, string> = {
   CANCELLATION: "Cancellation",
 };
 
-const amount = (v: number | null) => (v === null ? "Not recorded" : formatRwf(v));
-const millions = (v: number | null) => (v === null ? "—" : `RWF ${(v / 1_000_000).toFixed(1)}m`);
+const amount = (v: number | null) => (v === null ? <NotRecorded /> : formatRwf(v));
+const millions = (v: number | null) => (v === null ? NOT_RECORDED : `RWF ${(v / 1_000_000).toFixed(1)}m`);
+const plain = (v: number | null) => (v === null ? <NotRecorded /> : v.toLocaleString("en-US"));
 
 export function PolicyDetailView({ policyId }: { policyId: string }) {
   const { user } = useCurrentUser();
@@ -89,7 +90,7 @@ export function PolicyDetailView({ policyId }: { policyId: string }) {
                 hint="Total premium − amount paid"
                 value={
                   f.balance === null ? (
-                    "Not recorded"
+                    <NotRecorded />
                   ) : f.balance === 0 ? (
                     <Chip tone="success">Paid in full</Chip>
                   ) : f.balance < 0 ? (
@@ -99,7 +100,7 @@ export function PolicyDetailView({ policyId }: { policyId: string }) {
                   )
                 }
               />
-              <Row label="Commission rate" value={f.commissionRate === null ? "Not recorded" : `${+(f.commissionRate * 100).toFixed(2)}%`} />
+              <Row label="Commission rate" value={f.commissionRate === null ? <NotRecorded /> : `${+(f.commissionRate * 100).toFixed(2)}%`} />
               <Row label="Commission" hint="Net premium × commission rate" value={amount(f.commission)} />
             </dl>
             <p className="mt-3 text-[11px] text-subtle">
@@ -125,7 +126,7 @@ export function PolicyDetailView({ policyId }: { policyId: string }) {
                   {detail.periods.map((period) => (
                     <tr key={period.periodId}>
                       <Td className="text-xs whitespace-nowrap">
-                        {period.from ? formatDate(period.from) : "—"} – {period.to ? formatDate(period.to) : "—"}
+                        {period.from ? formatDate(period.from) : <NotRecorded />} – {period.to ? formatDate(period.to) : <NotRecorded />}
                         {period.current ? (
                           <span className="ml-2">
                             <Chip tone="sky">Current</Chip>
@@ -133,10 +134,10 @@ export function PolicyDetailView({ policyId }: { policyId: string }) {
                         ) : null}
                       </Td>
                       <Td className="text-xs whitespace-nowrap">{MOVEMENT_LABEL[period.movement]}</Td>
-                      <Td className="text-xs whitespace-nowrap">{period.sumInsured.toLocaleString("en-US")}</Td>
-                      <Td className="text-xs whitespace-nowrap">{period.netPremium ? period.netPremium.toLocaleString("en-US") : "—"}</Td>
-                      <Td className="text-xs whitespace-nowrap">{period.totalPremium.toLocaleString("en-US")}</Td>
-                      <Td className="text-xs whitespace-nowrap">{period.bookingNote ?? "—"}</Td>
+                      <Td className="text-xs whitespace-nowrap">{plain(period.sumInsured)}</Td>
+                      <Td className="text-xs whitespace-nowrap">{plain(period.netPremium)}</Td>
+                      <Td className="text-xs whitespace-nowrap">{plain(period.totalPremium)}</Td>
+                      <Td className="text-xs whitespace-nowrap"><Recorded value={period.bookingNote} /></Td>
                     </tr>
                   ))}
                 </tbody>
@@ -180,7 +181,7 @@ export function PolicyDetailView({ policyId }: { policyId: string }) {
               <Chip tone={p.status === "Active" ? "success" : p.status === "In Renewal" ? "warning" : "neutral"}>{p.status}</Chip>
             </div>
             <p className="mt-3 text-xs text-muted-foreground">
-              {formatDate(current.from)} to {formatDate(current.to)}
+              {current.from ? formatDate(current.from) : <NotRecorded />} to {current.to ? formatDate(current.to) : <NotRecorded />}
             </p>
             {daysLeft !== null ? (
               <p className={cn("mt-1 text-xs", daysLeft < 0 ? "font-medium text-danger" : "text-muted-foreground")}>
