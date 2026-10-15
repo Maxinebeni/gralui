@@ -18,6 +18,7 @@ import {
 } from "@/lib/permissions";
 import { listApprovals } from "@/lib/api";
 import { canDecide } from "@/lib/approvals";
+import { CalendarMenu } from "./calendar-menu";
 import { GlobalSearch } from "./global-search";
 
 import {
@@ -159,22 +160,17 @@ export function Shell({ children }: { children: ReactNode }) {
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
-            <IconBtn label="Settings">
-              <Settings className="size-4" />
-            </IconBtn>
-            <IconBtn
-              label="Sign out"
-              mobile
-              onClick={async () => {
-                try {
-                  await signOut();
-                } finally {
-                  router.replace("/login");
-                }
-              }}
+            <Link
+              href="/settings"
+              aria-label="Settings"
+              className={cn(
+                "flex size-10 items-center justify-center rounded-full shadow-[var(--shadow-pill)] transition-colors hover:text-primary",
+                pathname.startsWith("/settings") ? "bg-primary text-primary-foreground hover:text-primary-foreground" : "bg-card text-muted-foreground",
+              )}
             >
-              <LogOut className="size-4" />
-            </IconBtn>
+              <Settings className="size-4" />
+            </Link>
+            <CalendarMenu />
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label={`${user.name}, ${user.role}. Open your menu`}
@@ -212,6 +208,19 @@ export function Shell({ children }: { children: ReactNode }) {
                     ))}
                   </>
                 ) : null}
+                <div className="my-1 h-px bg-border" />
+                <DropdownMenuItem
+                  onSelect={async () => {
+                    try {
+                      await signOut();
+                    } finally {
+                      router.replace("/login");
+                    }
+                  }}
+                  className="rounded-xl px-3 py-2.5 text-sm"
+                >
+                  <LogOut className="size-4" /> Sign out
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
