@@ -28,24 +28,39 @@ const MOVEMENT_LABEL: Record<PolicyMovementType, string> = {
 const amount = (v: number | null) => (v === null ? <NotRecorded /> : formatRwf(v));
 const plain = (v: number | null) => (v === null ? <NotRecorded /> : v.toLocaleString("en-US"));
 
-export function PolicyDetailView({ policyId }: { policyId: string }) {
+export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; policyUuid?: string }) {
   const { user } = useCurrentUser();
   const { canUpload } = documentPermissions(user);
   const canSeeClaims = canAccessPath(user, "/claims");
   const canSeeRenewals = canAccessPath(user, "/renewals");
   const [detail, setDetail] = useState<PolicyDetail | null | undefined>(undefined);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    getPolicyDetail(policyId).then(setDetail);
-  }, [policyId]);
+    let cancelled = false;
+    getPolicyDetail(policyId, policyUuid)
+      .then((d) => {
+        if (!cancelled) setDetail(d);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setLoadError(err instanceof Error ? err.message : "Could not load this policy.");
+        setDetail(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [policyId, policyUuid]);
 
   if (detail === undefined) return <p className="text-sm text-muted-foreground">Loading policy…</p>;
   if (detail === null) {
     return (
       <div className="flex justify-center pt-16">
         <div className="float-card max-w-md p-6 text-center">
-          <h1 className="text-xl font-semibold tracking-tight">Policy not found</h1>
-          <p className="mt-2 text-sm text-muted-foreground">No client holds a policy with the number {policyId}.</p>
+          <h1 className="text-xl font-semibold tracking-tight">{loadError ? "Could not load the policy" : "Policy not found"}</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {loadError ?? `No client you can see holds a policy with the number ${policyId}.`}
+          </p>
           <Link href="/clients" className="mt-4 inline-block text-sm text-primary underline underline-offset-2">
             Go to Clients
           </Link>
@@ -223,7 +238,7 @@ export function PolicyDetailView({ policyId }: { policyId: string }) {
               purpose="POLICY_SCHEDULE"
               canUpload={canUpload}
               title="Policy Documents"
-              emptyText="No schedule or endorsement uploaded yet."
+              emptyText={p.uuid ? "No files yet. Policy files stay in this tab until the backend accepts policy documents." : "No schedule or endorsement uploaded yet."}
             />
           </FloatCard>
         </div>

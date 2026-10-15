@@ -6,12 +6,11 @@ import { Check, Clock, Flag, Mail, MapPin, Pencil, Phone, Plus, X } from "lucide
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
-import { listClientClaims } from "@/lib/api";
+import { listClientClaims, listClientPolicies } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
-import { canAccessPath, clientPermissions, documentPermissions } from "@/lib/permissions";
+import { canAccessPath, clientEditPermissions, clientPermissions, documentPermissions } from "@/lib/permissions";
 import type { Client, ClientClaim, Policy } from "@/lib/types";
 import { Chip, NavyButton, NotRecorded, OutlineButton, Person, Recorded, SegmentedTabs, TextLink } from "./ui";
-import { canManageClients } from "./client-form";
 import { PolicyForm } from "./policy-form";
 import { DocumentPanel } from "./documents";
 
@@ -37,11 +36,16 @@ export function ClientFile({
   const [claims, setClaims] = useState<ClientClaim[]>([]);
   // null: show the policy table. "new": Add Policy form. A policy: Edit Policy form.
   const [policyEditor, setPolicyEditor] = useState<Policy | "new" | null>(null);
+  // Backend clients load their policies from the backend; sample clients already carry them.
+  const [policies, setPolicies] = useState<Policy[]>(client.policies);
+  const [policyError, setPolicyError] = useState<string | null>(null);
+  const [loadingPolicies, setLoadingPolicies] = useState(Boolean(client.uuid));
   const { user } = useCurrentUser();
   const canOpenClaims = canAccessPath(user, "/claims");
   const { canUpload: canUploadDocuments } = documentPermissions(user);
   const { canFlagNonCompliant, seesDocumentDetail } = clientPermissions(user.role);
-  const canManage = canManageClients(user.role);
+  // Edit Client follows CLIENT_UPDATE; Add and Edit Policy follow POLICY_CREATE.
+  const { canEditClient, canAddPolicy, canEditPolicy } = clientEditPermissions(user);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,8 +57,33 @@ export function ClientFile({
     };
   }, [client.name]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setPolicies(client.policies);
+    if (!client.uuid) {
+      setLoadingPolicies(false);
+      return;
+    }
+    setLoadingPolicies(true);
+    listClientPolicies(client.id)
+      .then((list) => {
+        if (cancelled) return;
+        setPolicies(list);
+        setPolicyError(null);
+      })
+      .catch((err) => {
+        if (!cancelled) setPolicyError(err instanceof Error ? err.message : "Could not load the policies.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingPolicies(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client.id, client.uuid, client.policies]);
+
   const policyHeadings = ["Policy ID", "Class", "Insurer", "Sum Insured", "Premium", "Start", "Renewal", "Status"];
-  if (canManage) policyHeadings.push("");
+  if (canEditPolicy) policyHeadings.push("");
 
   return (
     <div>
@@ -110,7 +139,7 @@ export function ClientFile({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {canManage && onEdit ? (
+          {canEditClient && onEdit ? (
             <OutlineButton onClick={onEdit}>
               <Pencil className="size-3.5" /> Edit
             </OutlineButton>
@@ -195,12 +224,13 @@ export function ClientFile({
               onCancel={() => setPolicyEditor(null)}
               onSaved={(updated) => {
                 setPolicyEditor(null);
+                setPolicies(updated.policies);
                 onChanged?.(updated);
               }}
             />
           ) : (
             <div className="mt-4">
-              {canManage && onChanged ? (
+              {canAddPolicy && onChanged ? (
                 <div className="mb-3 flex justify-end">
                   <NavyButton onClick={() => setPolicyEditor("new")}>
                     <Plus className="size-3.5" /> Add Policy
@@ -208,7 +238,13 @@ export function ClientFile({
                 </div>
               ) : null}
 
-              {client.policies.length === 0 ? (
+              {loadingPolicies ? (
+                <p className="px-1 py-4 text-xs text-muted-foreground">Loading policies…</p>
+              ) : policyError ? (
+                <p className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-xs text-danger">
+                  {policyError}
+                </p>
+              ) : policies.length === 0 ? (
                 <p className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-xs text-muted-foreground">
                   No policies on record for this client yet.
                 </p>
@@ -232,11 +268,11 @@ export function ClientFile({
                       </tr>
                     </thead>
                     <tbody>
-                      {client.policies.map((p) => (
-                        <tr key={p.id}>
+                      {policies.map((p) => (
+                        <tr key={p.uuid ?? p.id}>
                           <td className="border-b border-border px-3 py-3 text-xs font-medium">
                             <Link
-                              href={`/policies/${encodeURIComponent(p.id)}`}
+                              href={`/policies/${encodeURIComponent(p.id)}${p.uuid ? `?ref=${p.uuid}` : ""}`}
                               className="text-primary underline underline-offset-2 hover:opacity-70"
                             >
                               {p.id}
@@ -249,10 +285,10 @@ export function ClientFile({
                             <Recorded value={p.insurer} />
                           </td>
                           <td className="border-b border-border px-3 py-3 text-xs whitespace-nowrap">
-                            {p.sumInsured === undefined ? <NotRecorded /> : formatRwf(p.sumInsured)}
+                            {p.sumInsured ? formatRwf(p.sumInsured) : <NotRecorded />}
                           </td>
                           <td className="border-b border-border px-3 py-3 text-xs whitespace-nowrap">
-                            {p.premium === undefined ? <NotRecorded /> : formatRwf(p.premium)}
+                            {p.premium ? formatRwf(p.premium) : <NotRecorded />}
                           </td>
                           <td className="border-b border-border px-3 py-3 text-xs whitespace-nowrap">
                             <Recorded value={p.start} />
@@ -275,7 +311,7 @@ export function ClientFile({
                               {p.status}
                             </Chip>
                           </td>
-                          {canManage ? (
+                          {canEditPolicy ? (
                             <td className="border-b border-border px-3 py-3">
                               {onChanged ? <TextLink onClick={() => setPolicyEditor(p)}>Edit</TextLink> : null}
                             </td>
