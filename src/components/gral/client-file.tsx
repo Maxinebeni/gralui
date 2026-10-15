@@ -272,7 +272,7 @@ export function ClientFile({
                         <tr key={p.uuid ?? p.id}>
                           <td className="border-b border-border px-3 py-3 text-xs font-medium">
                             <Link
-                              href={`/policies/${encodeURIComponent(p.id)}`}
+                              href={`/policies/${encodeURIComponent(p.id)}${p.uuid ? `?ref=${p.uuid}` : ""}`}
                               className="text-primary underline underline-offset-2 hover:opacity-70"
                             >
                               {p.id}

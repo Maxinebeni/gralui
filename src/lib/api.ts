@@ -710,7 +710,15 @@ function findClientForPolicies(clientId: string): Client {
   return found;
 }
 
+/** Backend policies already seen, by policy number, so the policy page can find them again. */
+const POLICY_INDEX = new Map<string, { uuid: string; clientRef: string }>();
+
+function policyKey(policyNumber: string) {
+  return policyNumber.trim().toUpperCase();
+}
+
 function savePolicies(clientId: string, policies: Policy[]): Client {
+  for (const p of policies) if (p.uuid) POLICY_INDEX.set(policyKey(p.id), { uuid: p.uuid, clientRef: clientId });
   const updated = withPolicies(findClientForPolicies(clientId), policies);
   const mockIndex = CLIENTS.findIndex((c) => c.id === clientId);
   if (mockIndex >= 0) {
@@ -1339,7 +1347,102 @@ export function policyFinancials(p: Policy): PolicyFinancials {
   };
 }
 
-export async function getPolicyDetail(policyId: string): Promise<PolicyDetail | null> {
+/**
+ * Finds a backend policy by its number. Uses what is already loaded; after a
+ * page refresh it looks through the clients' policies, 4 clients at a time.
+ */
+async function findBackendPolicy(policyNumber: string): Promise<{ uuid: string; clientRef: string } | null> {
+  const known = POLICY_INDEX.get(policyKey(policyNumber));
+  if (known) return known;
+  const clients = (await listClientChoices()).filter((c) => c.uuid);
+  await mapLimited(clients, 4, async (c) => {
+    if (POLICY_INDEX.has(policyKey(policyNumber))) return;
+    try {
+      await listClientPolicies(c.id);
+    } catch {
+      // A client whose policies cannot be read is skipped.
+    }
+  });
+  return POLICY_INDEX.get(policyKey(policyNumber)) ?? null;
+}
+
+/**
+ * Policy page for a backend policy: GET /policies/{id} for the policy and all
+ * its cover periods, plus the client's claims on those periods. Premiums,
+ * payments and policy history (POL-03, POL-05) are not on the backend yet.
+ */
+async function getBackendPolicyDetail(policyNumber: string, policyUuid?: string): Promise<PolicyDetail | null> {
+  const found = policyUuid ? { uuid: policyUuid, clientRef: "" } : await findBackendPolicy(policyNumber);
+  if (!found) return null;
+
+  const res = await apiFetch(`/api/v1/policies/${found.uuid}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await policyProblem(res, "Could not load this policy."));
+  const view = (await res.json()) as PolicyView;
+  const policy = toPolicy(view);
+  if (!policy) return null;
+
+  const client =
+    [...CLIENT_CACHE.values()].find((c) => c.uuid === view.clientId) ??
+    (await listClientChoices()).find((c) => c.uuid === view.clientId);
+  const clientRef = client?.id ?? found.clientRef;
+  const clientName = client?.name ?? "Client";
+  if (clientRef) POLICY_INDEX.set(policyKey(policy.id), { uuid: view.id, clientRef });
+
+  const financials = policyFinancials(policy);
+  // Newest period first; the oldest one is when the policy was placed.
+  const sorted = [...view.periods].sort((a, b) => b.effectDate.localeCompare(a.effectDate));
+  const periods: PolicyPeriod[] = sorted.map((per, i) => ({
+    periodId: per.id,
+    from: per.effectDate,
+    to: per.expiryDate,
+    // Amounts are only known for the current period, and only if typed in this session.
+    sumInsured: i === 0 ? (policy.sumInsured ?? null) : null,
+    netPremium: i === 0 ? financials.netPremium : null,
+    totalPremium: i === 0 ? (policy.premium ?? null) : null,
+    movement: i === sorted.length - 1 ? "NEW" : "RENEWAL",
+    current: i === 0,
+  }));
+  const movements: PolicyMovement[] = sorted.map((per, i) => ({
+    id: `MOV-${per.id}`,
+    date: per.effectDate,
+    type: i === sorted.length - 1 ? "NEW" : "RENEWAL",
+    description:
+      i === sorted.length - 1
+        ? `Policy placed with ${per.insurerName}`
+        : `Renewed for ${formatIsoRange(per.effectDate, per.expiryDate)}`,
+    by: "Recorded in the system",
+  }));
+
+  // Claims registered on any of this policy's cover periods.
+  let claims: ClientClaim[] = [];
+  try {
+    const periodIds = new Set(view.periods.map((per) => per.id));
+    const claimRes = await apiFetch(`/api/v1/clients/${view.clientId}/claims?size=100`);
+    if (claimRes.ok) {
+      const items = ((await claimRes.json()) as Page<ClaimView>).items ?? [];
+      claims = items
+        .filter((c) => periodIds.has(c.policyPeriodId))
+        .map((c) => {
+          const per = view.periods.find((x) => x.id === c.policyPeriodId);
+          const period: PolicyPeriodDetail | null = per
+            ? { id: per.id, policyId: view.id, insurerName: per.insurerName, productName: per.productName, externalPolicyNumber: per.externalPolicyNumber, effectDate: per.effectDate, expiryDate: per.expiryDate }
+            : null;
+          return toClaimSummary(rememberClaim(toClaim(c, clientRef, clientName, period)));
+        });
+    }
+  } catch (err) {
+    console.warn("Could not load the claims on this policy:", err);
+  }
+
+  return { policy, clientId: clientRef, client: clientName, financials, periods, movements, claims };
+}
+
+export async function getPolicyDetail(policyId: string, policyUuid?: string): Promise<PolicyDetail | null> {
+  if (!MOCK_AUTH) {
+    const backend = await getBackendPolicyDetail(policyId, policyUuid);
+    if (backend) return backend;
+  }
   const client = allKnownClients().find((c) => c.policies.some((p) => sameText(p.id, policyId)));
   if (!client) return null;
   const policy = client.policies.find((p) => sameText(p.id, policyId))!;
