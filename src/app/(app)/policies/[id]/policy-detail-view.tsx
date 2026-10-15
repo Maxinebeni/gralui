@@ -2,13 +2,13 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ArrowLeft, Coins, Percent, ShieldCheck, Wallet } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { PageHeader } from "@/components/gral/shell";
 import { DocumentPanel } from "@/components/gral/documents";
 import { Td, Th } from "@/components/gral/claim-list";
-import { CardHeader, Chip, FloatCard, NotRecorded, Recorded, StatTile } from "@/components/gral/ui";
+import { CardHeader, Chip, FloatCard, NotRecorded, Recorded } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
-import { NOT_RECORDED, formatRwf } from "@/lib/format";
+import { formatRwf } from "@/lib/format";
 import { getPolicyDetail } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { recordHref } from "@/lib/links";
@@ -26,7 +26,6 @@ const MOVEMENT_LABEL: Record<PolicyMovementType, string> = {
 };
 
 const amount = (v: number | null) => (v === null ? <NotRecorded /> : formatRwf(v));
-const millions = (v: number | null) => (v === null ? NOT_RECORDED : `RWF ${(v / 1_000_000).toFixed(1)}m`);
 const plain = (v: number | null) => (v === null ? <NotRecorded /> : v.toLocaleString("en-US"));
 
 export function PolicyDetailView({ policyId }: { policyId: string }) {
@@ -69,14 +68,8 @@ export function PolicyDetailView({ policyId }: { policyId: string }) {
       </Link>
       <PageHeader title={p.id} subtitle={`${p.classOfInsurance} · ${p.insurer}`} />
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile icon={ShieldCheck} label="Sum Insured" value={millions(f.sumInsured)} />
-        <StatTile icon={Coins} label="Total Premium" value={millions(f.totalPremium)} delay={60} />
-        <StatTile icon={Wallet} label="Balance Due" value={f.balance === 0 ? "Paid" : millions(f.balance)} tone="down" delay={120} />
-        <StatTile icon={Percent} label="GRAL Commission" value={millions(f.commission)} delay={180} />
-      </div>
-
-      <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_360px]">
+      {/* No summary tiles: the money figures stay in the Financials card, not in large type at the top. */}
+      <div className="mt-5 grid gap-4 xl:grid-cols-[1fr_360px]">
         <div className="min-w-0 space-y-4">
           <FloatCard className="p-4 sm:p-5" delay={120}>
             <h2 className="text-base font-semibold tracking-tight">Financials · current period</h2>

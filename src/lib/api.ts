@@ -55,6 +55,7 @@ import {
   stepDef,
 } from "./claims";
 import { displayToIso } from "./format";
+import { RWANDA_HOLIDAYS, type Holiday } from "./holidays";
 import { completionBlocker, currentMilestone, milestoneDue, todayIso } from "./renewals";
 import type {
   AccessCategory,
@@ -1477,6 +1478,24 @@ export async function updateRole(
     "Could not save the role.",
   );
   return saved!;
+}
+
+/* --------------------------------- Calendar ---------------------------------- */
+// The backend's Rwanda business calendar (WFL-01). Any signed-in user can read
+// it. Until its holiday list is loaded, the official list in holidays.ts is used.
+
+type BackendCalendar = { today: string; timeZone: string; holidays: { date: string; label: string }[] };
+
+export async function getHolidays(): Promise<Holiday[]> {
+  if (MOCK_AUTH) return RWANDA_HOLIDAYS;
+  try {
+    const res = await apiFetch("/api/v1/workflow/calendar");
+    if (!res.ok) return RWANDA_HOLIDAYS;
+    const calendar = (await res.json()) as BackendCalendar;
+    return calendar.holidays?.length ? calendar.holidays : RWANDA_HOLIDAYS;
+  } catch {
+    return RWANDA_HOLIDAYS;
+  }
 }
 
 /* --------------------------------- Overview ---------------------------------- */
