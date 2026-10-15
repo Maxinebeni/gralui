@@ -9,11 +9,12 @@ import { X } from "lucide-react";
 import { toast } from "sonner";
 import { SlideOver } from "@/components/gral/shell";
 import { NavyButton, OutlineButton } from "@/components/gral/ui";
-import { createClaim, listClients } from "@/lib/api";
+import { createClaim, listClientChoices, listClientPolicies } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { INSURER_GROUPS, PRODUCT_GROUPS, type OptionGroup } from "@/lib/reference-data";
+import { displayToIso } from "@/lib/format";
 import { todayIso } from "@/lib/renewals";
-import type { Claim, ClaimPriority, Client } from "@/lib/types";
+import type { Claim, ClaimPriority, Client, Policy } from "@/lib/types";
 import { Field, Section, describedBy, inputClass } from "./client-form";
 
 type FormValues = {
@@ -85,6 +86,7 @@ function NewClaimForm({
   const { user } = useCurrentUser();
   const [clients, setClients] = useState<Client[]>([]);
   const [clientsError, setClientsError] = useState(false);
+  const [loadingClients, setLoadingClients] = useState(true);
   const [values, setValues] = useState<FormValues>({
     clientId: "",
     policyId: "",
@@ -99,14 +101,42 @@ function NewClaimForm({
   });
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState(false);
+  const [policies, setPolicies] = useState<Policy[]>([]);
+  const [loadingPolicies, setLoadingPolicies] = useState(false);
 
   useEffect(() => {
-    listClients()
+    listClientChoices()
       .then(setClients)
-      .catch(() => setClientsError(true));
+      .catch(() => setClientsError(true))
+      .finally(() => setLoadingClients(false));
   }, []);
 
   const client = clients.find((c) => c.id === values.clientId);
+  // Backend clients: the claim must sit on one of the client's policies.
+  const policyRequired = !!client?.uuid;
+
+  // Load the chosen client's policies (from the backend for backend clients).
+  useEffect(() => {
+    let cancelled = false;
+    setPolicies(client?.policies ?? []);
+    if (!client?.uuid) return;
+    setLoadingPolicies(true);
+    listClientPolicies(client.id)
+      .then((list) => {
+        if (!cancelled) setPolicies(list);
+      })
+      .catch(() => {
+        if (!cancelled) setPolicies([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingPolicies(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
+
+  const policy = policies.find((p) => p.id === values.policyId);
   const handlerOptions = handlers.includes(user.name) ? handlers : [user.name, ...handlers];
 
   function set<K extends keyof FormValues>(key: K, value: FormValues[K]) {
@@ -116,7 +146,7 @@ function NewClaimForm({
 
   /** Choosing a policy fills in its class and insurer. */
   function choosePolicy(policyId: string) {
-    const policy = client?.policies.find((p) => p.id === policyId);
+    const policy = policies.find((p) => p.id === policyId);
     setValues((v) => ({
       ...v,
       policyId,
@@ -129,6 +159,15 @@ function NewClaimForm({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const found = validate(values);
+    if (policyRequired && !values.policyId) found.policyId = "Choose the policy this claim is on.";
+    // The backend only accepts a loss that happened while the policy was in force.
+    if (policy && values.dateOfLoss && !found.dateOfLoss) {
+      const start = displayToIso(policy.start);
+      const end = displayToIso(policy.renewal);
+      if ((start && values.dateOfLoss < start) || (end && values.dateOfLoss > end)) {
+        found.dateOfLoss = `This policy covers ${policy.start} to ${policy.renewal}. The date of loss must fall in that period.`;
+      }
+    }
     setErrors(found);
     if (Object.keys(found).length > 0) {
       toast.error("Please fix the highlighted fields.");
@@ -149,6 +188,7 @@ function NewClaimForm({
           priority: values.priority,
           handler: values.handler,
           description: values.description.trim(),
+          policyPeriodId: policy?.periodId,
         },
         user.name,
       );
@@ -195,7 +235,15 @@ function NewClaimForm({
               className={inputClass(errors.clientId)}
               {...describedBy("clientId", errors.clientId)}
             >
-              <option value="">{clientsError ? "Could not load clients" : "Select a client"}</option>
+              <option value="">
+                {clientsError
+                  ? "Could not load clients. Close the form and try again."
+                  : loadingClients
+                    ? "Loading clients…"
+                    : clients.length === 0
+                      ? "No clients you can see"
+                      : "Select a client"}
+              </option>
               {clients.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name} ({c.id})
@@ -203,16 +251,25 @@ function NewClaimForm({
               ))}
             </select>
           </Field>
-          <Field id="policyId" label="Policy (optional)" wide>
+          <Field id="policyId" label={policyRequired ? "Policy" : "Policy (optional)"} error={errors.policyId} wide>
             <select
               id="policyId"
               value={values.policyId}
               onChange={(e) => choosePolicy(e.target.value)}
-              disabled={!client}
-              className={inputClass()}
+              disabled={!client || loadingPolicies}
+              className={inputClass(errors.policyId)}
+              {...describedBy("policyId", errors.policyId)}
             >
-              <option value="">{client && client.policies.length === 0 ? "No policies on file" : "Not known yet"}</option>
-              {client?.policies.map((p) => (
+              <option value="">
+                {loadingPolicies
+                  ? "Loading policies…"
+                  : client && policies.length === 0
+                    ? "No policies on file"
+                    : policyRequired
+                      ? "Select a policy"
+                      : "Not known yet"}
+              </option>
+              {policies.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.id} · {p.classOfInsurance} · {p.insurer}
                 </option>
