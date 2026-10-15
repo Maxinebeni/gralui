@@ -231,9 +231,17 @@ export type ClaimEvent = { at: string; by: string; text: string };
  
 export type Claim = {
   id: string; // e.g. CLM-2025-089
+  /** Backend claim ID (UUID). Only set for claims loaded from the backend. */
+  uuid?: string;
+  /** Backend version. Only set for backend claims. */
+  version?: number;
   clientId: string;
   client: string;
   policyId?: string; // unknown at registration is allowed
+  /** Backend policy period the claim is registered on. Only set for backend claims. */
+  policyPeriodId?: string;
+  /** Currency of the amount, e.g. RWF. Only set for backend claims. */
+  currency?: string;
   classOfInsurance: string;
   insurer: string;
   dateOfLoss: string; // ISO date

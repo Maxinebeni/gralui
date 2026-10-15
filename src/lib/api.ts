@@ -5,10 +5,11 @@
 // the backend. The screens will not need to change as long as the response
 // shapes match src/lib/types.ts.
 //
-// STATUS: authentication, clients, client documents, administration (users,
-// roles), policies (insurer, product, policy number and dates) and the insurer
-// and product catalog are connected to the real backend. Policy premiums,
-// claims, renewals, approvals, tasks and the overview still use mock data.
+// STATUS: authentication, clients, client and claim documents, administration
+// (users, roles), policies (insurer, product, policy number and dates), the
+// insurer and product catalog, and claim registration are connected to the
+// real backend. Policy premiums, the later claim steps, renewals, approvals,
+// tasks and the overview still use mock data.
 
 import {
   APPROVALS,
@@ -251,6 +252,7 @@ function toClient(v: ClientView, managers: ManagerChoice[]): Client {
     correspondence: [],
   };
   CLIENT_CACHE.set(client.id, client);
+  SUMMARY_ONLY.delete(client.id);
   return client;
 }
 
@@ -274,9 +276,12 @@ async function mapLimited<T, R>(items: T[], limit: number, work: (item: T) => Pr
   return results;
 }
 
+/** Clients cached from the list summary only; the full record is loaded the next time the list loads. */
+const SUMMARY_ONLY = new Set<string>();
+
 /** A client built from the list summary alone, used when its full record could not be loaded. */
 function clientFromSummary(s: ClientSummary, managers: ManagerChoice[]): Client {
-  return toClient(
+  const client = toClient(
     {
       id: s.id,
       reference: s.reference,
@@ -287,6 +292,35 @@ function clientFromSummary(s: ClientSummary, managers: ManagerChoice[]): Client 
     },
     managers,
   );
+  SUMMARY_ONLY.add(client.id);
+  return client;
+}
+
+let CLIENT_CHOICES_REQUEST: Promise<Client[]> | null = null;
+
+/**
+ * Clients for pick lists and the claims list: one request, names and IDs only.
+ * Much faster than listClients, which also loads every full record.
+ * Throws when the list cannot be loaded, so the screen can say so.
+ */
+export async function listClientChoices(): Promise<Client[]> {
+  if (MOCK_AUTH) return mockListClients("");
+  if (CLIENT_CHOICES_REQUEST) return CLIENT_CHOICES_REQUEST;
+  CLIENT_CHOICES_REQUEST = (async () => {
+    try {
+      const res = await apiFetch("/api/v1/clients?size=100&sort=name");
+      if (!res.ok) throw new Error(await problemMessage(res, "Could not load clients."));
+      const page = (await res.json()) as Page<ClientSummary>;
+      const managers = await loadManagers();
+      return page.items.map((s) => {
+        const cached = CLIENT_CACHE.get(s.reference);
+        return cached && cached.uuid === s.id ? cached : clientFromSummary(s, managers);
+      });
+    } finally {
+      CLIENT_CHOICES_REQUEST = null;
+    }
+  })();
+  return CLIENT_CHOICES_REQUEST;
 }
 
 /** Full client record, retried once because the free backend server sometimes drops a request. */
@@ -321,7 +355,9 @@ export async function listClients(query = ""): Promise<Client[]> {
       // Unchanged ones come from the cache. One that fails is shown from its summary.
       return await mapLimited(page.items, 4, async (s) => {
         const cached = CLIENT_CACHE.get(s.reference);
-        if (cached && cached.uuid === s.id && cached.version === s.version) return cached;
+        if (cached && cached.uuid === s.id && cached.version === s.version && !SUMMARY_ONLY.has(s.reference)) {
+          return cached;
+        }
         try {
           return toClient(await fetchClientViewWithRetry(s.id), managers);
         } catch (err) {
@@ -1387,7 +1423,8 @@ const LOCAL_FILES = new Map<string, Blob>();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function usesDocumentBackend(subject: DocumentSubject) {
-  return !MOCK_AUTH && subject.type === "CLIENT" && UUID_PATTERN.test(subject.id);
+  // The backend accepts documents for clients and claims so far.
+  return !MOCK_AUTH && (subject.type === "CLIENT" || subject.type === "CLAIM") && UUID_PATTERN.test(subject.id);
 }
 
 function subjectKey(subject: DocumentSubject) {
@@ -1847,8 +1884,146 @@ function requireOpen(c: Claim) {
   if (isClosed(c)) throw new Error("This claim is closed.");
 }
 
+/* ----------------------------- Claims on the backend ----------------------------- */
+// Connected: GET /clients/{id}/claims, GET /policy-periods/{id} and POST /claims
+// (claim step 1, Register). The backend stores the client, policy period, date
+// of loss, description and estimated amount. Priority, handler, report date and
+// the later steps (documents, submission, follow-ups, settlement) are not on the
+// backend yet, so they are kept in this browser tab until refresh, like the
+// sample claims.
+
+type ClaimView = {
+  id: string;
+  reference: string;
+  clientId: string;
+  policyPeriodId: string;
+  lossDate: string;
+  description: string;
+  estimatedAmount: number;
+  currency: string;
+  ownerId?: string;
+  state: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type PolicyPeriodDetail = {
+  id: string;
+  policyId: string;
+  insurerName: string;
+  productName: string;
+  externalPolicyNumber: string;
+  effectDate: string;
+  expiryDate: string;
+};
+
+/** Details typed in this tab that the backend does not store yet, by claim UUID. */
+const LOCAL_CLAIM_DETAILS = new Map<string, Pick<Claim, "priority" | "handler" | "dateReported">>();
+
+/** Policy periods already loaded, by period UUID. */
+const PERIOD_CACHE = new Map<string, PolicyPeriodDetail | null>();
+
+async function loadPeriod(periodId: string): Promise<PolicyPeriodDetail | null> {
+  if (PERIOD_CACHE.has(periodId)) return PERIOD_CACHE.get(periodId)!;
+  try {
+    const res = await apiFetch(`/api/v1/policy-periods/${periodId}`);
+    const period = res.ok ? ((await res.json()) as PolicyPeriodDetail) : null;
+    PERIOD_CACHE.set(periodId, period);
+    return period;
+  } catch {
+    return null;
+  }
+}
+
+async function claimProblem(res: Response, fallback: string): Promise<string> {
+  const problem = await readProblem(res);
+  if (res.status === 401) return "Your session has ended. Please sign in again.";
+  if (res.status === 403) return "You do not have permission to register claims for this client.";
+  if (res.status === 404) return "This client or policy could not be found.";
+  if (res.status === 400 && problem.fields?.length) return `Please check these fields: ${problem.fields.join(", ")}.`;
+  if (problem.title) return problem.title;
+  return fallback;
+}
+
+function standardClaimDocuments(): Claim["documents"] {
+  return [
+    { name: "Notification of loss", required: true },
+    { name: "Supporting report (police, fire or medical)", required: true },
+    { name: "Repair or replacement quotation", required: true },
+  ];
+}
+
+/** Turns a backend claim into the shape the screens use. */
+function toClaim(v: ClaimView, clientRef: string, clientName: string, period: PolicyPeriodDetail | null): Claim {
+  const created = v.createdAt.slice(0, 10);
+  const local = LOCAL_CLAIM_DETAILS.get(v.id);
+  // Work done in this tab on the same claim (documents, steps, notes) is kept.
+  const existing = CLAIMS.find((c) => c.uuid === v.id);
+  return {
+    ...(existing ?? {
+      step: "REGISTER" as const,
+      stepStartedAt: created,
+      documents: standardClaimDocuments(),
+      followUps: [],
+      notes: [],
+      history: [{ at: created, by: "Backend", text: "Claim registered" }],
+    }),
+    id: v.reference,
+    uuid: v.id,
+    version: v.version,
+    clientId: clientRef,
+    client: clientName,
+    policyId: period?.externalPolicyNumber || undefined,
+    policyPeriodId: v.policyPeriodId,
+    classOfInsurance: period?.productName ?? "",
+    insurer: period?.insurerName ?? "",
+    dateOfLoss: v.lossDate,
+    dateReported: local?.dateReported ?? existing?.dateReported ?? created,
+    amount: Number(v.estimatedAmount),
+    currency: v.currency,
+    priority: local?.priority ?? existing?.priority ?? "P2",
+    handler: local?.handler ?? existing?.handler ?? "Not assigned",
+    description: v.description,
+  };
+}
+
+/** Adds or replaces a backend claim in the in-memory list, so the claim steps can work on it. */
+function rememberClaim(claim: Claim): Claim {
+  const index = CLAIMS.findIndex((c) => c.uuid === claim.uuid || c.id === claim.id);
+  if (index >= 0) CLAIMS[index] = claim;
+  else CLAIMS.unshift(claim);
+  return claim;
+}
+
+/** Claims on the backend, loaded client by client (4 at a time). */
+async function listBackendClaims(): Promise<Claim[]> {
+  let clients: Client[];
+  try {
+    clients = (await listClientChoices()).filter((c) => c.uuid);
+  } catch (err) {
+    console.warn("Could not load clients for the claims list:", err);
+    return [];
+  }
+  const perClient = await mapLimited(clients, 4, async (client) => {
+    try {
+      const res = await apiFetch(`/api/v1/clients/${client.uuid}/claims?size=100`);
+      if (!res.ok) return [];
+      const views = ((await res.json()) as Page<ClaimView>).items ?? [];
+      return await mapLimited(views, 4, async (v) =>
+        rememberClaim(toClaim(v, client.id, client.name, await loadPeriod(v.policyPeriodId))),
+      );
+    } catch (err) {
+      console.warn(`Could not load claims for ${client.id}:`, err);
+      return [];
+    }
+  });
+  return perClient.flat().sort((a, b) => b.dateReported.localeCompare(a.dateReported));
+}
+
 export async function listClaims(): Promise<Claim[]> {
-  return [...CLAIMS];
+  if (MOCK_AUTH) return [...CLAIMS];
+  return listBackendClaims();
 }
 
 export type NewClaimInput = {
@@ -1863,12 +2038,39 @@ export type NewClaimInput = {
   priority: ClaimPriority;
   handler: string;
   description: string;
+  /** Backend policy period. Required for backend clients: a claim must sit on a policy. */
+  policyPeriodId?: string;
 };
 
 /** Register a claim (step 1). Standard documents are added as the checklist. */
 export async function createClaim(input: NewClaimInput, by: string): Promise<Claim> {
   if (input.dateOfLoss > todayIso()) throw new Error("The date of loss cannot be in the future.");
   if (input.dateReported < input.dateOfLoss) throw new Error("The claim cannot be reported before the loss happened.");
+
+  const backendClient = !MOCK_AUTH ? CLIENT_CACHE.get(input.clientId) : undefined;
+  if (backendClient?.uuid) {
+    if (!input.policyPeriodId) throw new Error("Choose the policy this claim is on.");
+    const res = await apiFetch("/api/v1/claims", {
+      method: "POST",
+      body: JSON.stringify({
+        clientId: backendClient.uuid,
+        policyPeriodId: input.policyPeriodId,
+        lossDate: input.dateOfLoss,
+        description: input.description,
+        estimatedAmount: input.amount,
+        currency: "RWF",
+      }),
+    });
+    if (!res.ok) throw new Error(await claimProblem(res, "Could not register the claim. Please try again."));
+    const view = (await res.json()) as ClaimView;
+    LOCAL_CLAIM_DETAILS.set(view.id, {
+      priority: input.priority,
+      handler: input.handler,
+      dateReported: input.dateReported,
+    });
+    const claim = toClaim(view, backendClient.id, backendClient.name, await loadPeriod(view.policyPeriodId));
+    return rememberClaim({ ...claim, history: [{ at: todayIso(), by, text: "Claim registered" }] });
+  }
   const year = new Date().getFullYear();
   const highest = CLAIMS.reduce((max, c) => Math.max(max, Number(c.id.split("-").at(-1)) || 0), 0);
   const claim: Claim = {
