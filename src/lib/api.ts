@@ -5,9 +5,10 @@
 // the backend. The screens will not need to change as long as the response
 // shapes match src/lib/types.ts.
 //
-// STATUS: authentication, clients, client documents and administration
-// (users, roles) are connected to the real backend. Policies, claims, renewals, approvals, tasks and the overview
-// still use mock data.
+// STATUS: authentication, clients, client documents, administration (users,
+// roles), policies (insurer, product, policy number and dates) and the insurer
+// and product catalog are connected to the real backend. Policy premiums,
+// claims, renewals, approvals, tasks and the overview still use mock data.
 
 import {
   APPROVALS,
@@ -56,6 +57,7 @@ import {
 } from "./claims";
 import { displayToIso } from "./format";
 import { RWANDA_HOLIDAYS, type Holiday } from "./holidays";
+import { INSURER_GROUPS, PRODUCT_GROUPS, type OptionGroup } from "./reference-data";
 import { completionBlocker, currentMilestone, milestoneDue, todayIso } from "./renewals";
 import type {
   AccessCategory,
@@ -82,6 +84,7 @@ import type {
   PermissionDefinition,
   Policy,
   PolicyDetail,
+  PolicyStatus,
   PolicyFinancials,
   PolicyMovement,
   PolicyPeriod,
@@ -200,7 +203,8 @@ async function problemMessage(res: Response, fallback: string): Promise<string> 
   if (res.status === 400 && problem.fields?.length) {
     return `Please check these fields: ${problem.fields.join(", ")}.`;
   }
-  return fallback;
+  // Show the status so problems like a sleeping or busy server (502, 503, 429) are easy to spot.
+  return `${fallback} (error ${res.status})`;
 }
 
 /** The backend only accepts +250 followed by 9 digits. */
@@ -257,29 +261,85 @@ async function fetchClientView(uuid: string): Promise<ClientView> {
   return (await res.json()) as ClientView;
 }
 
+/** Run async work on a list, a few items at a time, so the backend is not flooded. */
+async function mapLimited<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await work(items[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+/** A client built from the list summary alone, used when its full record could not be loaded. */
+function clientFromSummary(s: ClientSummary, managers: ManagerChoice[]): Client {
+  return toClient(
+    {
+      id: s.id,
+      reference: s.reference,
+      profile: { registeredName: s.registeredName, type: s.type, sector: "Not recorded", physicalAddress: "" },
+      managerId: s.managerId,
+      restricted: s.restricted,
+      version: s.version,
+    },
+    managers,
+  );
+}
+
+/** Full client record, retried once because the free backend server sometimes drops a request. */
+async function fetchClientViewWithRetry(uuid: string): Promise<ClientView> {
+  try {
+    return await fetchClientView(uuid);
+  } catch {
+    return await fetchClientView(uuid);
+  }
+}
+
+/** Requests already on their way, by search text, so the same list is never asked for twice at once. */
+const CLIENT_LIST_REQUESTS = new Map<string, Promise<Client[]>>();
+
 /** Search clients on the backend (name, reference and more). */
 export async function listClients(query = ""): Promise<Client[]> {
   if (MOCK_AUTH) return mockListClients(query);
-  try {
-    const params = new URLSearchParams({ size: "100", sort: "name" });
-    if (query.trim()) params.set("q", query.trim());
-    const res = await apiFetch(`/api/v1/clients?${params}`);
-    if (!res.ok) throw new Error(await problemMessage(res, "Could not load clients."));
-    const page = (await res.json()) as Page<ClientSummary>;
-    const managers = await loadManagers();
+  const key = query.trim();
+  const pending = CLIENT_LIST_REQUESTS.get(key);
+  if (pending) return pending;
 
-    // The list only has summaries, so load each full record. Unchanged ones come from the cache.
-    return await Promise.all(
-      page.items.map(async (s) => {
+  const request = (async () => {
+    try {
+      const params = new URLSearchParams({ size: "100", sort: "name" });
+      if (key) params.set("q", key);
+      const res = await apiFetch(`/api/v1/clients?${params}`);
+      if (!res.ok) throw new Error(await problemMessage(res, "Could not load clients."));
+      const page = (await res.json()) as Page<ClientSummary>;
+      const managers = await loadManagers();
+
+      // The list only has summaries, so load each full record, 4 at a time.
+      // Unchanged ones come from the cache. One that fails is shown from its summary.
+      return await mapLimited(page.items, 4, async (s) => {
         const cached = CLIENT_CACHE.get(s.reference);
         if (cached && cached.uuid === s.id && cached.version === s.version) return cached;
-        return toClient(await fetchClientView(s.id), managers);
-      }),
-    );
-  } catch (err) {
-    console.error(err);
-    return [];
-  }
+        try {
+          return toClient(await fetchClientViewWithRetry(s.id), managers);
+        } catch (err) {
+          console.warn(`Showing ${s.reference} from the list only:`, err);
+          return clientFromSummary(s, managers);
+        }
+      });
+    } catch (err) {
+      console.warn(err);
+      return [];
+    } finally {
+      CLIENT_LIST_REQUESTS.delete(key);
+    }
+  })();
+
+  CLIENT_LIST_REQUESTS.set(key, request);
+  return request;
 }
 
 export async function getClient(id: string): Promise<Client | null> {
@@ -347,6 +407,8 @@ export async function createClient(input: ClientInput): Promise<Client> {
 /**
  * Update a client. The backend uses three separate steps: profile, primary
  * contact and account manager. Each step needs the latest version number.
+ * Steps whose fields did not change are skipped, so a small edit only waits
+ * for one request to the backend instead of three.
  */
 export async function updateClient(id: string, input: ClientInput): Promise<Client> {
   if (MOCK_AUTH) return mockUpdateClient(id, input);
@@ -356,28 +418,48 @@ export async function updateClient(id: string, input: ClientInput): Promise<Clie
   }
   const uuid = current.uuid;
   let version = current.version;
+  let view: ClientView | null = null;
+  let res: Response;
 
-  // 1. Company details.
-  let res = await apiFetch(`/api/v1/clients/${uuid}`, {
-    method: "PUT",
-    body: JSON.stringify({ version, profile: { ...toProfile(input), remarks: current.remarks } }),
-  });
-  if (!res.ok) throw new Error(await problemMessage(res, "Could not save the client details."));
-  let view = (await res.json()) as ClientView;
-  version = view.version;
+  const profileChanged =
+    !sameText(input.name, current.name) ||
+    input.type !== current.type ||
+    !sameText(input.sector, current.sector) ||
+    !sameText(input.address, current.address ?? "");
 
-  // 2. Primary contact person.
-  res = await apiFetch(`/api/v1/clients/${uuid}/primary-contact`, {
-    method: "PUT",
-    body: JSON.stringify({ version, primaryContact: toContact(input.contact) }),
-  });
-  if (!res.ok) throw new Error(await problemMessage(res, "Could not save the contact person."));
-  view = (await res.json()) as ClientView;
-  version = view.version;
+  const before = current.contact;
+  const contactChanged =
+    !before ||
+    !sameText(input.contact.name, before.name ?? "") ||
+    !sameText(input.contact.title, before.title ?? "") ||
+    !sameText(input.contact.email, before.email ?? "") ||
+    toBackendPhone(input.contact.phone) !== toBackendPhone(before.phone ?? "");
+
+  // 1. Company details, only if they changed.
+  if (profileChanged) {
+    res = await apiFetch(`/api/v1/clients/${uuid}`, {
+      method: "PUT",
+      body: JSON.stringify({ version, profile: { ...toProfile(input), remarks: current.remarks } }),
+    });
+    if (!res.ok) throw new Error(await problemMessage(res, "Could not save the client details."));
+    view = (await res.json()) as ClientView;
+    version = view.version;
+  }
+
+  // 2. Primary contact person, only if it changed.
+  if (contactChanged) {
+    res = await apiFetch(`/api/v1/clients/${uuid}/primary-contact`, {
+      method: "PUT",
+      body: JSON.stringify({ version, primaryContact: toContact(input.contact) }),
+    });
+    if (!res.ok) throw new Error(await problemMessage(res, "Could not save the contact person."));
+    view = (await res.json()) as ClientView;
+    version = view.version;
+  }
 
   // 3. Account manager, only if it changed.
-  const managerId = await managerIdFor(input.manager);
-  if (managerId !== view.managerId) {
+  if (input.manager !== current.manager) {
+    const managerId = await managerIdFor(input.manager);
     res = await apiFetch(`/api/v1/clients/${uuid}/reassign`, {
       method: "POST",
       body: JSON.stringify({ version, managerId, reason: "Account manager changed from the client form." }),
@@ -386,12 +468,18 @@ export async function updateClient(id: string, input: ClientInput): Promise<Clie
     view = (await res.json()) as ClientView;
   }
 
+  // Nothing changed: no request needed.
+  if (!view) return current;
   return toClient(view, await loadManagers());
 }
 
 /* --------------------------------- Policies ---------------------------------- */
-// Not on the backend yet. Policies for backend clients are kept in memory
-// until the page is refreshed; sample clients keep using mock-data.ts.
+// Backend clients: policies come from /api/v1/clients/{id}/policies (POL-02).
+// The backend stores the insurer, product, policy number and dates of each
+// cover period. Sum insured, premiums, amount paid, commission rate and status
+// are not on the backend yet (POL-03), so for backend policies they are kept in
+// this browser tab until refresh. Sample clients (demo mode) keep using
+// mock-data.ts.
 
 function sameText(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -399,6 +487,160 @@ function sameText(a: string, b: string): boolean {
 
 /** What the Add Policy and Edit Policy forms send. */
 export type PolicyInput = Policy;
+
+type InsurerView = { id: string; code: string; name: string; typeCode: string; active: boolean };
+type ProductView = {
+  id: string;
+  code: string;
+  name: string;
+  termCode: string;
+  active: boolean;
+  productLineCodes?: string[];
+};
+type CategoryView = { id: string; code: string; name: string; active: boolean };
+type InsurerTypeView = { id: string; code: string; name: string; active: boolean };
+
+type PolicyPeriodView = {
+  id: string;
+  policyId: string;
+  insurerId: string;
+  insurerName: string;
+  productId: string;
+  productName: string;
+  externalPolicyNumber: string;
+  effectDate: string; // yyyy-mm-dd
+  expiryDate: string; // yyyy-mm-dd
+  version: number;
+};
+
+type PolicyView = { id: string; clientId: string; version: number; createdAt: string; periods: PolicyPeriodView[] };
+
+type Catalog = {
+  insurers: InsurerView[];
+  products: ProductView[];
+  lines: CategoryView[];
+  insurerTypes: InsurerTypeView[];
+};
+
+/** The insurer and product catalog from the backend, loaded once. */
+let CATALOG: Catalog | null = null;
+
+async function getJson<T>(path: string): Promise<T | null> {
+  try {
+    const res = await apiFetch(path);
+    return res.ok ? ((await res.json()) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadCatalog(): Promise<Catalog | null> {
+  if (CATALOG) return CATALOG;
+  const [insurers, products, lines, insurerTypes] = await Promise.all([
+    getJson<InsurerView[]>("/api/v1/policy/catalog/insurers"),
+    getJson<ProductView[]>("/api/v1/policy/catalog/products"),
+    getJson<CategoryView[]>("/api/v1/policy/catalog/product-lines"),
+    getJson<InsurerTypeView[]>("/api/v1/policy/catalog/insurer-types"),
+  ]);
+  if (!insurers?.length || !products?.length) return null;
+  CATALOG = { insurers, products, lines: lines ?? [], insurerTypes: insurerTypes ?? [] };
+  return CATALOG;
+}
+
+/** Dropdown lists for the policy form, grouped with headings. */
+export type PolicyCatalog = { insurerGroups: OptionGroup[]; productGroups: OptionGroup[]; fromBackend: boolean };
+
+function groupBy<T>(items: T[], label: (item: T) => string, name: (item: T) => string): OptionGroup[] {
+  const groups = new Map<string, string[]>();
+  for (const item of items) groups.set(label(item), [...(groups.get(label(item)) ?? []), name(item)]);
+  return [...groups.entries()].map(([l, options]) => ({ label: l, options: options.sort() }));
+}
+
+/**
+ * Insurers and products for the policy form. Uses the backend catalog when it
+ * is available, otherwise GRAL's official list in reference-data.ts.
+ */
+export async function getPolicyCatalog(): Promise<PolicyCatalog> {
+  const fallback: PolicyCatalog = { insurerGroups: INSURER_GROUPS, productGroups: PRODUCT_GROUPS, fromBackend: false };
+  if (MOCK_AUTH) return fallback;
+  const catalog = await loadCatalog();
+  if (!catalog) return fallback;
+
+  const typeName = (code: string) => catalog.insurerTypes.find((t) => t.code === code)?.name ?? code;
+  const lineName = (code?: string) =>
+    code ? (catalog.lines.find((l) => l.code === code)?.name ?? code) : "Other products";
+
+  return {
+    insurerGroups: groupBy(
+      catalog.insurers.filter((i) => i.active),
+      (i) => typeName(i.typeCode),
+      (i) => i.name,
+    ),
+    productGroups: groupBy(
+      catalog.products.filter((p) => p.active),
+      (p) => lineName(p.productLineCodes?.[0]),
+      (p) => p.name,
+    ),
+    fromBackend: true,
+  };
+}
+
+/**
+ * The products an insurer offers, by name. The backend only accepts a policy
+ * when the insurer offers the product. null means "not known" (demo mode or no
+ * backend catalog), and the form then shows every product.
+ */
+export async function productsForInsurer(insurerName: string): Promise<string[] | null> {
+  if (MOCK_AUTH || !insurerName) return null;
+  const catalog = await loadCatalog();
+  const insurer = catalog?.insurers.find((i) => sameText(i.name, insurerName));
+  if (!insurer) return null;
+  const linked = await getJson<ProductView[]>(`/api/v1/policy/catalog/insurers/${insurer.id}/products`);
+  return linked ? linked.filter((p) => p.active).map((p) => p.name) : null;
+}
+
+/** Terms typed in the form that the backend does not store yet, by backend policy ID. */
+const LOCAL_POLICY_TERMS = new Map<string, Partial<Policy>>();
+
+function isoToDisplay(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+/** Until the backend sends a status, a policy past its expiry date shows as Lapsed. */
+function statusFromDates(expiryIso: string): PolicyStatus {
+  return expiryIso < todayIso() ? "Lapsed" : "Active";
+}
+
+/** Turns a backend policy into the shape the screens use, from its latest cover period. */
+function toPolicy(v: PolicyView): Policy | null {
+  const latest = [...v.periods].sort((a, b) => b.effectDate.localeCompare(a.effectDate))[0];
+  if (!latest) return null;
+  return {
+    id: latest.externalPolicyNumber || `POL-${v.id.slice(0, 8).toUpperCase()}`,
+    uuid: v.id,
+    periodId: latest.id,
+    version: v.version,
+    classOfInsurance: latest.productName,
+    insurer: latest.insurerName,
+    // Sum insured and premium are not on the backend yet, so they stay
+    // undefined and show as "Not recorded" (unless typed in this session).
+    start: isoToDisplay(latest.effectDate),
+    renewal: isoToDisplay(latest.expiryDate),
+    status: statusFromDates(latest.expiryDate),
+    ...LOCAL_POLICY_TERMS.get(v.id),
+  };
+}
+
+async function policyProblem(res: Response, fallback: string): Promise<string> {
+  const problem = await readProblem(res);
+  if (res.status === 401) return "Your session has ended. Please sign in again.";
+  if (res.status === 403) return "You do not have permission to add or view policies for this client.";
+  if (res.status === 404) return "This client or policy could not be found.";
+  if (res.status === 400 && problem.fields?.length) return `Please check these fields: ${problem.fields.join(", ")}.`;
+  if (problem.title) return problem.title;
+  return fallback;
+}
 
 function allKnownClients(): Client[] {
   return [...CLIENTS, ...CLIENT_CACHE.values()];
@@ -444,20 +686,103 @@ function savePolicies(clientId: string, policies: Policy[]): Client {
   return updated;
 }
 
-/** Add a policy to a client. Kept in memory until the page is refreshed. */
-export async function createPolicy(clientId: string, input: PolicyInput): Promise<Client> {
-  const client = findClientForPolicies(clientId);
-  if (policyNumberTaken(input.id)) throw new Error("This policy number is already in use.");
-  return savePolicies(clientId, [...client.policies, input]);
+function isBackendClient(clientId: string): Client | null {
+  if (MOCK_AUTH) return null;
+  const cached = CLIENT_CACHE.get(clientId);
+  return cached?.uuid ? cached : null;
 }
 
-/** Update one of a client's policies. Kept in memory until the page is refreshed. */
+/** A client's policies. Backend clients load them from the backend; sample clients from mock data. */
+export async function listClientPolicies(clientId: string): Promise<Policy[]> {
+  const backend = isBackendClient(clientId);
+  if (!backend) return findClientForPolicies(clientId).policies;
+  const res = await apiFetch(`/api/v1/clients/${backend.uuid}/policies`);
+  if (!res.ok) throw new Error(await policyProblem(res, "Could not load this client's policies."));
+  const policies = ((await res.json()) as PolicyView[])
+    .map(toPolicy)
+    .filter((p): p is Policy => p !== null)
+    .sort((a, b) => displayToIso(b.start).localeCompare(displayToIso(a.start)));
+  savePolicies(clientId, policies);
+  return policies;
+}
+
+/** The terms the backend does not store yet (see the note at the top of this section). */
+function localTerms(input: PolicyInput): Partial<Policy> {
+  return {
+    sumInsured: input.sumInsured,
+    premium: input.premium,
+    netPremium: input.netPremium,
+    amountPaid: input.amountPaid,
+    commissionRate: input.commissionRate,
+    status: input.status,
+  };
+}
+
+/** Add a policy to a client. Backend clients: registers the policy and its first cover period. */
+export async function createPolicy(clientId: string, input: PolicyInput): Promise<Client> {
+  const backend = isBackendClient(clientId);
+  if (!backend) {
+    const client = findClientForPolicies(clientId);
+    if (policyNumberTaken(input.id)) throw new Error("This policy number is already in use.");
+    return savePolicies(clientId, [...client.policies, input]);
+  }
+
+  const catalog = await loadCatalog();
+  if (!catalog) throw new Error("Could not load the insurer and product lists. Please try again.");
+  const insurer = catalog.insurers.find((i) => sameText(i.name, input.insurer));
+  const product = catalog.products.find((p) => sameText(p.name, input.classOfInsurance));
+  if (!insurer || !product) throw new Error("Choose the insurer and the class of insurance from the lists.");
+
+  const res = await apiFetch(`/api/v1/clients/${backend.uuid}/policies`, {
+    method: "POST",
+    body: JSON.stringify({
+      insurerId: insurer.id,
+      productId: product.id,
+      externalPolicyNumber: input.id,
+      effectDate: displayToIso(input.start),
+      expiryDate: displayToIso(input.renewal),
+    }),
+  });
+  if (!res.ok) throw new Error(await policyProblem(res, "Could not save the policy. Please try again."));
+  const view = (await res.json()) as PolicyView;
+  LOCAL_POLICY_TERMS.set(view.id, localTerms(input));
+
+  await listClientPolicies(clientId);
+  return findClientForPolicies(clientId);
+}
+
+/**
+ * Update one of a client's policies. The backend has no edit endpoint yet, so
+ * for backend policies only the premium, payment and status fields can change,
+ * and they are kept in this browser tab until refresh.
+ */
 export async function updatePolicy(
   clientId: string,
   originalPolicyId: string,
   input: PolicyInput,
 ): Promise<Client> {
   const client = findClientForPolicies(clientId);
+  const original = client.policies.find((p) => p.id === originalPolicyId);
+
+  if (original?.uuid && isBackendClient(clientId)) {
+    const keyFieldsChanged =
+      !sameText(input.id, original.id) ||
+      !sameText(input.insurer, original.insurer) ||
+      !sameText(input.classOfInsurance, original.classOfInsurance) ||
+      displayToIso(input.start) !== displayToIso(original.start) ||
+      displayToIso(input.renewal) !== displayToIso(original.renewal);
+    if (keyFieldsChanged) {
+      throw new Error(
+        "The policy number, insurer, class and dates cannot be changed yet. Only the premium, payment and status details can be updated for now.",
+      );
+    }
+    LOCAL_POLICY_TERMS.set(original.uuid, localTerms(input));
+    return savePolicies(
+      clientId,
+      client.policies.map((p) => (p.id === originalPolicyId ? { ...p, ...localTerms(input) } : p)),
+    );
+  }
+
   if (policyNumberTaken(input.id, { clientId, policyId: originalPolicyId })) {
     throw new Error("This policy number is already in use.");
   }
