@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { SetPasswordForm } from "@/components/gral/set-password-form";
 
 export const metadata: Metadata = {
-  title: "Activate your account — GRAL Operations Platform",
+  title: "Activate your account / GRAL Operations Platform",
   // The page URL carries a one-time token; never send it to other sites.
   referrer: "no-referrer",
 };

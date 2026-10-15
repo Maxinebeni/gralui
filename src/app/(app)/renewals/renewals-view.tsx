@@ -6,13 +6,13 @@ import { AlertTriangle, CalendarClock, CheckCircle2, Coins, Timer } from "lucide
 import { toast } from "sonner";
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader, SlideOver } from "@/components/gral/shell";
+import { FilterMenu } from "@/components/gral/filter-menu";
 import { RenewalCasePanel, RenewalHealthChip } from "@/components/gral/renewal-case";
 import {
   CardHeader,
   ChartCard,
   Chip,
   DistributionRow,
-  FilterPill,
   FloatCard,
   NavyButton,
   OutlineButton,
@@ -36,6 +36,7 @@ import {
 import type { RenewalCase, RenewalMonth } from "@/lib/types";
 
 const TABS = ["Overdue", "Next 30 days", "Next 60 days", "All"] as const;
+const ALL = "__all__";
 
 export function RenewalsView() {
   const router = useRouter();
@@ -44,7 +45,8 @@ export function RenewalsView() {
   const openId = searchParams.get("case");
 
   const [tab, setTab] = useState<(typeof TABS)[number]>("All");
-  const [renewals, setRenewals] = useState<RenewalCase[]>([]);
+  const [allRenewals, setRenewals] = useState<RenewalCase[]>([]);
+  const [insurer, setInsurer] = useState(ALL);
   const [monthly, setMonthly] = useState<RenewalMonth[]>([]);
 
   useEffect(() => {
@@ -52,7 +54,17 @@ export function RenewalsView() {
     getRenewalMonthly().then(setMonthly);
   }, []);
 
-  const open = renewals.find((r) => r.id === openId) ?? null;
+  // The insurer filter applies to the whole page, so the counts match the list.
+  const renewals = useMemo(
+    () => (insurer === ALL ? allRenewals : allRenewals.filter((r) => r.insurer === insurer)),
+    [allRenewals, insurer],
+  );
+  const insurerOptions = [
+    { value: ALL, label: "All insurers" },
+    ...[...new Set(allRenewals.map((r) => r.insurer))].sort().map((i) => ({ value: i, label: i })),
+  ];
+
+  const open = allRenewals.find((r) => r.id === openId) ?? null;
   const setOpen = (r: RenewalCase | null) => {
     const params = new URLSearchParams(searchParams.toString());
     if (r) params.set("case", r.id);
@@ -96,12 +108,7 @@ export function RenewalsView() {
     <>
       <PageHeader
         title="Renewals Pipeline"
-        extraPills={
-          <>
-            <FilterPill label="Insurer" value="All insurers" />
-            <FilterPill label="Days to renewal" value="120 days" />
-          </>
-        }
+        extraPills={<FilterMenu label="Insurer" value={insurer} options={insurerOptions} onChange={setInsurer} />}
       />
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_340px]">

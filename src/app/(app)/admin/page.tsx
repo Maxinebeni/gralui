@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { UsersView } from "./users-view";
 
 export const metadata: Metadata = {
-  title: "Users — GRAL Operations Platform",
+  title: "Users / GRAL Operations Platform",
   description: "Invite staff, manage their roles and deactivate accounts.",
 };
 

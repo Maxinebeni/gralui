@@ -5,6 +5,8 @@ import Link from "next/link";
 import { AlertTriangle, CheckCircle2, ClipboardList, Gavel, Layers, Plus, Timer } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader } from "@/components/gral/shell";
+import { FilterMenu } from "@/components/gral/filter-menu";
+import { DATE_RANGE_OPTIONS, withinRange, type DateRange } from "@/lib/date-range";
 import {
   CLAIM_TABS,
   ClaimSlideOver,
@@ -60,8 +62,13 @@ function actionOwner(c: Claim) {
 export function ClaimsView() {
   const { user } = useCurrentUser();
   const { canUpdateClaims } = claimPermissions(user.role);
-  const { claims, reload } = useClaims();
-  const { open, setOpen } = useOpenClaim(claims);
+  const { claims: allClaims, loaded, reload } = useClaims();
+  // Until the claims arrive, the tiles show "…" instead of a misleading 0.
+  const shown = (n: number | string) => (loaded ? String(n) : "…");
+  const { open, setOpen } = useOpenClaim(allClaims);
+  // Date reported filter; applies to the tiles, the queue and Needs Action.
+  const [range, setRange] = useState<DateRange>("all");
+  const claims = useMemo(() => allClaims.filter((c) => withinRange(c.dateReported, range)), [allClaims, range]);
   const [tab, setTab] = useState<(typeof CLAIM_TABS)[number]>("Breached");
   const [newOpen, setNewOpen] = useState(false);
   const [monthly, setMonthly] = useState<ClaimMonth[]>([]);
@@ -85,7 +92,7 @@ export function ClaimsView() {
   const avgDays = openClaims.length
     ? (openClaims.reduce((s, c) => s + daysOpen(c), 0) / openClaims.length).toFixed(1)
     : "0";
-  const handlers = [...new Set(claims.map((c) => c.handler))].sort();
+  const handlers = [...new Set(allClaims.map((c) => c.handler))].sort();
 
   const stepSegments = CLAIM_STEP_DEFS.map((s) => ({
     label: s.name,
@@ -96,6 +103,14 @@ export function ClaimsView() {
     <>
       <PageHeader
         title="Claims Queue"
+        extraPills={
+          <FilterMenu
+            label="Reported"
+            value={range}
+            options={DATE_RANGE_OPTIONS}
+            onChange={(v) => setRange(v as DateRange)}
+          />
+        }
         action={
           canUpdateClaims ? (
             <NavyButton className="px-4 py-2 text-sm" onClick={() => setNewOpen(true)}>
@@ -106,10 +121,10 @@ export function ClaimsView() {
       />
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_340px]">
-        <StatTile icon={ClipboardList} label="Total Open Claims" value={String(openClaims.length)} />
-        <StatTile icon={AlertTriangle} label="SLA Breached" value={String(breached)} tone="down" delay={60} />
-        <StatTile icon={CheckCircle2} label="Awaiting Sign-off" value={String(awaitingSignOff)} delay={120} />
-        <StatTile icon={Timer} label="Avg Working Days Open" value={avgDays} delay={180} />
+        <StatTile icon={ClipboardList} label="Total Open Claims" value={shown(openClaims.length)} />
+        <StatTile icon={AlertTriangle} label="SLA Breached" value={shown(breached)} tone="down" delay={60} />
+        <StatTile icon={CheckCircle2} label="Awaiting Sign-off" value={shown(awaitingSignOff)} delay={120} />
+        <StatTile icon={Timer} label="Avg Working Days Open" value={shown(avgDays)} delay={180} />
         <div className="hidden xl:block" />
       </div>
 
@@ -121,7 +136,11 @@ export function ClaimsView() {
               right={<SegmentedTabs tabs={CLAIM_TABS} value={tab} onChange={setTab} />}
             />
             <div className="mt-4">
-              <ClaimsTable claims={rows.slice(0, QUEUE_ROWS)} onView={setOpen} />
+              <ClaimsTable
+                claims={rows.slice(0, QUEUE_ROWS)}
+                onView={setOpen}
+                emptyMessage={loaded ? "No claims in this view." : "Loading claims…"}
+              />
             </div>
             <div className="border-t border-border px-5 py-4 text-center">
               <Link
@@ -168,7 +187,7 @@ export function ClaimsView() {
                   {blocked.length === 0 ? (
                     <tr>
                       <Td className="text-xs text-muted-foreground" colSpan={6}>
-                        Nothing is blocked right now.
+                        {loaded ? "Nothing is blocked right now." : "Loading claims…"}
                       </Td>
                     </tr>
                   ) : null}
