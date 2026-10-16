@@ -25,7 +25,7 @@ export const CLIENT_FORM_TYPES: ClientType[] = [
 
 /** Requirements doc, section 2: the MD and the Commercial Director can add and update clients. */
 export function canManageClients(role: Role): boolean {
-  return role === "MD" || role === "Commercial Director";
+  return role === "MD" || role === "Commercial Director" || role === "Accounts Executive" || role === "CRM Manager";
 }
 
 type FormValues = {
