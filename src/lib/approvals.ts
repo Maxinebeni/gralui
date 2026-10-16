@@ -11,6 +11,8 @@ export const APPROVAL_POLICY_VERSION: Record<ApprovalSubjectType, string> = {
   CLAIM_SETTLEMENT: "CLAIM-2026.1",
   KYC: "KYC-2026.1",
   POLICY_ENDORSEMENT: "ENDORSEMENT-2026.1",
+  ONBOARDING_KYC: "KYC-2026.1",
+  NEW_BUSINESS: "NEW-BUSINESS-2026.1",
 };
 
 export const SUBJECT_LABEL: Record<ApprovalSubjectType, string> = {
@@ -18,6 +20,8 @@ export const SUBJECT_LABEL: Record<ApprovalSubjectType, string> = {
   CLAIM_SETTLEMENT: "Claim settlement",
   KYC: "KYC readiness",
   POLICY_ENDORSEMENT: "Endorsement",
+  ONBOARDING_KYC: "New client KYC",
+  NEW_BUSINESS: "New business",
 };
 
 /** Working days an approver has to decide. PROVISIONAL. */

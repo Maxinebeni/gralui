@@ -3,6 +3,7 @@
 
 import { APPROVAL_POLICY_VERSION, buildSteps, renewalApprovers } from "./approvals";
 import { CLAIM_STEP_DEFS, addWorkingDays } from "./claims";
+import { checklistFor } from "./onboarding";
 import { RENEWAL_MILESTONES, addDays, todayIso } from "./renewals";
 import type {
   ActivityItem,
@@ -12,8 +13,13 @@ import type {
   ClaimMonth,
   ClaimStep,
   Client,
+  ClientType,
   CompletedMilestone,
   InsurerSummary,
+  KycItem,
+  OnboardingCase,
+  OnboardingStepCode,
+  OnboardingStepRecord,
   PolicyMovement,
   PolicyPeriod,
   RenewalCase,
@@ -913,3 +919,267 @@ export const MANUAL_TASKS: WorkTask[] = [
     history: [{ at: rd(-6), by: "Marie Claire Uwimana", text: "Task created" }],
   },
 ];
+
+/* -------------------------------- Onboarding --------------------------------- */
+// Sample prospects at different steps of GRAL's onboarding (SOP section 3).
+
+const ob = (n: number) => addWorkingDays(todayIso(), n);
+
+function done(steps: [OnboardingStepCode, number, string, string?][], by: string): OnboardingStepRecord[] {
+  return steps.map(([code, day, note, evidence]) => ({ code, completedAt: ob(day), completedBy: by, note, evidence }));
+}
+
+function kycItems(type: ClientType, receivedDay: number | null, count?: number): KycItem[] {
+  return checklistFor(type).map((item, i) =>
+    receivedDay !== null && (count === undefined || i < count)
+      ? { ...item, receivedAt: ob(receivedDay), fileName: `${item.name}.pdf`, expiry: item.hasExpiry ? addDays(todayIso(), 300) : undefined }
+      : item,
+  );
+}
+
+export const ONBOARDING_CASES: OnboardingCase[] = [
+  {
+    id: "ONB-2026-007",
+    prospect: {
+      name: "Akagera Agro Processors Ltd",
+      type: "Corporate",
+      sector: "Agriculture",
+      address: "Nyagatare Industrial Zone",
+      contact: { name: "Diane Uwera", title: "Operations Manager", email: "diane.uwera@akagera-agro.rw", phone: "+250 788 410 220" },
+      referralSource: "Referral from Kigali Steel Industries",
+    },
+    accountExecutive: "Eric Niyonzima",
+    registeredBy: "Commercial Director",
+    createdAt: ob(0),
+    completed: done([["LEAD", 0, "Lead logged from a client referral; Eric Niyonzima assigned by the CRM Manager"]], "Commercial Director"),
+    kyc: { items: kycItems("Corporate", null) },
+    quotes: [],
+    history: [{ at: ob(0), by: "Commercial Director", text: "Lead registered" }],
+  },
+  {
+    id: "ONB-2026-006",
+    prospect: {
+      name: "Kivu Lakeside Hotels Ltd",
+      type: "Corporate",
+      sector: "Hospitality",
+      address: "Rubavu, Lake Kivu shore",
+      contact: { name: "Patrick Mugabo", title: "General Manager", email: "p.mugabo@kivulakeside.rw", phone: "+250 788 550 104" },
+      referralSource: "Website enquiry",
+    },
+    accountExecutive: "Isabelle Mukamana",
+    registeredBy: "Sales & Marketing Manager",
+    createdAt: ob(-5),
+    completed: done(
+      [
+        ["LEAD", -5, "Website enquiry logged; Isabelle Mukamana assigned"],
+        ["MEETING", -3, "Met the GM: 2 hotels, 140 staff, property and liability cover wanted", "Meeting summary.pdf"],
+      ],
+      "Isabelle Mukamana",
+    ),
+    kyc: { items: kycItems("Corporate", -2, 3) },
+    quotes: [],
+    history: [
+      { at: ob(-5), by: "Sales & Marketing Manager", text: "Lead registered" },
+      { at: ob(-3), by: "Isabelle Mukamana", text: "Meeting & needs assessment completed" },
+    ],
+  },
+  {
+    id: "ONB-2026-005",
+    prospect: {
+      name: "Ubuzima Health Cooperative",
+      type: "NGO",
+      sector: "Health",
+      address: "KN 4 Ave, Kigali",
+      contact: { name: "Claudine Ingabire", title: "Finance Officer", email: "finance@ubuzima.org.rw", phone: "+250 788 302 991" },
+      referralSource: "Direct approach",
+    },
+    accountExecutive: "Marie Claire Uwimana",
+    registeredBy: "Commercial Director",
+    createdAt: ob(-6),
+    completed: done(
+      [
+        ["LEAD", -6, "Direct approach; Marie Claire Uwimana assigned"],
+        ["MEETING", -4, "Needs: group medical for 85 staff, vehicle cover for 6 ambulances", "Meeting summary.pdf"],
+      ],
+      "Marie Claire Uwimana",
+    ),
+    kyc: {
+      items: kycItems("NGO", -2),
+      screening: { result: "CLEAR", at: ob(-2), by: "Marie Claire Uwimana", note: "No matches on the UN and OFAC lists" },
+      approvalId: "APR-2026-017",
+    },
+    quotes: [],
+    history: [
+      { at: ob(-6), by: "Commercial Director", text: "Lead registered" },
+      { at: ob(-4), by: "Marie Claire Uwimana", text: "Meeting & needs assessment completed" },
+      { at: ob(-2), by: "Marie Claire Uwimana", text: "KYC sent for approval (APR-2026-017)" },
+    ],
+  },
+  {
+    id: "ONB-2026-004",
+    prospect: {
+      name: "Nyarugenge Logistics Ltd",
+      type: "Corporate",
+      sector: "Logistics",
+      address: "Gikondo, Kigali",
+      contact: { name: "Samuel Kayitare", title: "Managing Director", email: "s.kayitare@nyarugenge-logistics.rw", phone: "+250 788 220 455" },
+      referralSource: "Referral from Bralirwa PLC",
+    },
+    accountExecutive: "Jean-Paul Habimana",
+    registeredBy: "Commercial Director",
+    createdAt: ob(-12),
+    completed: done(
+      [
+        ["LEAD", -12, "Referral logged; Jean-Paul Habimana assigned"],
+        ["MEETING", -10, "Fleet of 30 trucks and a bonded warehouse", "Meeting summary.pdf"],
+        ["KYC", -8, "KYC Approval Form signed (APR-2026-012)", "KYC Approval Form.pdf"],
+        ["RISK_SURVEY", -6, "Warehouse sprinklers working; truck tracking in place. Grade: Medium", "Risk survey report.pdf"],
+        ["DESIGN", -4, "Motor fleet, goods in transit and warehouse fire cover", "Programme proposal.pdf"],
+      ],
+      "Jean-Paul Habimana",
+    ),
+    kyc: {
+      items: kycItems("Corporate", -9),
+      screening: { result: "CLEAR", at: ob(-9), by: "Jean-Paul Habimana", note: "No matches" },
+    },
+    riskGrade: "Medium",
+    quotes: [
+      { id: "Q1", insurer: "SONARWA General Insurance Ltd", premium: 18600000, terms: "Fleet + transit + fire, deductible RWF 2m", recommended: false },
+      { id: "Q2", insurer: "PRIME Insurance Ltd", premium: 17900000, terms: "Fleet + transit + fire, deductible RWF 3m", recommended: false },
+    ],
+    history: [
+      { at: ob(-12), by: "Commercial Director", text: "Lead registered" },
+      { at: ob(-8), by: "Risk & Compliance Manager", text: "KYC approved" },
+      { at: ob(-4), by: "Technical Director", text: "Insurance programme design completed" },
+    ],
+  },
+  {
+    id: "ONB-2026-003",
+    prospect: {
+      name: "Umurage Microfinance Ltd",
+      type: "Financial Institution",
+      sector: "Finance",
+      address: "KG 9 Ave, Kacyiru",
+      contact: { name: "Alice Mukeshimana", title: "Head of Administration", email: "a.mukeshimana@umurage.rw", phone: "+250 788 640 318" },
+      referralSource: "Tender invitation",
+    },
+    accountExecutive: "Isabelle Mukamana",
+    registeredBy: "Commercial Director",
+    createdAt: ob(-13),
+    completed: done(
+      [
+        ["LEAD", -13, "Tender invitation logged; Isabelle Mukamana assigned"],
+        ["MEETING", -11, "12 branches; cash in transit, fidelity guarantee and property", "Meeting summary.pdf"],
+        ["KYC", -9, "KYC Approval Form signed (APR-2026-010)", "KYC Approval Form.pdf"],
+        ["RISK_SURVEY", -7, "Strong-room standards met at head office. Grade: Low", "Risk survey report.pdf"],
+        ["DESIGN", -5, "Bankers blanket bond, cash in transit, property all risks", "Programme proposal.pdf"],
+        ["QUOTES", -4, "Quotes received from 3 insurers"],
+        ["COMPARISON", -2, "Recommend Sanlam Allianz: lowest premium with full fidelity limit", "Comparison matrix.xlsx"],
+      ],
+      "Isabelle Mukamana",
+    ),
+    kyc: {
+      items: kycItems("Financial Institution", -10),
+      screening: { result: "CLEAR", at: ob(-10), by: "Isabelle Mukamana", note: "No matches" },
+    },
+    riskGrade: "Low",
+    quotes: [
+      { id: "Q1", insurer: "Sanlam Allianz General Insurance Ltd", premium: 9800000, terms: "Bond limit RWF 500m, CIT RWF 50m per transit", recommended: true },
+      { id: "Q2", insurer: "Old Mutual Insurance Rwanda PLC", premium: 10450000, terms: "Bond limit RWF 500m, CIT RWF 40m per transit", recommended: false },
+      { id: "Q3", insurer: "Britam Insurance Company Rwanda Ltd", premium: 11200000, terms: "Bond limit RWF 400m, CIT RWF 50m per transit", recommended: false },
+    ],
+    approvalId: "APR-2026-018",
+    history: [
+      { at: ob(-13), by: "Commercial Director", text: "Lead registered" },
+      { at: ob(-2), by: "Isabelle Mukamana", text: "Internal approval requested (APR-2026-018)" },
+    ],
+  },
+  {
+    id: "ONB-2026-002",
+    prospect: {
+      name: "Inzira Construction Ltd",
+      type: "Corporate",
+      sector: "Construction",
+      address: "Kicukiro, Kigali",
+      contact: { name: "Olivier Nshuti", title: "Finance Director", email: "o.nshuti@inzira.rw", phone: "+250 788 117 642" },
+      referralSource: "Existing contact of the MD",
+    },
+    accountExecutive: "Eric Niyonzima",
+    registeredBy: "Commercial Director",
+    createdAt: ob(-15),
+    completed: done(
+      [
+        ["LEAD", -15, "Referral logged; Eric Niyonzima assigned"],
+        ["MEETING", -13, "Two road projects; plant and contractors all risks", "Meeting summary.pdf"],
+        ["KYC", -11, "KYC Approval Form signed (APR-2026-008)", "KYC Approval Form.pdf"],
+        ["RISK_SURVEY", -9, "Site safety plan in place. Grade: High (heavy plant on public roads)", "Risk survey report.pdf"],
+        ["DESIGN", -7, "Contractors all risks, plant cover, public liability", "Programme proposal.pdf"],
+        ["QUOTES", -6, "Quotes received from 3 insurers"],
+        ["COMPARISON", -5, "Recommend Radiant: best plant cover", "Comparison matrix.xlsx"],
+        ["APPROVAL", -4, "Approved by the MD (APR-2026-013)"],
+        ["ACCEPTANCE", -1, "Client accepted Radiant's quote by email", "Client acceptance.pdf"],
+      ],
+      "Eric Niyonzima",
+    ),
+    kyc: {
+      items: kycItems("Corporate", -12),
+      screening: { result: "CLEAR", at: ob(-12), by: "Eric Niyonzima", note: "No matches" },
+    },
+    riskGrade: "High",
+    quotes: [
+      { id: "Q1", insurer: "Radiant Insurance Company", premium: 24300000, terms: "CAR + plant, deductible RWF 5m", recommended: true },
+      { id: "Q2", insurer: "PRIME Insurance Ltd", premium: 25100000, terms: "CAR + plant, deductible RWF 4m", recommended: false },
+      { id: "Q3", insurer: "MUA Insurance Company Rwanda Ltd", premium: 26900000, terms: "CAR only, plant excluded", recommended: false },
+    ],
+    history: [
+      { at: ob(-15), by: "Commercial Director", text: "Lead registered" },
+      { at: ob(-1), by: "Eric Niyonzima", text: "Written acceptance recorded" },
+    ],
+  },
+];
+
+/** Approval requests waiting on the sample onboarding cases above. */
+APPROVALS.push(
+  {
+    id: "APR-2026-017",
+    subjectType: "ONBOARDING_KYC",
+    subjectId: "ONB-2026-005",
+    subjectRef: "ONB-2026-005",
+    subjectRevision: 1,
+    title: "KYC Approval Form · Ubuzima Health Cooperative",
+    summary: "All 4 NGO documents received; sanctions screening clear (UN and OFAC lists). New client, onboarding step 3.",
+    client: "Ubuzima Health Cooperative",
+    policyVersion: APPROVAL_POLICY_VERSION.ONBOARDING_KYC,
+    requestedBy: "Marie Claire Uwimana",
+    requestedAt: ob(-2),
+    dueAt: ob(1),
+    status: "PENDING",
+    steps: buildSteps([{ role: "Risk & Compliance Manager" }]),
+    evidenceRequired: true,
+    evidence: [{ name: "KYC checklist.pdf", version: 1 }, { name: "Sanctions screening result.pdf", version: 1 }],
+    version: 1,
+    history: [{ at: ob(-2), by: "Marie Claire Uwimana", text: "Approval requested" }],
+  },
+  {
+    id: "APR-2026-018",
+    subjectType: "NEW_BUSINESS",
+    subjectId: "ONB-2026-003",
+    subjectRef: "ONB-2026-003",
+    subjectRevision: 1,
+    title: "New business · Umurage Microfinance Ltd",
+    summary: "Place with Sanlam Allianz at RWF 9,800,000 (bond limit RWF 500m, CIT RWF 50m). Large account.",
+    client: "Umurage Microfinance Ltd",
+    amount: 1470000,
+    amountLabel: "Annual commission",
+    policyVersion: APPROVAL_POLICY_VERSION.NEW_BUSINESS,
+    requestedBy: "Isabelle Mukamana",
+    requestedAt: ob(-2),
+    dueAt: ob(0),
+    status: "PENDING",
+    steps: buildSteps(renewalApprovers(1470000)),
+    evidenceRequired: true,
+    evidence: [{ name: "Comparison matrix.xlsx", version: 1 }, { name: "Recommendation report.pdf", version: 1 }],
+    version: 1,
+    history: [{ at: ob(-2), by: "Isabelle Mukamana", text: "Approval requested" }],
+  },
+);

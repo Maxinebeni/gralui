@@ -40,6 +40,20 @@ const CLAIM_ROLES: readonly Role[] = [
   "Internal Audit Manager",
 ];
 
+/** Everyone with a step in GRAL's onboarding SOP, plus oversight. PROVISIONAL. */
+const ONBOARDING_ROLES: readonly Role[] = [
+  "MD",
+  "DMD",
+  "Commercial Director",
+  "CRM Manager",
+  "Accounts Executive",
+  "Client Relation Records Officer",
+  "Technical Director",
+  "GI Underwriting Manager",
+  "Risk & Compliance Manager",
+  "Internal Audit Manager",
+];
+
 const RENEWAL_ROLES: readonly Role[] = [
   "MD",
   "DMD",
@@ -69,6 +83,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "All Claims", href: "/claims/all", permission: "CLAIM_READ", roles: CLAIM_ROLES, parent: "/claims", businessOnly: true },
   { label: "Clients", href: "/clients", permission: "CLIENT_READ", roles: ROLES, businessOnly: true },
   { label: "All Clients", href: "/clients/all", permission: "CLIENT_READ", roles: ROLES, parent: "/clients", businessOnly: true },
+  { label: "Onboarding", href: "/clients/onboarding", permission: "CLIENT_READ", roles: ONBOARDING_ROLES, parent: "/clients", businessOnly: true },
   { label: "Renewals", href: "/renewals", permission: "RENEWAL_READ", roles: RENEWAL_ROLES, businessOnly: true },
   // Admin pages sit in the name (account) menu, not the top bar. Real backend
   // permissions; in demo mode only the MD sees them.
@@ -231,4 +246,28 @@ export function adminPermissions(user: SessionUser) {
 /** Where "home" is for this person: Overview, or the first page they can open. */
 export function homePathFor(user: SessionUser) {
   return ["/", "/admin", "/my-work"].find((p) => canAccessPath(user, p)) ?? "/my-work";
+}
+
+/**
+ * Onboarding. PROVISIONAL until the backend has onboarding permissions. Each
+ * step has an owner in the SOP; these roles can record steps, and oversight
+ * roles can only view. The KYC Approval Form and internal approval are
+ * decided in Approvals, by the Risk & Compliance Manager and the TD / MD.
+ */
+export function onboardingPermissions(role: Role) {
+  return {
+    canUpdate: [
+      "MD",
+      "DMD",
+      "Commercial Director",
+      "CRM Manager",
+      "Accounts Executive",
+      "Client Relation Records Officer",
+      "Technical Director",
+      "GI Underwriting Manager",
+      "Risk & Compliance Manager",
+    ].includes(role),
+    /** Lead registration: the Commercial Director (or Sales & Marketing) and the CRM Manager, who assigns the AE. */
+    canRegisterLead: ["MD", "DMD", "Commercial Director", "CRM Manager"].includes(role),
+  };
 }
