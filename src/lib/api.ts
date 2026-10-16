@@ -16,6 +16,7 @@ import {
   CLAIM_STEPS,
   CLIENTS,
   MANUAL_TASKS,
+  ONBOARDING_CASES,
   POLICIES_BY_INSURER,
   POLICY_TERMS,
   RECENT_ACTIVITY,
@@ -55,8 +56,16 @@ import {
   stepDef,
 } from "./claims";
 import { displayToIso } from "./format";
+import {
+  checklistFor,
+  currentStep as onboardingCurrentStep,
+  kycApproved,
+  kycSubmitBlocker,
+  stepDue,
+  stepOf,
+} from "./onboarding";
 import { RWANDA_HOLIDAYS, type Holiday } from "./holidays";
-import { completionBlocker, currentMilestone, milestoneDue, todayIso } from "./renewals";
+import { completionBlocker, currentMilestone, formatDate, milestoneDue, todayIso } from "./renewals";
 import type {
   AccessCategory,
   ActivityItem,
@@ -78,6 +87,8 @@ import type {
   EvidenceRef,
   InsurerSummary,
   ManagedRole,
+  OnboardingCase,
+  OnboardingStepCode,
   ManagedUser,
   PermissionDefinition,
   Policy,
@@ -689,6 +700,11 @@ export async function decideApproval(
   const label = { APPROVE: "Approved", REJECT: "Rejected", RETURN: "Returned" }[input.decision];
   const saved = saveApproval({ ...r, steps, status: requestStatus }, actor.name, `${label} by ${step.role}`);
 
+  // A fully approved onboarding request completes its KYC or approval step.
+  if (saved.status === "APPROVED" && (saved.subjectType === "ONBOARDING_KYC" || saved.subjectType === "NEW_BUSINESS")) {
+    onOnboardingApproved(saved, actor.name);
+  }
+
   // A fully approved renewal completes its Approval milestone.
   if (saved.status === "APPROVED" && saved.subjectType === "RENEWAL") {
     const renewal = RENEWAL_CASES.find((c) => c.id === saved.subjectId);
@@ -884,6 +900,7 @@ export async function listTasks(): Promise<WorkTask[]> {
     ...CLAIMS.map(claimTask),
     ...RENEWAL_CASES.map((r) => renewalTask(r, pendingRenewals.has(r.id))),
     ...approvals.map(approvalTask),
+    ...ONBOARDING_CASES.map(onboardingTask),
   ].filter((t): t is WorkTask => t !== null);
 
   return [...system, ...MANUAL_TASKS].map((t) => {
@@ -1478,6 +1495,376 @@ export async function updateRole(
     "Could not save the role.",
   );
   return saved!;
+}
+
+/* -------------------------------- Onboarding --------------------------------- */
+// Mock version of GRAL's Client Acquisition SOP (section 3). Changes are kept
+// in memory until the page is refreshed. The backend has only the KYC part
+// planned (KYC-01 to KYC-03, Christian); the other steps need backlog items.
+// Rules the backend must also enforce: steps in order, evidence where the SOP
+// asks for a record, no quotation before the KYC Approval Form is signed,
+// at least 3 quotes unless justified, written acceptance before placement.
+
+function findOnboarding(id: string): OnboardingCase {
+  const found = ONBOARDING_CASES.find((c) => c.id === id);
+  if (!found) throw new Error("This onboarding case could not be found.");
+  return found;
+}
+
+function saveOnboarding(updated: OnboardingCase, by: string, event: string): OnboardingCase {
+  const saved = { ...updated, history: [...updated.history, { at: todayIso(), by, text: event }] };
+  ONBOARDING_CASES[ONBOARDING_CASES.findIndex((c) => c.id === updated.id)] = saved;
+  return saved;
+}
+
+function finishStep(c: OnboardingCase, code: OnboardingStepCode, input: { note: string; evidence?: string }, by: string) {
+  const step = onboardingCurrentStep(c);
+  if (!step || step.code !== code) throw new Error("This step is not the current one.");
+  return saveOnboarding(
+    { ...c, completed: [...c.completed, { code, completedAt: todayIso(), completedBy: by, note: input.note, evidence: input.evidence }] },
+    by,
+    `${step.name} completed`,
+  );
+}
+
+export async function listOnboarding(): Promise<OnboardingCase[]> {
+  return [...ONBOARDING_CASES];
+}
+
+export type NewLeadInput = {
+  name: string;
+  type: ClientType;
+  sector: string;
+  address: string;
+  contact: ClientContact;
+  referralSource: string;
+  accountExecutive: string;
+};
+
+/** Step 1: register the lead. The KYC checklist for the client type is created with it. */
+export async function createLead(input: NewLeadInput, by: string): Promise<OnboardingCase> {
+  const name = input.name.trim();
+  if (ONBOARDING_CASES.some((c) => sameText(c.prospect.name, name)) || allKnownClients().some((c) => sameText(c.name, name))) {
+    throw new Error("A client or lead with this name already exists.");
+  }
+  const year = new Date().getFullYear();
+  const highest = ONBOARDING_CASES.reduce((max, c) => Math.max(max, Number(c.id.split("-").at(-1)) || 0), 0);
+  const created: OnboardingCase = {
+    id: `ONB-${year}-${String(highest + 1).padStart(3, "0")}`,
+    prospect: { ...input, name },
+    accountExecutive: input.accountExecutive,
+    registeredBy: by,
+    createdAt: todayIso(),
+    completed: [
+      {
+        code: "LEAD",
+        completedAt: todayIso(),
+        completedBy: by,
+        note: `Lead registered (${input.referralSource}); ${input.accountExecutive} assigned`,
+      },
+    ],
+    kyc: { items: checklistFor(input.type) },
+    quotes: [],
+    history: [{ at: todayIso(), by, text: "Lead registered" }],
+  };
+  ONBOARDING_CASES.unshift(created);
+  return created;
+}
+
+/**
+ * Complete a step that only needs a note and its record (meeting, risk survey,
+ * programme design, comparison, acceptance). KYC, quotes, approval, placement
+ * and welcome have their own actions below.
+ */
+export async function completeOnboardingStep(
+  id: string,
+  input: { note: string; evidence?: string; riskGrade?: OnboardingCase["riskGrade"] },
+  by: string,
+): Promise<OnboardingCase> {
+  const c = findOnboarding(id);
+  const step = onboardingCurrentStep(c);
+  if (!step) throw new Error("Onboarding is already complete.");
+  if (!["MEETING", "RISK_SURVEY", "DESIGN", "COMPARISON", "ACCEPTANCE"].includes(step.code)) {
+    throw new Error("This step is completed from its own section.");
+  }
+  if (!input.note.trim()) throw new Error("Add a short note about what was done.");
+  if (step.evidenceHint && !input.evidence?.trim()) throw new Error("Attach the record for this step.");
+  if (step.code === "RISK_SURVEY" && !input.riskGrade) throw new Error("Choose the risk grade.");
+  if (step.code === "COMPARISON" && !c.quotes.some((q) => q.recommended)) throw new Error("Recommend one of the quotes first.");
+  const updated = step.code === "RISK_SURVEY" ? { ...c, riskGrade: input.riskGrade } : c;
+  return finishStep(updated, step.code, { note: input.note.trim(), evidence: input.evidence?.trim() }, by);
+}
+
+/* KYC (step 3) */
+
+export async function receiveKycDocument(id: string, itemName: string, file: File, by: string): Promise<OnboardingCase> {
+  const c = findOnboarding(id);
+  await uploadDocument({ type: "ONBOARDING", id }, file, { classification: "KYC", purpose: "KYC_EVIDENCE" });
+  const items = c.kyc.items.map((i) => (i.name === itemName ? { ...i, receivedAt: todayIso(), fileName: file.name } : i));
+  return saveOnboarding({ ...c, kyc: { ...c.kyc, items } }, by, `${itemName} received`);
+}
+
+export async function setKycExpiry(id: string, itemName: string, expiry: string, by: string): Promise<OnboardingCase> {
+  const c = findOnboarding(id);
+  if (expiry <= todayIso()) throw new Error("This document has already expired. Ask the client for a current one.");
+  const items = c.kyc.items.map((i) => (i.name === itemName ? { ...i, expiry } : i));
+  return saveOnboarding({ ...c, kyc: { ...c.kyc, items } }, by, `Expiry date recorded for ${itemName}`);
+}
+
+export async function recordKycScreening(
+  id: string,
+  input: { result: "CLEAR" | "POSSIBLE_MATCH"; note: string },
+  by: string,
+): Promise<OnboardingCase> {
+  const c = findOnboarding(id);
+  if (!input.note.trim()) throw new Error("Say which lists were checked and what was found.");
+  return saveOnboarding(
+    { ...c, kyc: { ...c.kyc, screening: { result: input.result, note: input.note.trim(), at: todayIso(), by } } },
+    by,
+    input.result === "CLEAR" ? "Sanctions screening: clear" : "Sanctions screening: possible match (enhanced due diligence)",
+  );
+}
+
+/** Send the KYC to the Risk & Compliance Manager, who signs the KYC Approval Form in Approvals. */
+export async function submitKycForApproval(id: string, by: string): Promise<OnboardingCase> {
+  const c = findOnboarding(id);
+  if (onboardingCurrentStep(c)?.code !== "KYC") throw new Error("KYC is not the current step.");
+  const blocker = kycSubmitBlocker(c);
+  if (blocker) throw new Error(blocker);
+  const live = c.kyc.approvalId ? APPROVALS.find((r) => r.id === c.kyc.approvalId && r.status === "PENDING") : undefined;
+  if (live) throw new Error(`Already waiting for the Risk & Compliance Manager (${live.id}).`);
+  const request: ApprovalRequest = {
+    id: nextApprovalId(),
+    subjectType: "ONBOARDING_KYC",
+    subjectId: c.id,
+    subjectRef: c.id,
+    subjectRevision: c.history.length,
+    title: `KYC Approval Form · ${c.prospect.name}`,
+    summary: `${c.kyc.items.filter((i) => i.receivedAt).length} KYC documents received; sanctions screening ${
+      c.kyc.screening!.result === "CLEAR" ? "clear" : "found a possible match (enhanced due diligence needed)"
+    }. ${c.kyc.screening!.note}`,
+    client: c.prospect.name,
+    policyVersion: APPROVAL_POLICY_VERSION.ONBOARDING_KYC,
+    requestedBy: by,
+    requestedAt: todayIso(),
+    // SOP: KYC approval within 3 working days of receiving all documents.
+    dueAt: stepDue(c, stepOf("KYC")),
+    status: "PENDING",
+    steps: buildSteps([{ role: "Risk & Compliance Manager" }]),
+    evidenceRequired: true,
+    evidence: c.kyc.items.filter((i) => i.fileName).map((i) => ({ name: i.fileName!, version: 1 })),
+    version: 1,
+    history: [{ at: todayIso(), by, text: "Approval requested" }],
+  };
+  APPROVALS.unshift(request);
+  return saveOnboarding({ ...c, kyc: { ...c.kyc, approvalId: request.id } }, by, `KYC sent for approval (${request.id})`);
+}
+
+function nextApprovalId() {
+  const year = new Date().getFullYear();
+  const highest = APPROVALS.reduce((max, r) => Math.max(max, Number(r.id.split("-").at(-1)) || 0), 0);
+  return `APR-${year}-${String(highest + 1).padStart(3, "0")}`;
+}
+
+/* Quotes (steps 6 and 7) */
+
+export async function addOnboardingQuote(
+  id: string,
+  input: Omit<RenewalQuote, "id" | "recommended">,
+  by: string,
+): Promise<OnboardingCase> {
+  const c = findOnboarding(id);
+  if (!kycApproved(c)) throw new Error("No quotation before the KYC Approval Form is signed (SOP 3.2, step 3).");
+  if (!["QUOTES", "COMPARISON"].includes(onboardingCurrentStep(c)?.code ?? "")) throw new Error("Quotes are recorded in steps 6 and 7.");
+  if (!input.insurer || !(input.premium > 0)) throw new Error("Choose the insurer and enter the premium.");
+  const quote: RenewalQuote = { ...input, id: `Q${c.quotes.length + 1}`, recommended: false };
+  return saveOnboarding({ ...c, quotes: [...c.quotes, quote] }, by, `Quote from ${input.insurer} recorded`);
+}
+
+export async function recommendOnboardingQuote(id: string, quoteId: string, by: string): Promise<OnboardingCase> {
+  const c = findOnboarding(id);
+  if (c.approvalId) throw new Error("The recommendation is already with the approvers.");
+  const quotes = c.quotes.map((q) => ({ ...q, recommended: q.id === quoteId }));
+  return saveOnboarding({ ...c, quotes }, by, `${quotes.find((q) => q.recommended)?.insurer} recommended`);
+}
+
+/** Step 6 done: at least 3 quotes, or a written reason for fewer (single source needs the MD). */
+export async function completeQuotation(id: string, input: { singleSourceReason?: string }, by: string): Promise<OnboardingCase> {
+  const c = findOnboarding(id);
+  if (c.quotes.length === 0) throw new Error("Record the quotes received first.");
+  const reason = input.singleSourceReason?.trim();
+  if (c.quotes.length < 3 && !reason) {
+    throw new Error("The SOP asks for quotes from at least 3 insurers. Give a written reason for fewer; the MD must then approve.");
+  }
+  return finishStep(
+    { ...c, singleSourceReason: c.quotes.length < 3 ? reason : undefined },
+    "QUOTES",
+    { note: c.quotes.length < 3 ? `${c.quotes.length} quote(s); reason: ${reason}` : `Quotes received from ${c.quotes.length} insurers` },
+    by,
+  );
+}
+
+/* Internal approval (step 8) */
+
+/**
+ * Ask for internal approval of the recommended cover, by expected annual
+ * commission (SOP step 8). Fewer than 3 quotes always needs the MD.
+ */
+export async function requestNewBusinessApproval(id: string, commissionRate: number, by: string): Promise<OnboardingCase> {
+  const c = findOnboarding(id);
+  if (onboardingCurrentStep(c)?.code !== "APPROVAL") throw new Error("Internal approval is not the current step.");
+  const quote = c.quotes.find((q) => q.recommended);
+  if (!quote) throw new Error("Recommend a quote first.");
+  if (!(commissionRate > 0 && commissionRate < 1)) throw new Error("Enter the expected commission rate, e.g. 15.");
+  const live = c.approvalId ? APPROVALS.find((r) => r.id === c.approvalId && r.status === "PENDING") : undefined;
+  if (live) throw new Error(`Already waiting for approval (${live.id}).`);
+  const commission = Math.round(quote.premium * commissionRate);
+  let approvers = renewalApprovers(commission);
+  if (c.singleSourceReason && !approvers.some((a) => a.role === "MD")) approvers = [...approvers, { role: "MD" }];
+  const comparison = c.completed.find((r) => r.code === "COMPARISON");
+  const request: ApprovalRequest = {
+    id: nextApprovalId(),
+    subjectType: "NEW_BUSINESS",
+    subjectId: c.id,
+    subjectRef: c.id,
+    subjectRevision: c.history.length,
+    title: `New business · ${c.prospect.name}`,
+    summary: `Place with ${quote.insurer} at RWF ${quote.premium.toLocaleString("en-US")} (${quote.terms}).${
+      c.singleSourceReason ? ` Fewer than 3 quotes: ${c.singleSourceReason}` : ""
+    }`,
+    client: c.prospect.name,
+    amount: commission,
+    amountLabel: "Annual commission",
+    policyVersion: APPROVAL_POLICY_VERSION.NEW_BUSINESS,
+    requestedBy: by,
+    requestedAt: todayIso(),
+    dueAt: addWorkingDays(todayIso(), DECISION_DAYS),
+    status: "PENDING",
+    steps: buildSteps(approvers),
+    evidenceRequired: true,
+    evidence: comparison?.evidence ? [{ name: comparison.evidence, version: 1 }] : [],
+    version: 1,
+    history: [{ at: todayIso(), by, text: "Approval requested" }],
+  };
+  APPROVALS.unshift(request);
+  return saveOnboarding({ ...c, approvalId: request.id }, by, `Internal approval requested (${request.id})`);
+}
+
+/** Called when an onboarding approval is fully approved: completes KYC or the approval step. */
+function onOnboardingApproved(r: ApprovalRequest, by: string) {
+  const c = ONBOARDING_CASES.find((x) => x.id === r.subjectId);
+  if (!c) return;
+  const code: OnboardingStepCode = r.subjectType === "ONBOARDING_KYC" ? "KYC" : "APPROVAL";
+  if (onboardingCurrentStep(c)?.code !== code) return;
+  finishStep(
+    c,
+    code,
+    {
+      note: code === "KYC" ? `KYC Approval Form signed (${r.id})` : `Approved through ${r.id}`,
+      evidence: code === "KYC" ? "KYC Approval Form (signed in Approvals)" : undefined,
+    },
+    by,
+  );
+}
+
+/* Placement and welcome (steps 10 and 11) */
+
+export async function recordPlacement(
+  id: string,
+  input: { policyNumber: string; classOfInsurance: string; start: string; expiry: string; evidence: string },
+  by: string,
+): Promise<OnboardingCase> {
+  const c = findOnboarding(id);
+  if (onboardingCurrentStep(c)?.code !== "PLACEMENT") throw new Error("Placement is not the current step.");
+  const quote = c.quotes.find((q) => q.recommended);
+  if (!quote) throw new Error("No accepted quote to place.");
+  if (!input.policyNumber.trim()) throw new Error("Enter the policy number from the insurer.");
+  if (!input.classOfInsurance) throw new Error("Choose the class of insurance.");
+  if (!input.start || !input.expiry || input.expiry <= input.start) throw new Error("Enter the cover dates; expiry must be after the start.");
+  if (!input.evidence.trim()) throw new Error("Attach the verified policy schedule.");
+  const placement = {
+    policyNumber: input.policyNumber.trim().toUpperCase(),
+    classOfInsurance: input.classOfInsurance,
+    insurer: quote.insurer,
+    premium: quote.premium,
+    start: input.start,
+    expiry: input.expiry,
+  };
+  return finishStep({ ...c, placement }, "PLACEMENT", { note: `Placed with ${quote.insurer}, policy ${placement.policyNumber}`, evidence: input.evidence.trim() }, by);
+}
+
+/** Step 11: welcome letter sent; the client file is opened with the new policy. */
+export async function completeWelcome(id: string, evidence: string, by: string): Promise<OnboardingCase> {
+  const c = findOnboarding(id);
+  if (onboardingCurrentStep(c)?.code !== "WELCOME") throw new Error("Welcome & filing is not the current step.");
+  if (!evidence.trim()) throw new Error("Attach the welcome letter.");
+  const p = c.placement!;
+  const client = await createClient({
+    name: c.prospect.name,
+    type: c.prospect.type,
+    sector: c.prospect.sector,
+    address: c.prospect.address,
+    contact: c.prospect.contact,
+    manager: c.accountExecutive,
+  });
+  await createPolicy(client.id, {
+    id: p.policyNumber,
+    classOfInsurance: p.classOfInsurance,
+    insurer: p.insurer,
+    premium: p.premium,
+    start: formatDate(p.start),
+    renewal: formatDate(p.expiry),
+    status: "Active",
+  });
+  // The documents collected and approved in KYC go into Section A of the client file.
+  const received = c.kyc.items.filter((i) => i.receivedAt);
+  const withKyc = (x: Client): Client => ({
+    ...x,
+    kyc: true,
+    docsFiled: received.length,
+    docsTotal: received.length,
+    documents: received.map((i) => ({ name: i.name, filed: true, expiry: i.expiry ? formatDate(i.expiry) : undefined, status: "ok" as const })),
+  });
+  const mockIndex = CLIENTS.findIndex((x) => x.id === client.id);
+  if (mockIndex >= 0) CLIENTS[mockIndex] = withKyc(CLIENTS[mockIndex]!);
+  const cached = CLIENT_CACHE.get(client.id);
+  if (cached) CLIENT_CACHE.set(client.id, withKyc(cached));
+  // The KYC files themselves move to the client file too (kept in this tab until
+  // the backend stores onboarding documents).
+  const kycFiles = (LOCAL_DOCUMENTS.get(subjectKey({ type: "ONBOARDING", id: c.id })) ?? []).filter((d) => d.classification === "KYC");
+  if (kycFiles.length) {
+    const target = subjectKey({ type: "CLIENT", id: client.uuid ?? client.id });
+    LOCAL_DOCUMENTS.set(target, [...kycFiles, ...(LOCAL_DOCUMENTS.get(target) ?? [])]);
+  }
+  return finishStep({ ...c, clientId: client.id }, "WELCOME", { note: `Welcome letter sent; client file ${client.id} opened`, evidence: evidence.trim() }, by);
+}
+
+/** Who acts on a case's current step, for My Work. */
+function onboardingTask(c: OnboardingCase): WorkTask | null {
+  const step = onboardingCurrentStep(c);
+  if (!step) return null;
+  // Waiting in Approvals: the approval task covers it.
+  const waiting = step.code === "KYC" ? c.kyc.approvalId : step.code === "APPROVAL" ? c.approvalId : undefined;
+  if (waiting && APPROVALS.some((r) => r.id === waiting && r.status === "PENDING")) return null;
+  const byAccountExecutive = step.owner === "Accounts Executive";
+  return {
+    id: `T-${c.id}-${step.code}`,
+    key: `ONBOARDING:${c.id}:${step.code}`,
+    type: "ONBOARDING_STEP",
+    title: `${step.name}: ${c.prospect.name}`,
+    detail: step.task,
+    resourceType: "ONBOARDING",
+    resourceId: c.id,
+    resourceRef: c.id,
+    client: c.prospect.name,
+    owner: byAccountExecutive ? c.accountExecutive : undefined,
+    ownerRole: byAccountExecutive ? undefined : step.owner.split(" / ")[0],
+    dueDate: stepDue(c, step),
+    status: "OPEN",
+    source: "SYSTEM",
+    createdAt: c.createdAt,
+    history: [],
+  };
 }
 
 /* --------------------------------- Calendar ---------------------------------- */
