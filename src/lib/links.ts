@@ -18,5 +18,9 @@ export function recordHref(type: TaskResourceType | ApprovalSubjectType, id: str
       return `/policies/${ref}`;
     case "APPROVAL":
       return `/approvals?request=${ref}`;
+    case "ONBOARDING":
+    case "ONBOARDING_KYC":
+    case "NEW_BUSINESS":
+      return `/clients/onboarding?case=${ref}`;
   }
 }

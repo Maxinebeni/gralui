@@ -268,8 +268,16 @@ export type Claim = {
 /* --------------------------------- Approvals --------------------------------- */
 // Proposed contract for the approvals API (backlog APR-01 to APR-04,
 // Christian). See docs/approvals-and-my-work-fields.md.
- 
-export type ApprovalSubjectType = "RENEWAL" | "CLAIM_SETTLEMENT" | "KYC" | "POLICY_ENDORSEMENT";
+
+export type ApprovalSubjectType =
+  | "RENEWAL"
+  | "CLAIM_SETTLEMENT"
+  | "KYC"
+  | "POLICY_ENDORSEMENT"
+  /** KYC Approval Form for a new client (onboarding step 3). */
+  | "ONBOARDING_KYC"
+  /** Internal approval of a new client's recommended cover (onboarding step 8). */
+  | "NEW_BUSINESS";
 export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED" | "RETURNED";
 export type ApprovalDecision = "APPROVE" | "REJECT" | "RETURN";
  
@@ -329,10 +337,11 @@ export type TaskType =
   | "RENEWAL_MILESTONE"
   | "APPROVAL"
   | "KYC_DOCUMENT"
+  | "ONBOARDING_STEP"
   | "MANUAL";
- 
-export type TaskResourceType = "CLAIM" | "RENEWAL" | "CLIENT" | "POLICY" | "APPROVAL";
- 
+
+export type TaskResourceType = "CLAIM" | "RENEWAL" | "CLIENT" | "POLICY" | "APPROVAL" | "ONBOARDING";
+
 export type WorkTask = {
   id: string;
   /** Logical key, so the same piece of work never appears twice, e.g. CLAIM:CLM-2025-089:DOCUMENTS. */
@@ -426,7 +435,7 @@ export type DocumentClassification =
  
 /** The record a document belongs to. The backend accepts CLIENT only so far. */
 export type DocumentSubject = {
-  type: "CLIENT" | "POLICY" | "CLAIM" | "RENEWAL" | "APPROVAL";
+  type: "CLIENT" | "POLICY" | "CLAIM" | "RENEWAL" | "APPROVAL" | "ONBOARDING";
   /** Backend UUID when the record comes from the backend, otherwise its reference. */
   id: string;
 };
@@ -442,6 +451,87 @@ export type StoredDocument = {
   uploadedAt: string; // ISO date-time
   /** Earlier versions, newest first (kept when a file is replaced). */
   previous: { version: number; originalFileName: string; uploadedAt: string }[];
+};
+
+/* -------------------------------- Onboarding --------------------------------- */
+// GRAL's Client Acquisition SOP (SOP Handbook v3, section 3): 11 steps from
+// lead to welcome letter. Proposed contract; the backend has only the KYC
+// part planned so far (KYC-01 to KYC-03).
+
+export type OnboardingStepCode =
+  | "LEAD"
+  | "MEETING"
+  | "KYC"
+  | "RISK_SURVEY"
+  | "DESIGN"
+  | "QUOTES"
+  | "COMPARISON"
+  | "APPROVAL"
+  | "ACCEPTANCE"
+  | "PLACEMENT"
+  | "WELCOME";
+
+export type OnboardingStepRecord = {
+  code: OnboardingStepCode;
+  completedAt: string; // ISO date
+  completedBy: string;
+  note: string;
+  evidence?: string;
+};
+
+/** One document on the KYC checklist. */
+export type KycItem = {
+  name: string;
+  required: boolean;
+  /** The document expires (e.g. a trading licence), so an expiry date is recorded. */
+  hasExpiry?: boolean;
+  fileName?: string;
+  receivedAt?: string;
+  expiry?: string;
+};
+
+export type KycScreening = {
+  result: "CLEAR" | "POSSIBLE_MATCH";
+  at: string;
+  by: string;
+  note: string;
+};
+
+export type OnboardingCase = {
+  id: string; // e.g. ONB-2026-004
+  prospect: {
+    name: string;
+    type: ClientType;
+    sector: string;
+    address: string;
+    contact: ClientContact;
+    referralSource: string;
+  };
+  accountExecutive: string;
+  registeredBy: string;
+  createdAt: string; // ISO date
+  completed: OnboardingStepRecord[];
+  kyc: {
+    items: KycItem[];
+    screening?: KycScreening;
+    approvalId?: string;
+  };
+  riskGrade?: "Low" | "Medium" | "High";
+  quotes: RenewalQuote[];
+  /** Written reason when fewer than 3 insurers quoted (needs the MD's approval). */
+  singleSourceReason?: string;
+  approvalId?: string;
+  placement?: {
+    policyNumber: string;
+    classOfInsurance: string;
+    insurer: string;
+    premium: number;
+    start: string; // ISO date
+    expiry: string; // ISO date
+  };
+  /** Set when the client file is opened (step 11). */
+  clientId?: string;
+  history: ClaimEvent[];
 };
 
 /* ------------------------------ Administration ------------------------------- */

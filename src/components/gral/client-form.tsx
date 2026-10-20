@@ -27,11 +27,13 @@ export const CLIENT_FORM_TYPES: ClientType[] = [
 /**
  * Whether to show the Add Client button.
  * Pass the signed-in user: with the backend it follows CLIENT_CREATE, and in
- * demo mode it keeps the requirements doc rule (MD and Commercial Director).
- * Passing only a role still works, but then the old role rule is used.
+ * demo mode it uses the role rule (MD, Commercial Director, Accounts
+ * Executive and CRM Manager). Passing only a role uses the role rule.
  */
 export function canManageClients(who: Role | SessionUser): boolean {
-  if (typeof who === "string") return who === "MD" || who === "Commercial Director";
+  if (typeof who === "string") {
+    return who === "MD" || who === "Commercial Director" || who === "Accounts Executive" || who === "CRM Manager";
+  }
   return clientEditPermissions(who).canAddClient;
 }
 

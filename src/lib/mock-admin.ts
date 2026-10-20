@@ -45,7 +45,7 @@ function role(code: string, name: string, category: ManagedRole["category"], per
 
 export const ROLES_DATA: ManagedRole[] = [
   role("ADMINISTRATOR", "System Administrator", "ADMINISTRATION", ADMIN_PERMISSIONS),
-  role("ACCOUNTS_EXECUTIVE", "Accounts Executive", "BUSINESS", [...CLIENT_BASIC, "CLIENT_UPDATE", "CLIENT_CONTACT_UPDATE"]),
+  role("ACCOUNTS_EXECUTIVE", "Accounts Executive", "BUSINESS", [...CLIENT_BASIC, "CLIENT_CREATE", "CLIENT_UPDATE", "CLIENT_CONTACT_UPDATE"]),
   role("CLIENT_RELATION_RECORDS_OFFICER", "Client Relation Records Officer", "BUSINESS", CLIENT_BASIC),
   role("CRM_MANAGER", "CRM Manager", "BUSINESS", [...CLIENT_BASIC, "CLIENT_CREATE", "CLIENT_UPDATE", "CLIENT_CONTACT_UPDATE", "CLIENT_ASSIGN", "CLIENT_RESTRICT"]),
   role("GI_UNDERWRITING_MANAGER", "GI Underwriting Manager", "BUSINESS", [...CLIENT_BASIC, "POLICY_CREATE", "INSURER_REFERENCE_UPDATE", "PRODUCT_REFERENCE_UPDATE"]),
