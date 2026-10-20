@@ -1457,7 +1457,11 @@ function approvalStatus(code: string): ApprovalRequest["status"] {
   return "PENDING";
 }
 
-async function toBackendApproval(h: BackendApprovalHistory): Promise<ApprovalRequest> {
+/**
+ * inInbox: the backend listed this request as waiting for the signed-in user,
+ * so its current step is shown under their role and the screens let them decide.
+ */
+async function toBackendApproval(h: BackendApprovalHistory, inInbox = false): Promise<ApprovalRequest> {
   const v = h.request;
   const status = approvalStatus(v.status);
   const subject = subjectReference(v.subjectType, v.subjectId);
@@ -1473,9 +1477,10 @@ async function toBackendApproval(h: BackendApprovalHistory): Promise<ApprovalReq
             : status === "PENDING" && st.number === v.currentStep
               ? "PENDING"
               : "WAITING";
+        const mineNow = inInbox && stepStatus === "PENDING" && CURRENT_USER;
         return {
           order: st.number,
-          role: roleName(st.requiredRole),
+          role: mineNow ? CURRENT_USER!.role : roleName(st.requiredRole),
           status: stepStatus,
           decidedBy: decided ? (await personName(decided.actorId)) ?? "Reviewer" : undefined,
           decidedAt: decided?.occurredAt.slice(0, 10),
@@ -1545,7 +1550,7 @@ async function listBackendApprovals(): Promise<ApprovalRequest[]> {
     const items = ((await res.json()) as Page<BackendApprovalView>).items ?? [];
     return await mapLimited(items, 4, async (v) => {
       const history = await approvalHistory(v.id).catch(() => ({ request: v, steps: [], decisions: [] }));
-      const mapped = await toBackendApproval(history);
+      const mapped = await toBackendApproval(history, true);
       BACKEND_APPROVALS.set(mapped.id, mapped);
       const step = history.steps.find((st) => st.number === v.currentStep);
       BACKEND_APPROVAL_SUBJECTS.set(v.id, {
