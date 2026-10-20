@@ -782,6 +782,11 @@ export async function createPolicy(clientId: string, input: PolicyInput): Promis
     return savePolicies(clientId, [...client.policies, input]);
   }
 
+  // The backend does not check for repeated policy numbers yet, so check the
+  // policies already loaded in this tab (the current client's are always loaded).
+  await listClientPolicies(clientId).catch(() => undefined);
+  if (policyNumberTaken(input.id)) throw new Error("This policy number is already in use.");
+
   const catalog = await loadCatalog();
   if (!catalog) throw new Error("Could not load the insurer and product lists. Please try again.");
   const insurer = catalog.insurers.find((i) => sameText(i.name, input.insurer));
