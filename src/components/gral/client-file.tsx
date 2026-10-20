@@ -42,7 +42,7 @@ export function ClientFile({
   const [loadingPolicies, setLoadingPolicies] = useState(Boolean(client.uuid));
   const { user } = useCurrentUser();
   const canOpenClaims = canAccessPath(user, "/claims");
-  const { canUpload: canUploadDocuments } = documentPermissions(user);
+  const { canUpload: canUploadDocuments, canReplace: canReplaceDocuments } = documentPermissions(user);
   const { canFlagNonCompliant, seesDocumentDetail } = clientPermissions(user.role);
   // Edit Client follows CLIENT_UPDATE; Add and Edit Policy follow POLICY_CREATE.
   const { canEditClient, canAddPolicy, canEditPolicy } = clientEditPermissions(user);
@@ -203,6 +203,7 @@ export function ClientFile({
                   classification="KYC"
                   purpose="KYC_EVIDENCE"
                   canUpload={canUploadDocuments}
+                  canReplace={canReplaceDocuments}
                   title="KYC Files"
                   emptyText="No KYC files uploaded yet."
                 />

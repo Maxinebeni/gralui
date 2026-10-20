@@ -1960,7 +1960,37 @@ export async function listDocuments(subject: DocumentSubject): Promise<StoredDoc
   const params = new URLSearchParams({ subjectType: subject.type, subjectId: subject.id, size: "100" });
   const res = await apiFetch(`/api/v1/documents?${params}`);
   if (!res.ok) throw new Error(await documentError(res, "Could not load the documents."));
-  return groupVersions(((await res.json()) as { items: BackendDocumentItem[] }).items ?? []);
+  const docs = groupVersions(((await res.json()) as { items: BackendDocumentItem[] }).items ?? []);
+  // The list only returns the newest version of each file. For files that
+  // were replaced, ask for their full version history (DOC-03).
+  return mapLimited(docs, 4, async (doc) => {
+    if (doc.version <= 1 || doc.previous.length >= doc.version - 1) return doc;
+    const previous = await loadDocumentVersions(subject, doc).catch(() => null);
+    return previous ? { ...doc, previous } : doc;
+  });
+}
+
+type BackendDocumentVersion = {
+  version: number;
+  fileName: string;
+  uploadedAt: string;
+};
+
+/** Earlier versions of a document, newest first, from GET /documents/{id}/versions. */
+async function loadDocumentVersions(subject: DocumentSubject, doc: StoredDocument): Promise<StoredDocument["previous"]> {
+  const params = new URLSearchParams({
+    subjectType: subject.type,
+    subjectId: subject.id,
+    purpose: doc.purpose,
+    size: "100",
+  });
+  const res = await apiFetch(`/api/v1/documents/${doc.id}/versions?${params}`);
+  if (!res.ok) throw new Error(await documentError(res, "Could not load the earlier versions."));
+  const items = ((await res.json()) as { items?: BackendDocumentVersion[] }).items ?? [];
+  return items
+    .filter((v) => v.version !== doc.version)
+    .sort((a, b) => b.version - a.version)
+    .map((v) => ({ version: v.version, originalFileName: v.fileName, uploadedAt: v.uploadedAt }));
 }
 
 export type UploadOptions = { classification: DocumentClassification; purpose: string };

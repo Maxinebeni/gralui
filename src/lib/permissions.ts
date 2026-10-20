@@ -243,16 +243,19 @@ export function taskPermissions(role: Role) {
 }
 
 /**
- * Documents. With the backend, uploading needs DOCUMENT_UPLOAD (not granted to
- * any role yet — ask TC). In demo mode, everyone except the read-only
- * oversight roles may upload.
+ * Documents. With the backend, adding a new file needs DOCUMENT_UPLOAD and
+ * uploading a new version of an existing file needs DOCUMENT_REPLACE. In demo
+ * mode, everyone except the read-only oversight roles may do both.
  */
 export function documentPermissions(user: SessionUser) {
-  return {
-    canUpload: usesBackendPermissions(user)
-      ? hasPermission(user, "DOCUMENT_UPLOAD")
-      : user.role !== "Internal Audit Manager" && user.role !== "Finance Director",
-  };
+  if (usesBackendPermissions(user)) {
+    return {
+      canUpload: hasPermission(user, "DOCUMENT_UPLOAD"),
+      canReplace: hasPermission(user, "DOCUMENT_REPLACE") || hasPermission(user, "DOCUMENT_UPLOAD"),
+    };
+  }
+  const allowed = user.role !== "Internal Audit Manager" && user.role !== "Finance Director";
+  return { canUpload: allowed, canReplace: allowed };
 }
 
 /**

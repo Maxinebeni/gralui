@@ -30,7 +30,7 @@ const plain = (v: number | null) => (v === null ? <NotRecorded /> : v.toLocaleSt
 
 export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; policyUuid?: string }) {
   const { user } = useCurrentUser();
-  const { canUpload } = documentPermissions(user);
+  const { canUpload, canReplace } = documentPermissions(user);
   const canSeeClaims = canAccessPath(user, "/claims");
   const canSeeRenewals = canAccessPath(user, "/renewals");
   const [detail, setDetail] = useState<PolicyDetail | null | undefined>(undefined);
@@ -237,6 +237,7 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
               classification="POLICY_SCHEDULE"
               purpose="POLICY_SCHEDULE"
               canUpload={canUpload}
+              canReplace={canReplace}
               title="Policy Documents"
               emptyText={p.uuid ? "No files yet. Policy files stay in this tab until the backend accepts policy documents." : "No schedule or endorsement uploaded yet."}
             />
