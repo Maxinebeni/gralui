@@ -8,6 +8,9 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { NavyButton, OutlineButton } from "./ui";
 import { Field, Section, describedBy, inputClass } from "./client-form";
+import { AmountInput } from "./amount-input";
+import { ReviewDialog } from "./review-dialog";
+import { groupDigits, policyAmountWarnings } from "@/lib/amounts";
 import { createPolicy, updatePolicy, type PolicyInput } from "@/lib/api";
 import { CLASSES_OF_INSURANCE, INSURERS, INSURER_GROUPS, PRODUCT_GROUPS, type OptionGroup } from "@/lib/reference-data";
 import { POLICY_STATUSES, type Client, type Policy, type PolicyStatus } from "@/lib/types";
@@ -66,10 +69,10 @@ function fromPolicy(p: Policy): FormValues {
     id: p.id,
     classOfInsurance: p.classOfInsurance,
     insurer: p.insurer,
-    sumInsured: p.sumInsured === undefined ? "" : String(p.sumInsured),
-    premium: p.premium === undefined ? "" : String(p.premium),
-    netPremium: p.netPremium === undefined ? "" : String(p.netPremium),
-    amountPaid: p.amountPaid === undefined ? "" : String(p.amountPaid),
+    sumInsured: p.sumInsured === undefined ? "" : groupDigits(String(p.sumInsured)),
+    premium: p.premium === undefined ? "" : groupDigits(String(p.premium)),
+    netPremium: p.netPremium === undefined ? "" : groupDigits(String(p.netPremium)),
+    amountPaid: p.amountPaid === undefined ? "" : groupDigits(String(p.amountPaid)),
     commissionRate: p.commissionRate === undefined ? "" : String(+(p.commissionRate * 100).toFixed(2)),
     start: toInputDate(p.start),
     renewal: toInputDate(p.renewal),
@@ -139,6 +142,8 @@ export function PolicyForm({
   const [values, setValues] = useState<FormValues>(policy ? fromPolicy(policy) : EMPTY);
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState(false);
+  // Set once the form is valid: the figures to check before saving.
+  const [review, setReview] = useState<{ input: PolicyInput; warnings: string[] } | null>(null);
 
   const classGroups = withCurrentValue(PRODUCT_GROUPS, CLASSES_OF_INSURANCE, policy?.classOfInsurance);
   const insurerGroups = withCurrentValue(INSURER_GROUPS, INSURERS, policy?.insurer);
@@ -174,13 +179,29 @@ export function PolicyForm({
       renewal: toDisplayDate(values.renewal),
       status: values.status as PolicyStatus,
     };
+    const warnings = policyAmountWarnings(
+      {
+        sumInsured: toAmount(values.sumInsured),
+        premium: toAmount(values.premium),
+        netPremium: toAmount(values.netPremium),
+        amountPaid: toAmount(values.amountPaid),
+        commissionRate: toAmount(values.commissionRate),
+        start: values.start,
+        renewal: values.renewal,
+      },
+      policy ?? undefined,
+    );
+    setReview({ input, warnings });
+  }
 
+  async function save(input: PolicyInput) {
     setSaving(true);
     try {
       const updated = policy
         ? await updatePolicy(client.id, policy.id, input)
         : await createPolicy(client.id, input);
       toast.success(policy ? `Policy ${input.id} updated.` : `Policy ${input.id} added to ${client.name}.`);
+      setReview(null);
       onSaved(updated);
     } catch (err) {
       toast.error(
@@ -236,44 +257,40 @@ export function PolicyForm({
 
         <Section title="Cover and premium">
           <Field id="sumInsured" label="Sum insured (RWF)" error={errors.sumInsured}>
-            <input
+            <AmountInput
               id="sumInsured"
-              inputMode="numeric"
               value={values.sumInsured}
-              onChange={(e) => set("sumInsured", e.target.value)}
+              onChange={(v) => set("sumInsured", v)}
               placeholder="e.g. 250000000"
               className={inputClass(errors.sumInsured)}
               {...describedBy("sumInsured", errors.sumInsured)}
             />
           </Field>
           <Field id="premium" label="Total premium (RWF)" error={errors.premium}>
-            <input
+            <AmountInput
               id="premium"
-              inputMode="numeric"
               value={values.premium}
-              onChange={(e) => set("premium", e.target.value)}
+              onChange={(v) => set("premium", v)}
               placeholder="e.g. 1500000"
               className={inputClass(errors.premium)}
               {...describedBy("premium", errors.premium)}
             />
           </Field>
           <Field id="netPremium" label="Net premium (RWF)" error={errors.netPremium}>
-            <input
+            <AmountInput
               id="netPremium"
-              inputMode="numeric"
               value={values.netPremium}
-              onChange={(e) => set("netPremium", e.target.value)}
+              onChange={(v) => set("netPremium", v)}
               placeholder="Before taxes and levies, e.g. 1300000"
               className={inputClass(errors.netPremium)}
               {...describedBy("netPremium", errors.netPremium)}
             />
           </Field>
           <Field id="amountPaid" label="Amount paid (RWF)" error={errors.amountPaid}>
-            <input
+            <AmountInput
               id="amountPaid"
-              inputMode="numeric"
               value={values.amountPaid}
-              onChange={(e) => set("amountPaid", e.target.value)}
+              onChange={(v) => set("amountPaid", v)}
               placeholder="e.g. 750000"
               className={inputClass(errors.amountPaid)}
               {...describedBy("amountPaid", errors.amountPaid)}
@@ -336,9 +353,33 @@ export function PolicyForm({
           Cancel
         </OutlineButton>
         <NavyButton type="submit" disabled={saving} className="px-4 py-2 text-sm">
-          {saving ? "Saving…" : editing ? "Save Policy" : "Add Policy"}
+          {editing ? "Review and Save" : "Review and Add"}
         </NavyButton>
       </div>
+
+      <ReviewDialog
+        open={review !== null}
+        title={editing ? `Check policy ${review?.input.id ?? ""}` : `Check the new policy for ${client.name}`}
+        rows={
+          review
+            ? [
+                { label: "Sum insured", amount: review.input.sumInsured! },
+                { label: "Total premium", amount: review.input.premium! },
+                { label: "Net premium", amount: review.input.netPremium! },
+                { label: "Amount paid", amount: review.input.amountPaid! },
+                { label: "Policy number", value: review.input.id },
+                { label: "Class and insurer", value: `${review.input.classOfInsurance} · ${review.input.insurer}` },
+                { label: "Commission rate", value: `${values.commissionRate}%` },
+                { label: "Cover", value: `${review.input.start} to ${review.input.renewal}` },
+              ]
+            : []
+        }
+        warnings={review?.warnings ?? []}
+        confirmLabel={editing ? "Save Policy" : "Add Policy"}
+        saving={saving}
+        onConfirm={() => review && save(review.input)}
+        onBack={() => setReview(null)}
+      />
     </form>
   );
 }

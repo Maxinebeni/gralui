@@ -86,6 +86,18 @@ export const ONBOARDING_STEPS: OnboardingStepDef[] = [
   },
 ];
 
+/** The 11 steps in four stages, so the tracker reads at a glance. */
+export const ONBOARDING_PHASES: { name: string; steps: OnboardingStepCode[] }[] = [
+  { name: "Meet", steps: ["LEAD", "MEETING"] },
+  { name: "Assess", steps: ["KYC", "RISK_SURVEY", "DESIGN"] },
+  { name: "Quote", steps: ["QUOTES", "COMPARISON", "APPROVAL"] },
+  { name: "Close", steps: ["ACCEPTANCE", "PLACEMENT", "WELCOME"] },
+];
+
+export function phaseOf(code: OnboardingStepCode) {
+  return ONBOARDING_PHASES.find((p) => p.steps.includes(code))!.name;
+}
+
 /** Working days the SOP allows for the whole onboarding (10 to 15). */
 export const ONBOARDING_TARGET_DAYS = 15;
 

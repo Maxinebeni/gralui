@@ -11,7 +11,9 @@ import {
   CheckCircle2,
   ClipboardList,
   FileWarning,
+  Stamp,
   Timer,
+  UserPlus,
   Wallet,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -35,15 +37,19 @@ import { formatRwf } from "@/lib/format";
 import {
   getClaimMonthly,
   getClaimSteps,
+  listApprovals,
   listClaimsSummary,
   listClients,
+  listOnboarding,
   listRecentActivity,
   listRenewals,
 } from "@/lib/api";
+import { canDecide } from "@/lib/approvals";
+import { isComplete, onboardingHealth } from "@/lib/onboarding";
 import { useCurrentUser } from "@/lib/auth-context";
 import { canAccessPath } from "@/lib/permissions";
 import { currentMilestone, daysOverdue, daysToExpiry, renewalHealth } from "@/lib/renewals";
-import type { ActivityItem, ClaimMonth, ClaimStep, Client, ClientClaim, RenewalCase } from "@/lib/types";
+import type { ActivityItem, ClaimMonth, ClaimStep, Client, ClientClaim, OnboardingCase, RenewalCase, Role } from "@/lib/types";
 
 type Tile = { icon: LucideIcon; label: string; value: string; delta?: string; tone?: "up" | "down"; href: string };
 
@@ -138,30 +144,90 @@ function buildAttention(claims: ClientClaim[], renewals: RenewalCase[], clients:
   return items.sort((a, b) => rank[a.dot] - rank[b.dot]);
 }
 
+/**
+ * Each tile and card needs the same access as the page it opens, so people
+ * only see figures from parts of the system they work in. Their data is only
+ * loaded when it can be shown.
+ */
+type Access = { claims: boolean; renewals: boolean; clients: boolean; leads: boolean; approvals: boolean };
+
+type TileKey =
+  | "openClaims"
+  | "slaBreached"
+  | "renewals30"
+  | "renewalsQuarter"
+  | "incompleteFiles"
+  | "kycComplete"
+  | "kycPending"
+  | "docsExpiring"
+  | "nonCompliant"
+  | "openLeads"
+  | "leadsOverdue"
+  | "approvalsWaiting"
+  | "claimsAwaitingPayment"
+  | "premiumDue"
+  | "settledThisMonth"
+  | "outstandingInvoices";
+
+/** Each role's preferred tiles, first to last. Tiles the person cannot open are skipped and the default list fills the gaps. */
+const ROLE_TILES: Partial<Record<Role, TileKey[]>> = {
+  MD: ["approvalsWaiting", "openClaims", "renewals30", "openLeads"],
+  DMD: ["approvalsWaiting", "openClaims", "renewals30", "openLeads"],
+  "Technical Director": ["openClaims", "slaBreached", "approvalsWaiting", "renewals30"],
+  "Commercial Director": ["renewalsQuarter", "openLeads", "leadsOverdue", "renewals30"],
+  "Finance Director": ["claimsAwaitingPayment", "premiumDue", "settledThisMonth", "outstandingInvoices"],
+  "Risk & Compliance Manager": ["kycComplete", "kycPending", "docsExpiring", "nonCompliant"],
+  "Claims Manager": ["openClaims", "slaBreached", "approvalsWaiting"],
+  "Claims Underwriter": ["openClaims", "slaBreached"],
+  "Accounts Executive": ["renewals30", "openLeads", "incompleteFiles", "openClaims"],
+  "CRM Manager": ["openLeads", "leadsOverdue", "incompleteFiles", "renewals30"],
+  "Client Relation Records Officer": ["incompleteFiles", "docsExpiring", "openLeads"],
+  "GI Underwriting Manager": ["renewals30", "openLeads", "openClaims"],
+};
+const DEFAULT_TILES: TileKey[] = ["openClaims", "slaBreached", "renewals30", "incompleteFiles", "openLeads", "approvalsWaiting"];
+
 export function OverviewView() {
   const router = useRouter();
   const { user } = useCurrentUser();
   const role = user.role;
+
+  const access: Access = {
+    claims: canAccessPath(user, "/claims"),
+    renewals: canAccessPath(user, "/renewals"),
+    clients: canAccessPath(user, "/clients"),
+    leads: canAccessPath(user, "/clients/leads"),
+    approvals: canAccessPath(user, "/approvals"),
+  };
+  const { claims: canClaims, renewals: canRenewals, clients: canClients, leads: canLeads, approvals: canApprovals } = access;
 
   const [claims, setClaims] = useState<ClientClaim[]>([]);
   const [steps, setSteps] = useState<ClaimStep[]>([]);
   const [monthly, setMonthly] = useState<ClaimMonth[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [renewals, setRenewals] = useState<RenewalCase[]>([]);
+  const [leads, setLeads] = useState<OnboardingCase[]>([]);
+  const [waiting, setWaiting] = useState(0);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
 
-  // Only load client data for users who can see clients, so the backend is
-  // never asked for data it would refuse (e.g. administrator accounts).
-  const canSeeClients = canAccessPath(user, "/clients");
-
   useEffect(() => {
-    listClaimsSummary().then(setClaims);
-    getClaimSteps().then(setSteps);
-    getClaimMonthly().then(setMonthly);
-    if (canSeeClients) listClients().then(setClients);
-    listRenewals().then(setRenewals);
+    if (canClaims) {
+      listClaimsSummary().then(setClaims);
+      getClaimSteps().then(setSteps);
+      getClaimMonthly().then(setMonthly);
+    } else {
+      setClaims([]);
+      setMonthly([]);
+    }
+    if (canClients) listClients().then(setClients);
+    else setClients([]);
+    if (canRenewals) listRenewals().then(setRenewals);
+    else setRenewals([]);
+    if (canLeads) listOnboarding().then(setLeads);
+    else setLeads([]);
+    if (canApprovals) listApprovals().then((list) => setWaiting(list.filter((r) => canDecide(r, role)).length));
+    else setWaiting(0);
     listRecentActivity().then(setActivity);
-  }, [canSeeClients]);
+  }, [canClaims, canClients, canRenewals, canLeads, canApprovals, role]);
 
   const now = new Date();
   const firstName = user.name.split(" ")[0];
@@ -177,36 +243,36 @@ export function OverviewView() {
   const pipelineValue = claims.reduce((s, c) => s + c.amount, 0);
   const renewalPremium = dueIn90.reduce((s, r) => s + r.premium, 0);
   const completeFiles = clients.filter((c) => c.docsFiled === c.docsTotal && !c.nonCompliant).length;
+  const openLeads = leads.filter((c) => !isComplete(c));
 
-  let tiles: Tile[] = [
-    { icon: ClipboardList, label: "Open Claims", value: String(claims.length), delta: "8.5%", href: "/claims" },
-    { icon: AlertTriangle, label: "SLA Breached", value: String(breached), delta: "4.5%", tone: "down", href: "/claims" },
-    { icon: CalendarClock, label: "Renewals Due in 30 Days", value: String(dueIn30), href: "/renewals" },
-    { icon: FileWarning, label: "Clients with Incomplete Files", value: String(incompleteFiles), href: "/clients" },
-  ];
-  if (role === "Commercial Director") {
-    tiles = [
-      { icon: CalendarClock, label: "Renewals This Quarter", value: String(dueIn90.length), href: "/renewals" },
-      ...tiles.slice(1),
-    ];
-  }
-  if (role === "Finance Director") {
+  const catalog: Record<TileKey, Tile & { needs: keyof Access }> = {
+    openClaims: { icon: ClipboardList, label: "Open Claims", value: String(claims.length), delta: "8.5%", href: "/claims", needs: "claims" },
+    slaBreached: { icon: AlertTriangle, label: "SLA Breached", value: String(breached), delta: "4.5%", tone: "down", href: "/claims", needs: "claims" },
+    renewals30: { icon: CalendarClock, label: "Renewals Due in 30 Days", value: String(dueIn30), href: "/renewals", needs: "renewals" },
+    renewalsQuarter: { icon: CalendarClock, label: "Renewals This Quarter", value: String(dueIn90.length), href: "/renewals", needs: "renewals" },
+    incompleteFiles: { icon: FileWarning, label: "Clients with Incomplete Files", value: String(incompleteFiles), href: "/clients", needs: "clients" },
+    kycComplete: { icon: BadgeCheck, label: "KYC Complete", value: String(kycComplete), href: "/clients", needs: "clients" },
+    kycPending: { icon: Timer, label: "KYC Pending", value: String(clients.length - kycComplete), href: "/clients", needs: "clients" },
+    docsExpiring: { icon: CalendarClock, label: "Documents Expiring Soon", value: String(expiringDocs), href: "/clients", needs: "clients" },
+    nonCompliant: { icon: AlertTriangle, label: "Non-Compliant", value: String(nonCompliant), tone: "down", href: "/clients", needs: "clients" },
+    openLeads: { icon: UserPlus, label: "Open Leads", value: String(openLeads.length), href: "/clients/leads", needs: "leads" },
+    leadsOverdue: {
+      icon: AlertTriangle,
+      label: "Lead Steps Overdue",
+      value: String(openLeads.filter((c) => onboardingHealth(c) === "overdue").length),
+      tone: "down",
+      href: "/clients/leads",
+      needs: "leads",
+    },
+    approvalsWaiting: { icon: Stamp, label: "Approvals Waiting for You", value: String(waiting), href: "/approvals", needs: "approvals" },
     // Sample values until the finance figures come from the backend.
-    tiles = [
-      { icon: Wallet, label: "Claims Awaiting Payment", value: "RWF 12.7m", href: "/claims" },
-      { icon: Wallet, label: "Premium Due", value: `RWF ${(renewalPremium / 1000000).toFixed(1)}m`, href: "/renewals" },
-      { icon: Wallet, label: "Settled This Month", value: "RWF 31.4m", href: "/claims" },
-      { icon: Wallet, label: "Outstanding Invoices", value: "6", href: "/renewals" },
-    ];
-  }
-  if (role === "Risk & Compliance Manager") {
-    tiles = [
-      { icon: BadgeCheck, label: "KYC Complete", value: String(kycComplete), href: "/clients" },
-      { icon: Timer, label: "KYC Pending", value: String(clients.length - kycComplete), href: "/clients" },
-      { icon: CalendarClock, label: "Documents Expiring Soon", value: String(expiringDocs), href: "/clients" },
-      { icon: AlertTriangle, label: "Non-Compliant", value: String(nonCompliant), tone: "down", href: "/clients" },
-    ];
-  }
+    claimsAwaitingPayment: { icon: Wallet, label: "Claims Awaiting Payment", value: "RWF 12.7m", href: "/claims", needs: "claims" },
+    premiumDue: { icon: Wallet, label: "Premium Due", value: `RWF ${(renewalPremium / 1000000).toFixed(1)}m`, href: "/renewals", needs: "renewals" },
+    settledThisMonth: { icon: Wallet, label: "Settled This Month", value: "RWF 31.4m", href: "/claims", needs: "claims" },
+    outstandingInvoices: { icon: Wallet, label: "Outstanding Invoices", value: "6", href: "/renewals", needs: "renewals" },
+  };
+  const tileKeys = [...new Set([...(ROLE_TILES[role as Role] ?? []), ...DEFAULT_TILES])].filter((k) => access[catalog[k].needs]);
+  const tiles = tileKeys.slice(0, 4).map((k) => catalog[k]);
 
   const attention = useMemo(() => {
     let list = buildAttention(claims, renewals, clients);
@@ -224,6 +290,9 @@ export function OverviewView() {
     return list;
   }, [claims, renewals, clients, role]);
 
+  const seesModule = (m: ActivityItem["module"]) => (m === "Claims" ? canClaims : m === "Renewals" ? canRenewals : canClients);
+  const visibleActivity = activity.filter((a) => seesModule(a.module));
+
   const stepCounts = steps.map((s) => ({
     label: s.name === "FNOL Received" ? "FNOL" : s.name === "Documentation" ? "Docs" : s.name,
     count: claims.filter((c) => c.step === s.n).length,
@@ -231,190 +300,224 @@ export function OverviewView() {
   const stepTotal = stepCounts.reduce((s, x) => s + x.count, 0) || 1;
   const shades = ["bg-primary", "bg-sky", "bg-sky/70", "bg-sky/50", "bg-pale", "bg-secondary", "bg-background"];
 
+  const nothingToShow = !canClaims && !canRenewals && !canClients && !canLeads && !canApprovals;
+
   return (
     <>
       <PageHeader title={`${greeting(now.getHours())}, ${firstName}`} subtitle={today} />
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {tiles.map((t, i) => (
-          <Link key={t.label} href={t.href} className="block">
-            <div className="lift-card">
-              <StatTile icon={t.icon} label={t.label} value={t.value} delta={t.delta} tone={t.tone} delay={i * 60} />
-            </div>
-          </Link>
-        ))}
-      </div>
+      {tiles.length > 0 ? (
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {tiles.map((t, i) => (
+            <Link key={t.label} href={t.href} className="block">
+              <div className="lift-card">
+                <StatTile icon={t.icon} label={t.label} value={t.value} delta={t.delta} tone={t.tone} delay={i * 60} />
+              </div>
+            </Link>
+          ))}
+        </div>
+      ) : null}
+
+      {nothingToShow ? (
+        <FloatCard className="mt-5 p-5" delay={60}>
+          <h2 className="text-base font-semibold tracking-tight">Your work</h2>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Your role has no dashboard figures yet. Your tasks are in My Work.
+          </p>
+          <NavyButton className="mt-3" onClick={() => router.push("/my-work")}>
+            Open My Work
+          </NavyButton>
+        </FloatCard>
+      ) : null}
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
         <div className="min-w-0 space-y-4">
-          <FloatCard className="p-4 sm:p-5" delay={120}>
-            <h2 className="text-base font-semibold tracking-tight">Needs Your Attention</h2>
-            {attention.length === 0 ? (
-              <p className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
-                <CheckCircle2 className="size-4 text-success" /> You&apos;re all caught up.
-              </p>
-            ) : (
-              <div className="mt-3 divide-y divide-border">
-                {attention.slice(0, 7).map((a) => (
-                  <div key={a.text} className="grid gap-2 py-3 first:pt-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                    <div className="flex min-w-0 items-center gap-2.5">
-                      <span
-                        className={cn(
-                          "size-2 shrink-0 rounded-full",
-                          a.dot === "red" && "bg-danger",
-                          a.dot === "amber" && "bg-warning",
-                          a.dot === "blue" && "bg-sky",
-                        )}
-                      />
-                      <span className="text-xs text-foreground">{a.text}</span>
+          {canClaims || canRenewals || canClients ? (
+            <FloatCard className="p-4 sm:p-5" delay={120}>
+              <h2 className="text-base font-semibold tracking-tight">Needs Your Attention</h2>
+              {attention.length === 0 ? (
+                <p className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
+                  <CheckCircle2 className="size-4 text-success" /> You&apos;re all caught up.
+                </p>
+              ) : (
+                <div className="mt-3 divide-y divide-border">
+                  {attention.slice(0, 7).map((a) => (
+                    <div key={a.text} className="grid gap-2 py-3 first:pt-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <span
+                          className={cn(
+                            "size-2 shrink-0 rounded-full",
+                            a.dot === "red" && "bg-danger",
+                            a.dot === "amber" && "bg-warning",
+                            a.dot === "blue" && "bg-sky",
+                          )}
+                        />
+                        <span className="text-xs text-foreground">{a.text}</span>
+                      </div>
+                      <div className="flex min-w-0 flex-wrap items-center gap-2 pl-4 sm:shrink-0 sm:justify-end sm:pl-0">
+                        <Chip tone="sky">{a.module}</Chip>
+                        <span className="text-[11px] text-muted-foreground">{a.when}</span>
+                        <NavyButton onClick={() => router.push(a.href)}>{a.action}</NavyButton>
+                      </div>
                     </div>
-                    <div className="flex min-w-0 flex-wrap items-center gap-2 pl-4 sm:shrink-0 sm:justify-end sm:pl-0">
-                      <Chip tone="sky">{a.module}</Chip>
-                      <span className="text-[11px] text-muted-foreground">{a.when}</span>
-                      <NavyButton onClick={() => router.push(a.href)}>{a.action}</NavyButton>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </FloatCard>
+                  ))}
+                </div>
+              )}
+            </FloatCard>
+          ) : null}
 
-          <FloatCard className="p-4 sm:p-5" delay={180}>
-            <h2 className="text-base font-semibold tracking-tight">Claims Pipeline</h2>
-            <div className="mt-4 overflow-x-auto pb-1">
-              <div className="flex min-w-[520px] gap-1">
-                {stepCounts.map((s, i) => (
-                  <button
-                    key={s.label}
-                    type="button"
-                    onClick={() => router.push("/claims")}
-                    className="min-w-0 flex-1 text-left"
-                    style={{ flexGrow: Math.max(s.count, 0.6) / stepTotal + 0.4 }}
-                    title={`${s.label}: ${s.count}`}
-                  >
-                    <span className={cn("block h-2.5 rounded-full", shades[i % shades.length])} />
-                    <span className="mt-2 block truncate text-[10px] text-muted-foreground">{s.label}</span>
-                    <span className="block text-xs font-semibold">{s.count}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <p className="mt-3 text-[11px] text-muted-foreground">Total value in pipeline: {formatRwf(pipelineValue)}</p>
-          </FloatCard>
-
-          <FloatCard className="p-4 sm:p-5" delay={240}>
-            <h2 className="text-base font-semibold tracking-tight">Upcoming Renewals (next 90 days)</h2>
-            <div className="relative mt-8 mb-2 h-10">
-              <div className="absolute top-4 h-0.5 w-full rounded-full bg-border" />
-              {renewals
-                .filter((r) => daysToExpiry(r) <= 90)
-                .map((r) => {
-                  const pct = (Math.min(Math.max(daysToExpiry(r), 0), 90) / 90) * 100;
-                  const health = renewalHealth(r);
-                  const tone = health === "overdue" ? "bg-danger" : health === "due-soon" ? "bg-warning" : "bg-primary";
-                  return (
+          {canClaims ? (
+            <FloatCard className="p-4 sm:p-5" delay={180}>
+              <h2 className="text-base font-semibold tracking-tight">Claims Pipeline</h2>
+              <div className="mt-4 overflow-x-auto pb-1">
+                <div className="flex min-w-[520px] gap-1">
+                  {stepCounts.map((s, i) => (
                     <button
-                      key={r.id}
+                      key={s.label}
                       type="button"
-                      onClick={() => router.push(`/renewals?case=${r.id}`)}
-                      aria-label={`${r.policyId} ${r.client}`}
-                      className="group absolute top-2.5"
-                      style={{ left: `calc(${pct}% - 5px)` }}
+                      onClick={() => router.push("/claims")}
+                      className="min-w-0 flex-1 text-left"
+                      style={{ flexGrow: Math.max(s.count, 0.6) / stepTotal + 0.4 }}
+                      title={`${s.label}: ${s.count}`}
                     >
-                      <span className={cn("block size-2.5 rounded-full ring-2 ring-card", tone)} />
-                      <span className="pointer-events-none absolute bottom-6 left-1/2 z-10 hidden w-44 -translate-x-1/2 rounded-xl border border-border bg-card p-2.5 text-left text-[11px] shadow-[var(--shadow-float)] group-hover:block sm:w-56">
-                        <span className="block font-medium">{r.policyId}</span>
-                        <span className="block text-muted-foreground">{r.client}</span>
-                        <span className="block text-muted-foreground">{formatRwf(r.premium)}</span>
-                        <span className="block text-muted-foreground">{currentMilestone(r)?.name ?? "Completed"}</span>
-                      </span>
+                      <span className={cn("block h-2.5 rounded-full", shades[i % shades.length])} />
+                      <span className="mt-2 block truncate text-[10px] text-muted-foreground">{s.label}</span>
+                      <span className="block text-xs font-semibold">{s.count}</span>
                     </button>
-                  );
-                })}
-              <span className="absolute top-7 left-0 text-[10px] text-subtle">Today</span>
-              <span className="absolute top-7 right-0 text-[10px] text-subtle">+90 days</span>
-            </div>
-            <p className="mt-4 text-[11px] text-muted-foreground">{formatRwf(renewalPremium)} in premium up for renewal</p>
-          </FloatCard>
+                  ))}
+                </div>
+              </div>
+              <p className="mt-3 text-[11px] text-muted-foreground">Total value in pipeline: {formatRwf(pipelineValue)}</p>
+            </FloatCard>
+          ) : null}
+
+          {canRenewals ? (
+            <FloatCard className="p-4 sm:p-5" delay={240}>
+              <h2 className="text-base font-semibold tracking-tight">Upcoming Renewals (next 90 days)</h2>
+              <div className="relative mt-8 mb-2 h-10">
+                <div className="absolute top-4 h-0.5 w-full rounded-full bg-border" />
+                {renewals
+                  .filter((r) => daysToExpiry(r) <= 90)
+                  .map((r) => {
+                    const pct = (Math.min(Math.max(daysToExpiry(r), 0), 90) / 90) * 100;
+                    const health = renewalHealth(r);
+                    const tone = health === "overdue" ? "bg-danger" : health === "due-soon" ? "bg-warning" : "bg-primary";
+                    return (
+                      <button
+                        key={r.id}
+                        type="button"
+                        onClick={() => router.push(`/renewals?case=${r.id}`)}
+                        aria-label={`${r.policyId} ${r.client}`}
+                        className="group absolute top-2.5"
+                        style={{ left: `calc(${pct}% - 5px)` }}
+                      >
+                        <span className={cn("block size-2.5 rounded-full ring-2 ring-card", tone)} />
+                        <span className="pointer-events-none absolute bottom-6 left-1/2 z-10 hidden w-44 -translate-x-1/2 rounded-xl border border-border bg-card p-2.5 text-left text-[11px] shadow-[var(--shadow-float)] group-hover:block sm:w-56">
+                          <span className="block font-medium">{r.policyId}</span>
+                          <span className="block text-muted-foreground">{r.client}</span>
+                          <span className="block text-muted-foreground">{formatRwf(r.premium)}</span>
+                          <span className="block text-muted-foreground">{currentMilestone(r)?.name ?? "Completed"}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                <span className="absolute top-7 left-0 text-[10px] text-subtle">Today</span>
+                <span className="absolute top-7 right-0 text-[10px] text-subtle">+90 days</span>
+              </div>
+              <p className="mt-4 text-[11px] text-muted-foreground">{formatRwf(renewalPremium)} in premium up for renewal</p>
+            </FloatCard>
+          ) : null}
         </div>
 
         <div className="min-w-0 space-y-4">
-          <QuickAction delay={160}>
-            <QuickActionRow
-              icon={AlertTriangle}
-              text="3 unassigned claims"
-              action={
-                <OutlineButton onClick={() => toast.success("Assignment sheet opened for 3 claims.")}>Assign</OutlineButton>
-              }
-            />
-            <QuickActionRow
-              icon={CheckCircle2}
-              tone="success"
-              tinted
-              text={`${clients.length - kycComplete} clients missing KYC documents`}
-              action={
-                <NavyButton onClick={() => toast.success(`KYC requests sent to ${clients.length - kycComplete} clients.`)}>
-                  Send Requests
-                </NavyButton>
-              }
-            />
-          </QuickAction>
-
-          <FloatCard className="p-5" delay={220}>
-            <h2 className="text-base font-semibold tracking-tight">Client File Status</h2>
-            <DistributionRow
-              items={[
-                { label: "Complete", value: String(completeFiles), tone: "success" },
-                { label: "Partial", value: String(clients.length - completeFiles - nonCompliant), tone: "warning" },
-                { label: "Non-Compliant", value: String(nonCompliant), tone: "danger" },
-              ]}
-            />
-          </FloatCard>
-
-          <ChartCard
-            delay={280}
-            height={200}
-            title="Claims & Amount per Month"
-            legend={[
-              { label: "Claim amount (RWF m)", tone: "sky" },
-              { label: "Count of claims", tone: "primary" },
-            ]}
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={monthly} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-                <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" vertical={false} />
-                <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
-                <YAxis yAxisId="left" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
-                <YAxis
-                  yAxisId="right"
-                  orientation="right"
-                  tick={{ fontSize: 10, fill: "var(--subtle)" }}
-                  axisLine={false}
-                  tickLine={false}
+          {canClaims || canClients ? (
+            <QuickAction delay={160}>
+              {canClaims ? (
+                <QuickActionRow
+                  icon={AlertTriangle}
+                  text="3 unassigned claims"
+                  action={
+                    <OutlineButton onClick={() => toast.success("Assignment sheet opened for 3 claims.")}>Assign</OutlineButton>
+                  }
                 />
-                <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", fontSize: 11 }} />
-                <Line yAxisId="left" type="monotone" dataKey="amount" stroke="var(--sky)" strokeWidth={2} dot={false} name="Claim amount (RWF m)" />
-                <Line yAxisId="right" type="monotone" dataKey="count" stroke="var(--primary)" strokeWidth={2} dot={false} name="Count of claims" />
-              </LineChart>
-            </ResponsiveContainer>
-          </ChartCard>
+              ) : null}
+              {canClients ? (
+                <QuickActionRow
+                  icon={CheckCircle2}
+                  tone="success"
+                  tinted
+                  text={`${clients.length - kycComplete} clients missing KYC documents`}
+                  action={
+                    <NavyButton onClick={() => toast.success(`KYC requests sent to ${clients.length - kycComplete} clients.`)}>
+                      Send Requests
+                    </NavyButton>
+                  }
+                />
+              ) : null}
+            </QuickAction>
+          ) : null}
 
-          <FloatCard className="p-5" delay={340}>
-            <h2 className="text-base font-semibold tracking-tight">Recent Activity</h2>
-            <div className="mt-3 space-y-3">
-              {activity.map((a) => (
-                <div key={a.what} className="min-w-0">
-                  <Person name={a.who} />
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    {a.what} · {a.when}
-                  </p>
-                </div>
-              ))}
-            </div>
-            <div className="mt-3">
-              <TextLink onClick={() => toast.success("Full audit log opened.")}>View all</TextLink>
-            </div>
-          </FloatCard>
+          {canClients ? (
+            <FloatCard className="p-5" delay={220}>
+              <h2 className="text-base font-semibold tracking-tight">Client File Status</h2>
+              <DistributionRow
+                items={[
+                  { label: "Complete", value: String(completeFiles), tone: "success" },
+                  { label: "Partial", value: String(clients.length - completeFiles - nonCompliant), tone: "warning" },
+                  { label: "Non-Compliant", value: String(nonCompliant), tone: "danger" },
+                ]}
+              />
+            </FloatCard>
+          ) : null}
+
+          {canClaims ? (
+            <ChartCard
+              delay={280}
+              height={200}
+              title="Claims & Amount per Month"
+              legend={[
+                { label: "Claim amount (RWF m)", tone: "sky" },
+                { label: "Count of claims", tone: "primary" },
+              ]}
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={monthly} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                  <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" vertical={false} />
+                  <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
+                  <YAxis yAxisId="left" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    tick={{ fontSize: 10, fill: "var(--subtle)" }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", fontSize: 11 }} />
+                  <Line yAxisId="left" type="monotone" dataKey="amount" stroke="var(--sky)" strokeWidth={2} dot={false} name="Claim amount (RWF m)" />
+                  <Line yAxisId="right" type="monotone" dataKey="count" stroke="var(--primary)" strokeWidth={2} dot={false} name="Count of claims" />
+                </LineChart>
+              </ResponsiveContainer>
+            </ChartCard>
+          ) : null}
+
+          {visibleActivity.length > 0 ? (
+            <FloatCard className="p-5" delay={340}>
+              <h2 className="text-base font-semibold tracking-tight">Recent Activity</h2>
+              <div className="mt-3 space-y-3">
+                {visibleActivity.map((a) => (
+                  <div key={a.what} className="min-w-0">
+                    <Person name={a.who} />
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      {a.what} · {a.when}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3">
+                <TextLink onClick={() => toast.success("Full audit log opened.")}>View all</TextLink>
+              </div>
+            </FloatCard>
+          ) : null}
         </div>
       </div>
     </>
