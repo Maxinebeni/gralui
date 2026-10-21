@@ -1,11 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, Hourglass, Plus, ShieldCheck, UserPlus } from "lucide-react";
 import { PageHeader, SlideOver } from "@/components/gral/shell";
 import { LeadForm } from "@/components/gral/lead-form";
-import { OnboardingCasePanel, OnboardingHealthChip } from "@/components/gral/onboarding-case";
+import { OnboardingHealthChip } from "@/components/gral/onboarding-case";
 import {
   CardHeader,
   FloatCard,
@@ -32,10 +33,8 @@ import type { ApprovalRequest, OnboardingCase } from "@/lib/types";
 const TABS = ["In progress", "KYC", "Quotes & approval", "Overdue", "Onboarded"] as const;
 type Tab = (typeof TABS)[number];
 
-export function OnboardingView() {
+export function LeadsView() {
   const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
   const { user } = useCurrentUser();
   const { canRegisterLead } = onboardingPermissions(user.role);
 
@@ -49,16 +48,6 @@ export function OnboardingView() {
     listApprovals().then(setApprovals);
   }, []);
   useEffect(reload, [reload]);
-
-  const openId = searchParams.get("case");
-  const open = cases.find((c) => c.id === openId) ?? null;
-  const setOpen = (c: OnboardingCase | null) => {
-    const params = new URLSearchParams(searchParams.toString());
-    if (c) params.set("case", c.id);
-    else params.delete("case");
-    const qs = params.toString();
-    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-  };
 
   const active = cases.filter((c) => !isComplete(c));
   const kycWaiting = active.filter(
@@ -87,7 +76,7 @@ export function OnboardingView() {
   return (
     <>
       <PageHeader
-        title="Client Onboarding"
+        title="Leads"
         subtitle="Lead to welcome letter in 10 to 15 working days. No quotation before KYC approval."
         action={
           canRegisterLead ? (
@@ -99,7 +88,7 @@ export function OnboardingView() {
       />
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile icon={UserPlus} label="In Onboarding" value={String(active.length)} />
+        <StatTile icon={UserPlus} label="Open Leads" value={String(active.length)} />
         <StatTile icon={ShieldCheck} label="Waiting for KYC Approval" value={String(kycWaiting)} delay={60} />
         <StatTile icon={AlertTriangle} label="Step Overdue" value={String(overdue)} tone="down" delay={120} />
         <StatTile icon={Hourglass} label={`Avg Working Days (target ${ONBOARDING_TARGET_DAYS})`} value={avgAge} delay={180} />
@@ -107,19 +96,19 @@ export function OnboardingView() {
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
         <FloatCard className="overflow-hidden" delay={120}>
-          <CardHeader title="Onboarding Pipeline" right={<SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />} />
+          <CardHeader title="Lead Pipeline" right={<SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />} />
           <div className="mt-4 grid gap-4 p-4 pt-0 sm:grid-cols-2 sm:p-5 sm:pt-0">
             {rows.map((c) => (
-              <CaseCard key={c.id} value={c} onOpen={() => setOpen(c)} />
+              <CaseCard key={c.id} value={c} />
             ))}
-            {rows.length === 0 ? <p className="text-xs text-muted-foreground">No prospects in this view.</p> : null}
+            {rows.length === 0 ? <p className="text-xs text-muted-foreground">No leads in this view.</p> : null}
           </div>
         </FloatCard>
 
         <div className="min-w-0 space-y-4">
 
           <FloatCard className="p-5" delay={160}>
-            <h2 className="text-base font-semibold tracking-tight">Prospects by Step</h2>
+            <h2 className="text-base font-semibold tracking-tight">Leads by Step</h2>
             <ul className="mt-3 space-y-1">
               {perStep.map(({ step, count }) => (
                 <li key={step.code} className="flex items-center justify-between gap-3 text-xs">
@@ -135,19 +124,11 @@ export function OnboardingView() {
         </div>
       </div>
 
-      <SlideOver open={!!open} onClose={() => setOpen(null)}>
-        {open ? <OnboardingCasePanel key={open.id} value={open} onClose={() => setOpen(null)} onChanged={reload} /> : null}
-      </SlideOver>
-
       <SlideOver open={newOpen} onClose={() => setNewOpen(false)} wide>
         {newOpen ? (
           <LeadForm
             onClose={() => setNewOpen(false)}
-            onCreated={(c) => {
-              reload();
-              setTab("In progress");
-              setOpen(c);
-            }}
+            onCreated={(c) => router.push(`/clients/leads/${encodeURIComponent(c.id)}`)}
           />
         ) : null}
       </SlideOver>
@@ -155,13 +136,12 @@ export function OnboardingView() {
   );
 }
 
-function CaseCard({ value: c, onOpen }: { value: OnboardingCase; onOpen: () => void }) {
+function CaseCard({ value: c }: { value: OnboardingCase }) {
   const step = currentStep(c);
   const late = onboardingHealth(c) === "overdue";
   return (
-    <button
-      type="button"
-      onClick={onOpen}
+    <Link
+      href={`/clients/leads/${encodeURIComponent(c.id)}`}
       className="block w-full rounded-2xl border border-border bg-card p-4 text-left shadow-[var(--shadow-card)] transition-shadow hover:shadow-[var(--shadow-float)]"
     >
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
@@ -205,6 +185,6 @@ function CaseCard({ value: c, onOpen }: { value: OnboardingCase; onOpen: () => v
         </p>
         <OnboardingHealthChip value={c} />
       </div>
-    </button>
+    </Link>
   );
 }

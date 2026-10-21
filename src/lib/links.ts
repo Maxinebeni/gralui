@@ -21,6 +21,6 @@ export function recordHref(type: TaskResourceType | ApprovalSubjectType, id: str
     case "ONBOARDING":
     case "ONBOARDING_KYC":
     case "NEW_BUSINESS":
-      return `/clients/onboarding?case=${ref}`;
+      return `/clients/leads/${ref}`;
   }
 }

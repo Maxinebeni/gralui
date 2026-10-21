@@ -670,11 +670,11 @@ export const CLAIM_MONTHLY: ClaimMonth[] = [
 ];
 
 export const RECENT_ACTIVITY: ActivityItem[] = [
-  { who: "Jean-Paul Habimana", what: "advanced CLM-2025-071 to Assessment", when: "2h ago" },
-  { who: "Marie Claire Uwimana", what: "uploaded the police report for CLM-2025-064", when: "4h ago" },
-  { who: "Eric Niyonzima", what: "added a UAP quote on REN-2026-005", when: "Yesterday" },
-  { who: "Isabelle Mukamana", what: "flagged Bank of Kigali as non-compliant", when: "Yesterday" },
-  { who: "Marie Claire Uwimana", what: "recorded client acceptance on REN-2026-003", when: "2 days ago" },
+  { who: "Jean-Paul Habimana", what: "advanced CLM-2025-071 to Assessment", when: "2h ago", module: "Claims" },
+  { who: "Marie Claire Uwimana", what: "uploaded the police report for CLM-2025-064", when: "4h ago", module: "Claims" },
+  { who: "Eric Niyonzima", what: "added a UAP quote on REN-2026-005", when: "Yesterday", module: "Renewals" },
+  { who: "Isabelle Mukamana", what: "flagged Bank of Kigali as non-compliant", when: "Yesterday", module: "Clients" },
+  { who: "Marie Claire Uwimana", what: "recorded client acceptance on REN-2026-003", when: "2 days ago", module: "Renewals" },
 ];
 
 /* ------------------------------ Policy details ------------------------------- */
@@ -976,11 +976,13 @@ export const ONBOARDING_CASES: OnboardingCase[] = [
       ],
       "Isabelle Mukamana",
     ),
-    kyc: { items: kycItems("Corporate", -2, 3) },
+    // Midterm demo: only the signed AML questionnaire is still missing (docs/midterm-demo-leads.md).
+    kyc: { items: kycItems("Corporate", -2, 5) },
     quotes: [],
     history: [
       { at: ob(-5), by: "Sales & Marketing Manager", text: "Lead registered" },
       { at: ob(-3), by: "Isabelle Mukamana", text: "Meeting & needs assessment completed" },
+      { at: ob(-2), by: "Isabelle Mukamana", text: "5 KYC documents received" },
     ],
   },
   {

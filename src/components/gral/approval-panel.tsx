@@ -111,7 +111,7 @@ export function ApprovalPanel({
               Evidence{r.evidenceRequired ? " (required)" : ""}
             </h3>
             {open && !isClaim ? (
-              <FilePickButton onFile={attach}>
+              <FilePickButton onFile={attach} destination={`Evidence for ${r.id} · ${r.title}`}>
                 <Paperclip className="size-3.5" /> Attach
               </FilePickButton>
             ) : null}

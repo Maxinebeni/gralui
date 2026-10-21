@@ -5,6 +5,7 @@ import { AlertTriangle, Check, Clock, FileText, Flag, Gavel, Upload, X } from "l
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
+import { parseAmount, settlementWarnings } from "@/lib/amounts";
 import {
   addClaimNote,
   closeClaim,
@@ -40,8 +41,10 @@ import {
 } from "@/lib/claims";
 import { formatDate } from "@/lib/renewals";
 import type { Claim, ClaimFollowUp } from "@/lib/types";
+import { AmountInput } from "./amount-input";
 import { ClaimSlaChip } from "./claim-list";
 import { DocumentPanel, FilePickButton } from "./documents";
+import { ReviewDialog } from "./review-dialog";
 import { Chip, NavyButton, OutlineButton, Person, PriorityPill, SegmentedTabs } from "./ui";
 
 const TABS = ["Documents", "Follow-ups", "Activity Log", "Internal Notes"] as const;
@@ -354,6 +357,8 @@ function FollowUpStep({ claim, readOnly, userName, run }: { claim: Claim; readOn
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
+  // The settlement figures to check before recording the offer.
+  const [review, setReview] = useState<string[] | null>(null);
   const silent = daysWithoutInsurerResponse(claim);
   const appealed = claim.dispute?.decision === "APPEAL";
 
@@ -413,15 +418,36 @@ function FollowUpStep({ claim, readOnly, userName, run }: { claim: Claim; readOn
           ) : null}
           {action === "Settlement offer" ? (
             <>
-              <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="numeric" placeholder="Amount offered in RWF, e.g. 7500000" aria-label="Settlement amount" className={INPUT} />
+              <AmountInput value={amount} onChange={setAmount} placeholder="Amount offered in RWF, e.g. 7,500,000" aria-label="Settlement amount" className={INPUT} />
               <NavyButton
                 disabled={saving}
-                onClick={() =>
-                  save(() => run(() => recordSettlementOffer(claim.id, Number(amount.replace(/[^\d]/g, "")), userName), "Settlement offer recorded."))
-                }
+                onClick={() => {
+                  if (!(parseAmount(amount) > 0)) return toast.error("Enter the amount the insurer offered.");
+                  setReview(settlementWarnings(parseAmount(amount), claim.amount));
+                }}
               >
-                Record offer
+                Review offer
               </NavyButton>
+              <ReviewDialog
+                open={review !== null}
+                title={`Check the settlement offer on ${claim.id}`}
+                rows={[
+                  { label: "Amount offered", amount: parseAmount(amount) || 0 },
+                  { label: "Estimated loss", amount: claim.amount },
+                  { label: "Insurer", value: claim.insurer },
+                ]}
+                warnings={review ?? []}
+                confirmLabel="Record offer"
+                saving={saving}
+                onConfirm={() =>
+                  save(async () => {
+                    const ok = await run(() => recordSettlementOffer(claim.id, parseAmount(amount), userName), "Settlement offer recorded.");
+                    if (ok) setReview(null);
+                    return ok;
+                  })
+                }
+                onBack={() => setReview(null)}
+              />
             </>
           ) : null}
           {action === "Rejection" ? (
@@ -595,7 +621,7 @@ function DocumentsTab({ claim, canUpdate, userName, run }: { claim: Claim; canUp
             {d.filedAt ? (
               <Chip tone="success">Received {formatDate(d.filedAt)}</Chip>
             ) : editable ? (
-              <FilePickButton onFile={(file) => receive(d.name, file)}>
+              <FilePickButton onFile={(file) => receive(d.name, file)} destination={`${d.name} · claim ${claim.id}`}>
                 <Upload className="size-3.5" /> Upload
               </FilePickButton>
             ) : (

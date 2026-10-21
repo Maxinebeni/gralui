@@ -95,13 +95,13 @@ export function Shell({ children }: { children: ReactNode }) {
                   </Link>
                 );
               }
-              // The chevron opens the item's pages, e.g. Overview, My Work and Approvals.
-              const current = children.find((c) => isActive(c.href));
+              // The chevron opens the item's pages, e.g. Clients, All Clients and Leads.
+              // The pill keeps the section's name; the open page is marked in the menu.
               return (
                 <DropdownMenu key={t.href}>
                   <DropdownMenuTrigger className={pillClass}>
                     <span className="flex items-center gap-1.5">
-                      {current ? current.label : t.label}
+                      {t.label}
                       <ChevronDown className="size-3.5 opacity-70" />
                     </span>
                   </DropdownMenuTrigger>

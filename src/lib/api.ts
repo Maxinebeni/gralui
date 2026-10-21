@@ -1531,6 +1531,10 @@ export async function listOnboarding(): Promise<OnboardingCase[]> {
   return [...ONBOARDING_CASES];
 }
 
+export async function getOnboarding(id: string): Promise<OnboardingCase | null> {
+  return ONBOARDING_CASES.find((c) => c.id === id) ?? null;
+}
+
 export type NewLeadInput = {
   name: string;
   type: ClientType;
@@ -1847,18 +1851,21 @@ function onboardingTask(c: OnboardingCase): WorkTask | null {
   const waiting = step.code === "KYC" ? c.kyc.approvalId : step.code === "APPROVAL" ? c.approvalId : undefined;
   if (waiting && APPROVALS.some((r) => r.id === waiting && r.status === "PENDING")) return null;
   const byAccountExecutive = step.owner === "Accounts Executive";
+  // Until the request is sent, the approvers have nothing to decide: the
+  // underwriting manager who made the recommendation sends it.
+  const toRequest = step.code === "APPROVAL";
   return {
     id: `T-${c.id}-${step.code}`,
     key: `ONBOARDING:${c.id}:${step.code}`,
     type: "ONBOARDING_STEP",
-    title: `${step.name}: ${c.prospect.name}`,
-    detail: step.task,
+    title: toRequest ? `Request internal approval: ${c.prospect.name}` : `${step.name}: ${c.prospect.name}`,
+    detail: toRequest ? "Send the recommended quote for approval. The approver depends on the expected commission." : step.task,
     resourceType: "ONBOARDING",
     resourceId: c.id,
     resourceRef: c.id,
     client: c.prospect.name,
     owner: byAccountExecutive ? c.accountExecutive : undefined,
-    ownerRole: byAccountExecutive ? undefined : step.owner.split(" / ")[0],
+    ownerRole: byAccountExecutive ? undefined : toRequest ? "GI Underwriting Manager" : step.owner.split(" / ")[0],
     dueDate: stepDue(c, step),
     status: "OPEN",
     source: "SYSTEM",

@@ -12,9 +12,12 @@ import { NavyButton, OutlineButton } from "@/components/gral/ui";
 import { createClaim, listClients } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { INSURER_GROUPS, PRODUCT_GROUPS, type OptionGroup } from "@/lib/reference-data";
-import { todayIso } from "@/lib/renewals";
+import { formatDate, todayIso } from "@/lib/renewals";
 import type { Claim, ClaimPriority, Client } from "@/lib/types";
 import { Field, Section, describedBy, inputClass } from "./client-form";
+import { AmountInput } from "./amount-input";
+import { ReviewDialog } from "./review-dialog";
+import { claimAmountWarnings, parseAmount } from "@/lib/amounts";
 
 type FormValues = {
   clientId: string;
@@ -48,7 +51,7 @@ function validate(v: FormValues): Errors {
   if (!v.dateReported) e.dateReported = "Enter the date the client reported the loss.";
   else if (v.dateReported > today) e.dateReported = "The report date cannot be in the future.";
   else if (v.dateOfLoss && v.dateReported < v.dateOfLoss) e.dateReported = "This is before the date of loss.";
-  if (!(Number(v.amount.replace(/[^\d]/g, "")) > 0)) e.amount = "Enter the estimated loss in RWF.";
+  if (!(parseAmount(v.amount) > 0)) e.amount = "Enter the estimated loss in RWF.";
   if (!v.handler) e.handler = "Choose who handles the claim.";
   if (v.description.trim().length < 10) e.description = "Describe what happened (at least a sentence).";
   return e;
@@ -99,6 +102,8 @@ function NewClaimForm({
   });
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState(false);
+  // Set once the form is valid: the figures to check before registering.
+  const [review, setReview] = useState<string[] | null>(null);
 
   useEffect(() => {
     listClients()
@@ -134,6 +139,10 @@ function NewClaimForm({
       toast.error("Please fix the highlighted fields.");
       return;
     }
+    setReview(claimAmountWarnings(parseAmount(values.amount), client?.policies.find((p) => p.id === values.policyId)));
+  }
+
+  async function save() {
     setSaving(true);
     try {
       const created = await createClaim(
@@ -145,7 +154,7 @@ function NewClaimForm({
           insurer: values.insurer,
           dateOfLoss: values.dateOfLoss,
           dateReported: values.dateReported,
-          amount: Number(values.amount.replace(/[^\d]/g, "")),
+          amount: parseAmount(values.amount),
           priority: values.priority,
           handler: values.handler,
           description: values.description.trim(),
@@ -153,6 +162,7 @@ function NewClaimForm({
         user.name,
       );
       toast.success(`Claim ${created.id} registered.`);
+      setReview(null);
       onCreated(created);
       onClose();
     } catch (err) {
@@ -265,11 +275,10 @@ function NewClaimForm({
             />
           </Field>
           <Field id="amount" label="Estimated loss (RWF)" error={errors.amount}>
-            <input
+            <AmountInput
               id="amount"
-              inputMode="numeric"
               value={values.amount}
-              onChange={(e) => set("amount", e.target.value)}
+              onChange={(v) => set("amount", v)}
               placeholder="e.g. 4,200,000"
               className={inputClass(errors.amount)}
               {...describedBy("amount", errors.amount)}
@@ -327,9 +336,26 @@ function NewClaimForm({
           Cancel
         </OutlineButton>
         <NavyButton type="submit" disabled={saving} className="px-4 py-2 text-sm">
-          {saving ? "Saving…" : "Register Claim"}
+          Review and Register
         </NavyButton>
       </div>
+
+      <ReviewDialog
+        open={review !== null}
+        title={`Check the claim for ${client?.name ?? "the client"}`}
+        rows={[
+          { label: "Estimated loss", amount: parseAmount(values.amount) },
+          { label: "Policy", value: values.policyId || "Not known yet" },
+          { label: "Class and insurer", value: `${values.classOfInsurance} · ${values.insurer}` },
+          { label: "Date of loss", value: values.dateOfLoss ? formatDate(values.dateOfLoss) : "" },
+          { label: "Handler", value: values.handler },
+        ]}
+        warnings={review ?? []}
+        confirmLabel="Register Claim"
+        saving={saving}
+        onConfirm={save}
+        onBack={() => setReview(null)}
+      />
     </form>
   );
 }
