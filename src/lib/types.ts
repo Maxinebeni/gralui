@@ -1,6 +1,6 @@
 // Shared front-end types. Keep these in line with the backend's OpenAPI
 // contract once the Spring Boot team publishes it.
-
+ 
 // The first six come from the original design. The rest are GRAL roles the
 // backend defines (roles table, migration V9). Commercial and Finance Director
 // exist only in the design so far — confirm with GRAL whether they are real.
@@ -29,20 +29,27 @@ export const ROLES = [
 export type Role = (typeof ROLES)[number] | "Staff" | "Administrator";
 
 export type ClientType = "Corporate" | "State Enterprise" | "NGO" | "Financial Institution" | "SME";
-
+ 
 export type ClientDoc = {
   name: string;
   filed: boolean;
   expiry?: string;
   status?: "ok" | "soon" | "expired";
 };
-
+ 
 /** Policy statuses. Active, Lapsed and Cancelled come from the requirements document. */
 export const POLICY_STATUSES = ["Active", "In Renewal", "Lapsed", "Cancelled"] as const;
 export type PolicyStatus = (typeof POLICY_STATUSES)[number];
-
+ 
 export type Policy = {
+  /** The policy number issued by the insurer, shown on screen. */
   id: string;
+  /** Backend policy ID (UUID). Only set for policies loaded from the backend. */
+  uuid?: string;
+  /** Backend ID of the current cover period. Only set for backend policies. */
+  periodId?: string;
+  /** Backend version. Only set for backend policies. */
+  version?: number;
   classOfInsurance: string;
   insurer: string;
   /** Optional: the backend's first policy API does not record amounts yet. */
@@ -57,7 +64,7 @@ export type Policy = {
   /** For example 0.15 for 15%. */
   commissionRate?: number;
 };
-
+ 
 /** Primary contact person at the client (requirements doc, section 4). */
 export type ClientContact = {
   name: string;
@@ -65,7 +72,7 @@ export type ClientContact = {
   email: string;
   phone: string;
 };
-
+ 
 export type Client = {
   /** The client reference shown on screen, e.g. CLT-001. */
   id: string;
@@ -97,7 +104,7 @@ export type Client = {
   policies: Policy[];
   correspondence: { date: string; subject: string; channel: string }[];
 };
-
+ 
 /** Claim summary as shown on a client's profile (Claims tab). */
 export type ClientClaim = {
   id: string;
@@ -109,13 +116,13 @@ export type ClientClaim = {
   stage: string;
   sla: "breached" | "approaching" | "ontrack";
 };
-
+ 
 export type InsurerSummary = { insurer: string; policies: number; premium: number };
-
+ 
 /* --------------------------------- Renewals ---------------------------------- */
 // Proposed contract for the renewal API (backlog REN-01 to REN-06). Agree the
 // final field names with the backend team (PLN-03) before connecting.
-
+ 
 /** GRAL's renewal milestones from the SOP, in order (see lib/renewals.ts). */
 export type RenewalMilestoneCode =
   | "BRIEF"
@@ -128,7 +135,7 @@ export type RenewalMilestoneCode =
   | "SCHEDULE"
   | "DELIVERY"
   | "COMPLETION";
-
+ 
 /** One milestone that has been completed on a renewal case. */
 export type CompletedMilestone = {
   code: RenewalMilestoneCode;
@@ -137,7 +144,7 @@ export type CompletedMilestone = {
   note: string;
   evidence?: string; // document name or reference
 };
-
+ 
 export type RenewalQuote = {
   id: string;
   insurer: string;
@@ -145,7 +152,7 @@ export type RenewalQuote = {
   terms: string;
   recommended: boolean;
 };
-
+ 
 /** Written client acceptance, required before placement. */
 export type RenewalAcceptance = {
   quoteId: string;
@@ -153,7 +160,7 @@ export type RenewalAcceptance = {
   recordedBy: string;
   evidence: string;
 };
-
+ 
 export type RenewalCase = {
   id: string; // renewal case reference, e.g. REN-2026-001
   policyId: string;
@@ -168,25 +175,25 @@ export type RenewalCase = {
   quotes: RenewalQuote[];
   acceptance?: RenewalAcceptance;
 };
-
+ 
 export type RenewalMonth = { month: string; premium: number; policies: number };
-
+ 
 /* ---------------------------------- Claims ----------------------------------- */
 // Proposed contract for the claims API (backlog CLM-01 to CLM-07), following
 // GRAL's SOP: six steps plus a dispute path to the Claims Committee. Agree the
 // final field names with the backend team before connecting.
-
+ 
 export type ClaimStepCode = "REGISTER" | "DOCUMENTS" | "SUBMIT" | "FOLLOW_UP" | "SETTLEMENT" | "CLOSE";
-
+ 
 export type ClaimPriority = "P1" | "P2" | "P3";
-
+ 
 export type ClaimDocument = {
   name: string;
   required: boolean;
   filedAt?: string; // ISO date; missing = not received yet
   evidence?: string;
 };
-
+ 
 export type ClaimFollowUp = {
   date: string; // ISO date
   by: string;
@@ -194,7 +201,7 @@ export type ClaimFollowUp = {
   note: string;
   insurerResponded: boolean;
 };
-
+ 
 /** Rejected claim sent to the Claims Committee (DMD chairs). */
 export type ClaimDispute = {
   raisedAt: string;
@@ -204,7 +211,7 @@ export type ClaimDispute = {
   decidedBy?: string;
   note?: string;
 };
-
+ 
 export type ClaimSettlement = {
   advisedAt: string;
   amount: number;
@@ -213,21 +220,29 @@ export type ClaimSettlement = {
   paidToClientAt?: string;
   evidence?: string;
 };
-
+ 
 export type ClaimClosure = {
   closedAt: string;
   by: string;
   outcome: "SETTLED" | "REJECTION_ACCEPTED";
   evidence: string;
 };
-
+ 
 export type ClaimEvent = { at: string; by: string; text: string };
-
+ 
 export type Claim = {
   id: string; // e.g. CLM-2025-089
+  /** Backend claim ID (UUID). Only set for claims loaded from the backend. */
+  uuid?: string;
+  /** Backend version. Only set for backend claims. */
+  version?: number;
   clientId: string;
   client: string;
   policyId?: string; // unknown at registration is allowed
+  /** Backend policy period the claim is registered on. Only set for backend claims. */
+  policyPeriodId?: string;
+  /** Currency of the amount, e.g. RWF. Only set for backend claims. */
+  currency?: string;
   classOfInsurance: string;
   insurer: string;
   dateOfLoss: string; // ISO date
@@ -249,7 +264,7 @@ export type Claim = {
   notes: ClaimEvent[];
   history: ClaimEvent[];
 };
-
+ 
 /* --------------------------------- Approvals --------------------------------- */
 // Proposed contract for the approvals API (backlog APR-01 to APR-04,
 // Christian). See docs/approvals-and-my-work-fields.md.
@@ -265,7 +280,7 @@ export type ApprovalSubjectType =
   | "NEW_BUSINESS";
 export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED" | "RETURNED";
 export type ApprovalDecision = "APPROVE" | "REJECT" | "RETURN";
-
+ 
 export type ApprovalStep = {
   order: number;
   /** Role that must decide this step, e.g. "Technical Director". */
@@ -277,10 +292,10 @@ export type ApprovalStep = {
   decidedAt?: string; // ISO date
   comment?: string;
 };
-
+ 
 /** A document attached as evidence, pinned to an exact version (APR-03). */
 export type EvidenceRef = { name: string; documentId?: string; version?: number };
-
+ 
 export type ApprovalRequest = {
   id: string; // e.g. APR-2026-014
   subjectType: ApprovalSubjectType;
@@ -310,10 +325,10 @@ export type ApprovalRequest = {
   version: number;
   history: ClaimEvent[];
 };
-
+ 
 /* --------------------------------- My Work ----------------------------------- */
 // Proposed contract for workflow tasks (backlog WFL-02 and WFL-04, Christian).
-
+ 
 export type TaskType =
   | "CLAIM_STEP"
   | "CLAIM_FOLLOW_UP"
@@ -350,12 +365,12 @@ export type WorkTask = {
   completedBy?: string;
   history: ClaimEvent[];
 };
-
+ 
 /* ------------------------------- Policy detail ------------------------------- */
 // Proposed contract for policy detail (backlog POL-02 to POL-05, TC).
-
+ 
 export type PolicyMovementType = "NEW" | "RENEWAL" | "ENDORSEMENT" | "END_R" | "END_N" | "CANCELLATION";
-
+ 
 /** One cover period. A renewal adds a new period of the same policy. */
 export type PolicyPeriod = {
   periodId: string;
@@ -368,7 +383,7 @@ export type PolicyPeriod = {
   bookingNote?: string;
   current: boolean;
 };
-
+ 
 export type PolicyMovement = {
   id: string;
   date: string; // ISO date the change takes effect
@@ -378,7 +393,7 @@ export type PolicyMovement = {
   evidence?: string;
   by: string;
 };
-
+ 
 /**
  * Balance and commission are worked out by the system, never typed in (Import
  * Template v3.1). null means the value has not been recorded yet.
@@ -393,7 +408,7 @@ export type PolicyFinancials = {
   balance: number | null; // totalPremium − amountPaid
   commission: number | null; // netPremium × commissionRate
 };
-
+ 
 export type PolicyDetail = {
   policy: Policy;
   clientId: string;
@@ -406,10 +421,10 @@ export type PolicyDetail = {
   claims: ClientClaim[];
   renewalCaseId?: string;
 };
-
+ 
 /* --------------------------------- Documents --------------------------------- */
 // Matches the backend's document API (DOC-01 to DOC-03, /api/v1/documents).
-
+ 
 export type DocumentClassification =
   | "KYC"
   | "POLICY_SCHEDULE"
@@ -417,14 +432,14 @@ export type DocumentClassification =
   | "CLIENT_ACCEPTANCE"
   | "APPROVAL_EVIDENCE"
   | "CORRESPONDENCE";
-
+ 
 /** The record a document belongs to. The backend accepts CLIENT only so far. */
 export type DocumentSubject = {
   type: "CLIENT" | "POLICY" | "CLAIM" | "RENEWAL" | "APPROVAL" | "ONBOARDING";
   /** Backend UUID when the record comes from the backend, otherwise its reference. */
   id: string;
 };
-
+ 
 export type StoredDocument = {
   id: string;
   version: number;
@@ -556,7 +571,7 @@ export type PermissionDefinition = {
 };
 
 /* ------------------------------ Overview extras ------------------------------ */
-
+ 
 export type ClaimStep = { n: number; name: string; sla: string };
 export type ClaimMonth = { month: string; amount: number; count: number };
 /** `module` decides who may see the entry, like the pages it comes from. */

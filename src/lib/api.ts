@@ -5,9 +5,11 @@
 // the backend. The screens will not need to change as long as the response
 // shapes match src/lib/types.ts.
 //
-// STATUS: authentication, clients, client documents and administration
-// (users, roles) are connected to the real backend. Policies, claims, renewals, approvals, tasks and the overview
-// still use mock data.
+// STATUS: authentication, clients, client and claim documents, administration
+// (users, roles), policies (insurer, product, policy number and dates), the
+// insurer and product catalog, and claim registration are connected to the
+// real backend. Policy premiums, the later claim steps, renewals, approvals,
+// tasks and the overview still use mock data.
 
 import {
   APPROVALS,
@@ -58,6 +60,7 @@ import {
 import { displayToIso } from "./format";
 import {
   checklistFor,
+  ONBOARDING_STEPS,
   currentStep as onboardingCurrentStep,
   kycApproved,
   kycSubmitBlocker,
@@ -65,8 +68,10 @@ import {
   stepOf,
 } from "./onboarding";
 import { RWANDA_HOLIDAYS, type Holiday } from "./holidays";
+import { INSURER_GROUPS, PRODUCT_GROUPS, type OptionGroup } from "./reference-data";
 import { completionBlocker, currentMilestone, formatDate, milestoneDue, todayIso } from "./renewals";
 import type {
+  OnboardingStepRecord,
   AccessCategory,
   ActivityItem,
   ApprovalDecision,
@@ -93,6 +98,7 @@ import type {
   PermissionDefinition,
   Policy,
   PolicyDetail,
+  PolicyStatus,
   PolicyFinancials,
   PolicyMovement,
   PolicyPeriod,
@@ -211,7 +217,8 @@ async function problemMessage(res: Response, fallback: string): Promise<string> 
   if (res.status === 400 && problem.fields?.length) {
     return `Please check these fields: ${problem.fields.join(", ")}.`;
   }
-  return fallback;
+  // Show the status so problems like a sleeping or busy server (502, 503, 429) are easy to spot.
+  return `${fallback} (error ${res.status})`;
 }
 
 /** The backend only accepts +250 followed by 9 digits. */
@@ -259,6 +266,7 @@ function toClient(v: ClientView, managers: ManagerChoice[]): Client {
     correspondence: [],
   };
   CLIENT_CACHE.set(client.id, client);
+  SUMMARY_ONLY.delete(client.id);
   return client;
 }
 
@@ -268,29 +276,119 @@ async function fetchClientView(uuid: string): Promise<ClientView> {
   return (await res.json()) as ClientView;
 }
 
+/** Run async work on a list, a few items at a time, so the backend is not flooded. */
+async function mapLimited<T, R>(items: T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await work(items[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+/** Clients cached from the list summary only; the full record is loaded the next time the list loads. */
+const SUMMARY_ONLY = new Set<string>();
+
+/** A client built from the list summary alone, used when its full record could not be loaded. */
+function clientFromSummary(s: ClientSummary, managers: ManagerChoice[]): Client {
+  const client = toClient(
+    {
+      id: s.id,
+      reference: s.reference,
+      profile: { registeredName: s.registeredName, type: s.type, sector: "Not recorded", physicalAddress: "" },
+      managerId: s.managerId,
+      restricted: s.restricted,
+      version: s.version,
+    },
+    managers,
+  );
+  SUMMARY_ONLY.add(client.id);
+  return client;
+}
+
+let CLIENT_CHOICES_REQUEST: Promise<Client[]> | null = null;
+
+/**
+ * Clients for pick lists and the claims list: one request, names and IDs only.
+ * Much faster than listClients, which also loads every full record.
+ * Throws when the list cannot be loaded, so the screen can say so.
+ */
+export async function listClientChoices(): Promise<Client[]> {
+  if (MOCK_AUTH) return mockListClients("");
+  if (CLIENT_CHOICES_REQUEST) return CLIENT_CHOICES_REQUEST;
+  CLIENT_CHOICES_REQUEST = (async () => {
+    try {
+      const res = await apiFetch("/api/v1/clients?size=100&sort=name");
+      if (!res.ok) throw new Error(await problemMessage(res, "Could not load clients."));
+      const page = (await res.json()) as Page<ClientSummary>;
+      const managers = await loadManagers();
+      return page.items.map((s) => {
+        const cached = CLIENT_CACHE.get(s.reference);
+        return cached && cached.uuid === s.id ? cached : clientFromSummary(s, managers);
+      });
+    } finally {
+      CLIENT_CHOICES_REQUEST = null;
+    }
+  })();
+  return CLIENT_CHOICES_REQUEST;
+}
+
+/** Full client record, retried once because the free backend server sometimes drops a request. */
+async function fetchClientViewWithRetry(uuid: string): Promise<ClientView> {
+  try {
+    return await fetchClientView(uuid);
+  } catch {
+    return await fetchClientView(uuid);
+  }
+}
+
+/** Requests already on their way, by search text, so the same list is never asked for twice at once. */
+const CLIENT_LIST_REQUESTS = new Map<string, Promise<Client[]>>();
+
 /** Search clients on the backend (name, reference and more). */
 export async function listClients(query = ""): Promise<Client[]> {
   if (MOCK_AUTH) return mockListClients(query);
-  try {
-    const params = new URLSearchParams({ size: "100", sort: "name" });
-    if (query.trim()) params.set("q", query.trim());
-    const res = await apiFetch(`/api/v1/clients?${params}`);
-    if (!res.ok) throw new Error(await problemMessage(res, "Could not load clients."));
-    const page = (await res.json()) as Page<ClientSummary>;
-    const managers = await loadManagers();
+  const key = query.trim();
+  const pending = CLIENT_LIST_REQUESTS.get(key);
+  if (pending) return pending;
 
-    // The list only has summaries, so load each full record. Unchanged ones come from the cache.
-    return await Promise.all(
-      page.items.map(async (s) => {
+  const request = (async () => {
+    try {
+      const params = new URLSearchParams({ size: "100", sort: "name" });
+      if (key) params.set("q", key);
+      const res = await apiFetch(`/api/v1/clients?${params}`);
+      if (!res.ok) throw new Error(await problemMessage(res, "Could not load clients."));
+      const page = (await res.json()) as Page<ClientSummary>;
+      const managers = await loadManagers();
+
+      // The list only has summaries, so load each full record, 4 at a time.
+      // Unchanged ones come from the cache. One that fails is shown from its summary.
+      return await mapLimited(page.items, 4, async (s) => {
         const cached = CLIENT_CACHE.get(s.reference);
-        if (cached && cached.uuid === s.id && cached.version === s.version) return cached;
-        return toClient(await fetchClientView(s.id), managers);
-      }),
-    );
-  } catch (err) {
-    console.error(err);
-    return [];
-  }
+        if (cached && cached.uuid === s.id && cached.version === s.version && !SUMMARY_ONLY.has(s.reference)) {
+          return cached;
+        }
+        try {
+          return toClient(await fetchClientViewWithRetry(s.id), managers);
+        } catch (err) {
+          console.warn(`Showing ${s.reference} from the list only:`, err);
+          return clientFromSummary(s, managers);
+        }
+      });
+    } catch (err) {
+      console.warn(err);
+      return [];
+    } finally {
+      CLIENT_LIST_REQUESTS.delete(key);
+    }
+  })();
+
+  CLIENT_LIST_REQUESTS.set(key, request);
+  return request;
 }
 
 export async function getClient(id: string): Promise<Client | null> {
@@ -358,6 +456,8 @@ export async function createClient(input: ClientInput): Promise<Client> {
 /**
  * Update a client. The backend uses three separate steps: profile, primary
  * contact and account manager. Each step needs the latest version number.
+ * Steps whose fields did not change are skipped, so a small edit only waits
+ * for one request to the backend instead of three.
  */
 export async function updateClient(id: string, input: ClientInput): Promise<Client> {
   if (MOCK_AUTH) return mockUpdateClient(id, input);
@@ -367,28 +467,48 @@ export async function updateClient(id: string, input: ClientInput): Promise<Clie
   }
   const uuid = current.uuid;
   let version = current.version;
+  let view: ClientView | null = null;
+  let res: Response;
 
-  // 1. Company details.
-  let res = await apiFetch(`/api/v1/clients/${uuid}`, {
-    method: "PUT",
-    body: JSON.stringify({ version, profile: { ...toProfile(input), remarks: current.remarks } }),
-  });
-  if (!res.ok) throw new Error(await problemMessage(res, "Could not save the client details."));
-  let view = (await res.json()) as ClientView;
-  version = view.version;
+  const profileChanged =
+    !sameText(input.name, current.name) ||
+    input.type !== current.type ||
+    !sameText(input.sector, current.sector) ||
+    !sameText(input.address, current.address ?? "");
 
-  // 2. Primary contact person.
-  res = await apiFetch(`/api/v1/clients/${uuid}/primary-contact`, {
-    method: "PUT",
-    body: JSON.stringify({ version, primaryContact: toContact(input.contact) }),
-  });
-  if (!res.ok) throw new Error(await problemMessage(res, "Could not save the contact person."));
-  view = (await res.json()) as ClientView;
-  version = view.version;
+  const before = current.contact;
+  const contactChanged =
+    !before ||
+    !sameText(input.contact.name, before.name ?? "") ||
+    !sameText(input.contact.title, before.title ?? "") ||
+    !sameText(input.contact.email, before.email ?? "") ||
+    toBackendPhone(input.contact.phone) !== toBackendPhone(before.phone ?? "");
+
+  // 1. Company details, only if they changed.
+  if (profileChanged) {
+    res = await apiFetch(`/api/v1/clients/${uuid}`, {
+      method: "PUT",
+      body: JSON.stringify({ version, profile: { ...toProfile(input), remarks: current.remarks } }),
+    });
+    if (!res.ok) throw new Error(await problemMessage(res, "Could not save the client details."));
+    view = (await res.json()) as ClientView;
+    version = view.version;
+  }
+
+  // 2. Primary contact person, only if it changed.
+  if (contactChanged) {
+    res = await apiFetch(`/api/v1/clients/${uuid}/primary-contact`, {
+      method: "PUT",
+      body: JSON.stringify({ version, primaryContact: toContact(input.contact) }),
+    });
+    if (!res.ok) throw new Error(await problemMessage(res, "Could not save the contact person."));
+    view = (await res.json()) as ClientView;
+    version = view.version;
+  }
 
   // 3. Account manager, only if it changed.
-  const managerId = await managerIdFor(input.manager);
-  if (managerId !== view.managerId) {
+  if (input.manager !== current.manager) {
+    const managerId = await managerIdFor(input.manager);
     res = await apiFetch(`/api/v1/clients/${uuid}/reassign`, {
       method: "POST",
       body: JSON.stringify({ version, managerId, reason: "Account manager changed from the client form." }),
@@ -397,12 +517,18 @@ export async function updateClient(id: string, input: ClientInput): Promise<Clie
     view = (await res.json()) as ClientView;
   }
 
+  // Nothing changed: no request needed.
+  if (!view) return current;
   return toClient(view, await loadManagers());
 }
 
 /* --------------------------------- Policies ---------------------------------- */
-// Not on the backend yet. Policies for backend clients are kept in memory
-// until the page is refreshed; sample clients keep using mock-data.ts.
+// Backend clients: policies come from /api/v1/clients/{id}/policies (POL-02).
+// The backend stores the insurer, product, policy number and dates of each
+// cover period. Sum insured, premiums, amount paid, commission rate and status
+// are not on the backend yet (POL-03), so for backend policies they are kept in
+// this browser tab until refresh. Sample clients (demo mode) keep using
+// mock-data.ts.
 
 function sameText(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -410,6 +536,200 @@ function sameText(a: string, b: string): boolean {
 
 /** What the Add Policy and Edit Policy forms send. */
 export type PolicyInput = Policy;
+
+type InsurerView = { id: string; code: string; name: string; typeCode: string; active: boolean };
+type ProductView = {
+  id: string;
+  code: string;
+  name: string;
+  termCode: string;
+  active: boolean;
+  productLineCodes?: string[];
+};
+type CategoryView = { id: string; code: string; name: string; active: boolean };
+type InsurerTypeView = { id: string; code: string; name: string; active: boolean };
+
+type PolicyPeriodView = {
+  id: string;
+  policyId: string;
+  insurerId: string;
+  insurerName: string;
+  productId: string;
+  productName: string;
+  externalPolicyNumber: string;
+  effectDate: string; // yyyy-mm-dd
+  expiryDate: string; // yyyy-mm-dd
+  version: number;
+  /** Money snapshots (POL-03), oldest to newest or in any order; the highest version is current. */
+  financialTerms?: FinancialTermsView[];
+};
+
+type FinancialTermsView = {
+  periodId: string;
+  version: number;
+  netPremium: number;
+  totalPremium: number;
+  amountPaid: number;
+  currency: string;
+  commissionRate: number;
+  balance: number;
+  commissionAmount: number;
+  recordedAt: string;
+};
+
+type PolicyView = {
+  id: string;
+  clientId: string;
+  /** GRAL's own policy number, generated by the backend. */
+  policyNumber?: string;
+  version: number;
+  createdAt: string;
+  periods: PolicyPeriodView[];
+};
+
+/** Current money snapshot version per cover period, needed to record new terms. */
+const FINANCIAL_VERSION = new Map<string, number>();
+
+function latestTerms(period: PolicyPeriodView): FinancialTermsView | undefined {
+  return [...(period.financialTerms ?? [])].sort((a, b) => b.version - a.version)[0];
+}
+
+type Catalog = {
+  insurers: InsurerView[];
+  products: ProductView[];
+  lines: CategoryView[];
+  insurerTypes: InsurerTypeView[];
+};
+
+/** The insurer and product catalog from the backend, loaded once. */
+let CATALOG: Catalog | null = null;
+
+async function getJson<T>(path: string): Promise<T | null> {
+  try {
+    const res = await apiFetch(path);
+    return res.ok ? ((await res.json()) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadCatalog(): Promise<Catalog | null> {
+  if (CATALOG) return CATALOG;
+  const [insurers, products, lines, insurerTypes] = await Promise.all([
+    getJson<InsurerView[]>("/api/v1/policy/catalog/insurers"),
+    getJson<ProductView[]>("/api/v1/policy/catalog/products"),
+    getJson<CategoryView[]>("/api/v1/policy/catalog/product-lines"),
+    getJson<InsurerTypeView[]>("/api/v1/policy/catalog/insurer-types"),
+  ]);
+  if (!insurers?.length || !products?.length) return null;
+  CATALOG = { insurers, products, lines: lines ?? [], insurerTypes: insurerTypes ?? [] };
+  return CATALOG;
+}
+
+/** Dropdown lists for the policy form, grouped with headings. */
+export type PolicyCatalog = { insurerGroups: OptionGroup[]; productGroups: OptionGroup[]; fromBackend: boolean };
+
+function groupBy<T>(items: T[], label: (item: T) => string, name: (item: T) => string): OptionGroup[] {
+  const groups = new Map<string, string[]>();
+  for (const item of items) groups.set(label(item), [...(groups.get(label(item)) ?? []), name(item)]);
+  return [...groups.entries()].map(([l, options]) => ({ label: l, options: options.sort() }));
+}
+
+/**
+ * Insurers and products for the policy form. Uses the backend catalog when it
+ * is available, otherwise GRAL's official list in reference-data.ts.
+ */
+export async function getPolicyCatalog(): Promise<PolicyCatalog> {
+  const fallback: PolicyCatalog = { insurerGroups: INSURER_GROUPS, productGroups: PRODUCT_GROUPS, fromBackend: false };
+  if (MOCK_AUTH) return fallback;
+  const catalog = await loadCatalog();
+  if (!catalog) return fallback;
+
+  const typeName = (code: string) => catalog.insurerTypes.find((t) => t.code === code)?.name ?? code;
+  const lineName = (code?: string) =>
+    code ? (catalog.lines.find((l) => l.code === code)?.name ?? code) : "Other products";
+
+  return {
+    insurerGroups: groupBy(
+      catalog.insurers.filter((i) => i.active),
+      (i) => typeName(i.typeCode),
+      (i) => i.name,
+    ),
+    productGroups: groupBy(
+      catalog.products.filter((p) => p.active),
+      (p) => lineName(p.productLineCodes?.[0]),
+      (p) => p.name,
+    ),
+    fromBackend: true,
+  };
+}
+
+/**
+ * The products an insurer offers, by name. The backend only accepts a policy
+ * when the insurer offers the product. null means "not known" (demo mode or no
+ * backend catalog), and the form then shows every product.
+ */
+export async function productsForInsurer(insurerName: string): Promise<string[] | null> {
+  if (MOCK_AUTH || !insurerName) return null;
+  const catalog = await loadCatalog();
+  const insurer = catalog?.insurers.find((i) => sameText(i.name, insurerName));
+  if (!insurer) return null;
+  const linked = await getJson<ProductView[]>(`/api/v1/policy/catalog/insurers/${insurer.id}/products`);
+  return linked ? linked.filter((p) => p.active).map((p) => p.name) : null;
+}
+
+/** Fields the backend does not store yet (sum insured and status), by backend policy ID. */
+const LOCAL_POLICY_TERMS = new Map<string, Partial<Policy>>();
+
+function isoToDisplay(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+/** Until the backend sends a status, a policy past its expiry date shows as Lapsed. */
+function statusFromDates(expiryIso: string): PolicyStatus {
+  return expiryIso < todayIso() ? "Lapsed" : "Active";
+}
+
+/** Turns a backend policy into the shape the screens use, from its latest cover period. */
+function toPolicy(v: PolicyView): Policy | null {
+  const latest = [...v.periods].sort((a, b) => b.effectDate.localeCompare(a.effectDate))[0];
+  if (!latest) return null;
+  const terms = latestTerms(latest);
+  FINANCIAL_VERSION.set(latest.id, terms?.version ?? 0);
+  return {
+    id: v.policyNumber || latest.externalPolicyNumber || `POL-${v.id.slice(0, 8).toUpperCase()}`,
+    uuid: v.id,
+    periodId: latest.id,
+    version: v.version,
+    classOfInsurance: latest.productName,
+    insurer: latest.insurerName,
+    // Sum insured is not on the backend yet, so it stays undefined and shows
+    // as "Not recorded" (unless typed in this session).
+    start: isoToDisplay(latest.effectDate),
+    renewal: isoToDisplay(latest.expiryDate),
+    status: statusFromDates(latest.expiryDate),
+    ...LOCAL_POLICY_TERMS.get(v.id),
+    ...(terms
+      ? {
+          premium: Number(terms.totalPremium),
+          netPremium: Number(terms.netPremium),
+          amountPaid: Number(terms.amountPaid),
+          commissionRate: Number(terms.commissionRate),
+        }
+      : {}),
+  };
+}
+
+async function policyProblem(res: Response, fallback: string): Promise<string> {
+  const problem = await readProblem(res);
+  if (res.status === 401) return "Your session has ended. Please sign in again.";
+  if (res.status === 403) return "You do not have permission to add or view policies for this client.";
+  if (res.status === 404) return "This client or policy could not be found.";
+  if (res.status === 400 && problem.fields?.length) return `Please check these fields: ${problem.fields.join(", ")}.`;
+  if (problem.title) return problem.title;
+  return fallback;
+}
 
 function allKnownClients(): Client[] {
   return [...CLIENTS, ...CLIENT_CACHE.values()];
@@ -443,7 +763,15 @@ function findClientForPolicies(clientId: string): Client {
   return found;
 }
 
+/** Backend policies already seen, by policy number, so the policy page can find them again. */
+const POLICY_INDEX = new Map<string, { uuid: string; clientRef: string }>();
+
+function policyKey(policyNumber: string) {
+  return policyNumber.trim().toUpperCase();
+}
+
 function savePolicies(clientId: string, policies: Policy[]): Client {
+  for (const p of policies) if (p.uuid) POLICY_INDEX.set(policyKey(p.id), { uuid: p.uuid, clientRef: clientId });
   const updated = withPolicies(findClientForPolicies(clientId), policies);
   const mockIndex = CLIENTS.findIndex((c) => c.id === clientId);
   if (mockIndex >= 0) {
@@ -455,20 +783,124 @@ function savePolicies(clientId: string, policies: Policy[]): Client {
   return updated;
 }
 
-/** Add a policy to a client. Kept in memory until the page is refreshed. */
-export async function createPolicy(clientId: string, input: PolicyInput): Promise<Client> {
-  const client = findClientForPolicies(clientId);
-  if (policyNumberTaken(input.id)) throw new Error("This policy number is already in use.");
-  return savePolicies(clientId, [...client.policies, input]);
+function isBackendClient(clientId: string): Client | null {
+  if (MOCK_AUTH) return null;
+  const cached = CLIENT_CACHE.get(clientId);
+  return cached?.uuid ? cached : null;
 }
 
-/** Update one of a client's policies. Kept in memory until the page is refreshed. */
+/** A client's policies. Backend clients load them from the backend; sample clients from mock data. */
+export async function listClientPolicies(clientId: string): Promise<Policy[]> {
+  const backend = isBackendClient(clientId);
+  if (!backend) return findClientForPolicies(clientId).policies;
+  const res = await apiFetch(`/api/v1/clients/${backend.uuid}/policies`);
+  if (!res.ok) throw new Error(await policyProblem(res, "Could not load this client's policies."));
+  const policies = ((await res.json()) as PolicyView[])
+    .map(toPolicy)
+    .filter((p): p is Policy => p !== null)
+    .sort((a, b) => displayToIso(b.start).localeCompare(displayToIso(a.start)));
+  savePolicies(clientId, policies);
+  return policies;
+}
+
+/** The fields the backend does not store yet: sum insured and status. */
+function localTerms(input: PolicyInput): Partial<Policy> {
+  return { sumInsured: input.sumInsured, status: input.status };
+}
+
+/** The money fields the backend stores (POL-03). Commission rate is a fraction, e.g. 0.1 for 10%. */
+function moneyTerms(input: PolicyInput) {
+  return {
+    netPremium: input.netPremium,
+    totalPremium: input.premium,
+    amountPaid: input.amountPaid,
+    currency: "RWF",
+    commissionRate: input.commissionRate,
+  };
+}
+
+/** Add a policy to a client. Backend clients: registers the policy and its first cover period. */
+export async function createPolicy(clientId: string, input: PolicyInput): Promise<Client> {
+  const backend = isBackendClient(clientId);
+  if (!backend) {
+    const client = findClientForPolicies(clientId);
+    if (policyNumberTaken(input.id)) throw new Error("This policy number is already in use.");
+    return savePolicies(clientId, [...client.policies, input]);
+  }
+
+  // The backend generates GRAL's policy number itself (unique per insurer),
+  // so the number typed in the form is not sent.
+  const catalog = await loadCatalog();
+  if (!catalog) throw new Error("Could not load the insurer and product lists. Please try again.");
+  const insurer = catalog.insurers.find((i) => sameText(i.name, input.insurer));
+  const product = catalog.products.find((p) => sameText(p.name, input.classOfInsurance));
+  if (!insurer || !product) throw new Error("Choose the insurer and the class of insurance from the lists.");
+
+  const res = await apiFetch(`/api/v1/clients/${backend.uuid}/policies`, {
+    method: "POST",
+    body: JSON.stringify({
+      insurerId: insurer.id,
+      productId: product.id,
+      effectDate: displayToIso(input.start),
+      expiryDate: displayToIso(input.renewal),
+      ...moneyTerms(input),
+    }),
+  });
+  if (!res.ok) throw new Error(await policyProblem(res, "Could not save the policy. Please try again."));
+  const view = (await res.json()) as PolicyView;
+  LOCAL_POLICY_TERMS.set(view.id, localTerms(input));
+
+  await listClientPolicies(clientId);
+  return findClientForPolicies(clientId);
+}
+
+/**
+ * Update one of a client's policies. The backend has no edit endpoint yet, so
+ * for backend policies only the premium, payment and status fields can change,
+ * and they are kept in this browser tab until refresh.
+ */
 export async function updatePolicy(
   clientId: string,
   originalPolicyId: string,
   input: PolicyInput,
 ): Promise<Client> {
   const client = findClientForPolicies(clientId);
+  const original = client.policies.find((p) => p.id === originalPolicyId);
+
+  if (original?.uuid && isBackendClient(clientId)) {
+    const keyFieldsChanged =
+      !sameText(input.id, original.id) ||
+      !sameText(input.insurer, original.insurer) ||
+      !sameText(input.classOfInsurance, original.classOfInsurance) ||
+      displayToIso(input.start) !== displayToIso(original.start) ||
+      displayToIso(input.renewal) !== displayToIso(original.renewal);
+    if (keyFieldsChanged) {
+      throw new Error(
+        "The policy number, insurer, class and dates cannot be changed. Only the premium, payment and status details can be updated.",
+      );
+    }
+    if (original.periodId) {
+      const res = await apiFetch(`/api/v1/policy-periods/${original.periodId}/financial-terms`, {
+        method: "POST",
+        body: JSON.stringify({
+          expectedVersion: FINANCIAL_VERSION.get(original.periodId) ?? 0,
+          ...moneyTerms(input),
+          reason: "Updated from the client file",
+        }),
+      });
+      if (res.status === 409) throw new Error("Someone else changed this policy. Close the form, reopen it and try again.");
+      if (!res.ok) throw new Error(await policyProblem(res, "Could not save the premium details. Please try again."));
+      const saved = (await res.json()) as FinancialTermsView;
+      FINANCIAL_VERSION.set(original.periodId, saved.version);
+    }
+    LOCAL_POLICY_TERMS.set(original.uuid, localTerms(input));
+    const updated = { ...localTerms(input), premium: input.premium, netPremium: input.netPremium, amountPaid: input.amountPaid, commissionRate: input.commissionRate };
+    return savePolicies(
+      clientId,
+      client.policies.map((p) => (p.id === originalPolicyId ? { ...p, ...updated } : p)),
+    );
+  }
+
   if (policyNumberTaken(input.id, { clientId, policyId: originalPolicyId })) {
     throw new Error("This policy number is already in use.");
   }
@@ -617,7 +1049,8 @@ function claimApprovals(): ApprovalRequest[] {
 }
 
 export async function listApprovals(): Promise<ApprovalRequest[]> {
-  return [...APPROVALS, ...claimApprovals()].sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
+  const backend = MOCK_AUTH ? [] : await listBackendApprovals();
+  return [...backend, ...APPROVALS, ...claimApprovals()].sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
 }
 
 export async function getApproval(id: string): Promise<ApprovalRequest | null> {
@@ -647,6 +1080,7 @@ export async function decideApproval(
   input: DecisionInput,
   actor: { name: string; role: string },
 ): Promise<ApprovalRequest> {
+  if (BACKEND_APPROVALS.has(id)) return decideBackendApproval(id, input);
   const r = await getApproval(id);
   if (!r) throw new Error("This approval request could not be found.");
   if (r.version !== input.expectedVersion) {
@@ -729,6 +1163,7 @@ export async function decideApproval(
 
 /** Send a returned request back for decision after it was fixed. The record's revision goes up. */
 export async function resubmitApproval(id: string, note: string, by: string): Promise<ApprovalRequest> {
+  if (BACKEND_APPROVALS.has(id)) throw new Error("A returned request is sent again from the record it belongs to.");
   const r = APPROVALS.find((x) => x.id === id);
   if (!r) throw new Error("This approval request could not be found.");
   if (r.status !== "RETURNED") throw new Error("Only a returned request can be sent again.");
@@ -742,6 +1177,14 @@ export async function resubmitApproval(id: string, note: string, by: string): Pr
 }
 
 export async function addApprovalEvidence(id: string, evidence: EvidenceRef, by: string): Promise<ApprovalRequest> {
+  const backend = BACKEND_APPROVALS.get(id);
+  if (backend) {
+    // Backend evidence is sent with the decision, pinned to the exact file version.
+    if (!evidence.documentId) throw new Error("Upload the file first, then attach it.");
+    const updated = { ...backend, evidence: [...backend.evidence, evidence] };
+    BACKEND_APPROVALS.set(id, updated);
+    return updated;
+  }
   const r = APPROVALS.find((x) => x.id === id);
   if (!r) throw new Error("Evidence for this request is kept on the claim.");
   if (r.status === "APPROVED" || r.status === "REJECTED") throw new Error("This request is already decided.");
@@ -903,7 +1346,8 @@ export async function listTasks(): Promise<WorkTask[]> {
     ...ONBOARDING_CASES.map(onboardingTask),
   ].filter((t): t is WorkTask => t !== null);
 
-  return [...system, ...MANUAL_TASKS].map((t) => {
+  const backend = MOCK_AUTH ? [] : await listBackendTasks();
+  return [...backend, ...system, ...MANUAL_TASKS].map((t) => {
     const assigned = TASK_ASSIGNMENTS.get(t.key);
     if (!assigned) return t;
     return { ...t, owner: assigned.owner, ownerRole: undefined, history: [...t.history, ...assigned.history] };
@@ -916,12 +1360,16 @@ export async function listAssignees(): Promise<string[]> {
     ...CLAIMS.map((c) => c.handler),
     ...RENEWAL_CASES.map((r) => r.owner),
     ...MANUAL_TASKS.flatMap((t) => (t.owner ? [t.owner] : [])),
+    // Backend tasks can only be given to people the backend knows.
+    ...(MOCK_AUTH ? [] : (await loadManagers()).map((m) => m.fullName)),
   ]);
   return [...names].sort();
 }
 
 export async function reassignTask(key: string, owner: string, by: string): Promise<void> {
   if (!owner) throw new Error("Choose who should do this.");
+  const backendTask = [...BACKEND_TASKS.values()].find((t) => t.key === key);
+  if (backendTask) return reassignBackendTask(backendTask, owner);
   const index = MANUAL_TASKS.findIndex((t) => t.key === key);
   if (index >= 0) {
     // Manual tasks keep one history, in order.
@@ -938,6 +1386,7 @@ export async function reassignTask(key: string, owner: string, by: string): Prom
 }
 
 export async function completeTask(id: string, note: string, by: string): Promise<void> {
+  if (BACKEND_TASKS.has(id)) return completeBackendTask(id, note);
   const index = MANUAL_TASKS.findIndex((t) => t.id === id);
   if (index < 0) throw new Error("This task closes by itself when the record moves on. Open the record to do the work.");
   const t = MANUAL_TASKS[index]!;
@@ -974,6 +1423,345 @@ export async function createTask(input: NewTaskInput, by: string): Promise<WorkT
   return task;
 }
 
+/* ----------------------- Approvals and tasks on the backend ---------------------- */
+// Connected: GET /approvals/inbox, GET /approvals/{id}/history, POST
+// /approvals/{id}/decisions (APR-01, APR-02) and GET /tasks, POST
+// /tasks/{id}/complete, POST /tasks/{id}/reassign (WFL-02). The backend creates
+// approval requests and tasks itself from its workflows. Requests and tasks for
+// renewals, onboarding and sample claims still come from sample data, shown
+// beside the backend ones until those workflows are on the backend.
+
+/** The signed-in user, kept so tasks can be matched to them. */
+let CURRENT_USER: SessionUser | null = null;
+
+type BackendApprovalView = {
+  id: string;
+  subjectType: string;
+  subjectId: string;
+  action: string;
+  materialRevision: number;
+  initiatedBy?: string;
+  policyId?: string;
+  policyVersion?: number;
+  status: string;
+  currentStep: number;
+  version: number;
+  createdAt: string;
+  previousRequestId?: string;
+};
+type BackendApprovalStep = {
+  number: number;
+  requiredRole?: string;
+  requiredPermission?: string;
+  evidenceRequired?: boolean;
+  evidencePurpose?: string;
+};
+type BackendApprovalDecision = {
+  id: string;
+  step: number;
+  outcome: string;
+  actorId?: string;
+  comment?: string;
+  occurredAt: string;
+  evidence?: { documentId: string; version: number }[] | null;
+};
+type BackendApprovalHistory = {
+  request: BackendApprovalView;
+  steps: BackendApprovalStep[];
+  decisions: BackendApprovalDecision[];
+};
+
+/** Backend approval requests already loaded, by ID, so a decision knows where to go. */
+const BACKEND_APPROVALS = new Map<string, ApprovalRequest>();
+
+/** The record each backend request is about, and the purpose its evidence is filed under. */
+const BACKEND_APPROVAL_SUBJECTS = new Map<string, { type: string; id: string; purpose: string }>();
+
+/** "CLAIM_SETTLEMENT" becomes "Claim settlement". */
+function humanize(code: string): string {
+  const words = code.replace(/[_-]+/g, " ").trim().toLowerCase();
+  return words ? words[0]!.toUpperCase() + words.slice(1) : code;
+}
+
+/** A backend role code as the screens name it, e.g. TECHNICAL_DIRECTOR → Technical Director. */
+function roleName(code?: string): string {
+  if (!code) return "Approver";
+  return BACKEND_TO_FRONTEND_ROLE[code.trim().toUpperCase().replace(/[\s-]+/g, "_")] ?? humanize(code);
+}
+
+async function personName(id?: string): Promise<string | undefined> {
+  if (!id) return undefined;
+  if (CURRENT_USER?.id === id) return CURRENT_USER.name;
+  return (await loadManagers()).find((m) => m.id === id)?.fullName;
+}
+
+/** The reference people know a record by: claim number, client ID, or a short ID. */
+function subjectReference(type: string, id: string): { ref: string; client?: string; clientId?: string } {
+  const t = type.toUpperCase();
+  if (t === "CLAIM") {
+    const claim = CLAIMS.find((c) => c.uuid === id);
+    if (claim) return { ref: claim.id, client: claim.client, clientId: claim.clientId };
+  }
+  if (t === "CLIENT") {
+    const client = [...CLIENT_CACHE.values()].find((c) => c.uuid === id);
+    if (client) return { ref: client.id, client: client.name, clientId: client.id };
+  }
+  if (t === "POLICY") {
+    for (const [number, p] of POLICY_INDEX) if (p.uuid === id) return { ref: number, clientId: p.clientRef };
+  }
+  return { ref: `${humanize(type)} ${id.slice(0, 8).toUpperCase()}` };
+}
+
+function approvalStatus(code: string): ApprovalRequest["status"] {
+  const c = code.toUpperCase();
+  if (c.includes("APPROV")) return "APPROVED";
+  if (c.includes("REJECT")) return "REJECTED";
+  if (c.includes("RETURN")) return "RETURNED";
+  return "PENDING";
+}
+
+/**
+ * inInbox: the backend listed this request as waiting for the signed-in user,
+ * so its current step is shown under their role and the screens let them decide.
+ */
+async function toBackendApproval(h: BackendApprovalHistory, inInbox = false): Promise<ApprovalRequest> {
+  const v = h.request;
+  const status = approvalStatus(v.status);
+  const subject = subjectReference(v.subjectType, v.subjectId);
+  const steps: ApprovalStep[] = await Promise.all(
+    [...h.steps]
+      .sort((a, b) => a.number - b.number)
+      .map(async (st) => {
+        const decided = [...h.decisions].reverse().find((d) => d.step === st.number);
+        const outcome = decided ? approvalStatus(decided.outcome) : null;
+        const stepStatus: ApprovalStep["status"] =
+          outcome && outcome !== "PENDING"
+            ? outcome
+            : status === "PENDING" && st.number === v.currentStep
+              ? "PENDING"
+              : "WAITING";
+        const mineNow = inInbox && stepStatus === "PENDING" && CURRENT_USER;
+        return {
+          order: st.number,
+          role: mineNow ? CURRENT_USER!.role : roleName(st.requiredRole),
+          status: stepStatus,
+          decidedBy: decided ? (await personName(decided.actorId)) ?? "Reviewer" : undefined,
+          decidedAt: decided?.occurredAt.slice(0, 10),
+          comment: decided?.comment || undefined,
+        };
+      }),
+  );
+  const requestedAt = v.createdAt.slice(0, 10);
+  const history = await Promise.all(
+    h.decisions.map(async (d) => ({
+      at: d.occurredAt.slice(0, 10),
+      by: (await personName(d.actorId)) ?? "Reviewer",
+      text: `${humanize(d.outcome)} at step ${d.step}${d.comment ? `: ${d.comment}` : ""}`,
+    })),
+  );
+  const known = BACKEND_APPROVALS.get(v.id);
+  return {
+    id: v.id,
+    // The screens group requests by type; backend types not known here show under KYC.
+    subjectType: (["RENEWAL", "CLAIM_SETTLEMENT", "KYC", "POLICY_ENDORSEMENT", "ONBOARDING_KYC", "NEW_BUSINESS"].includes(
+      v.subjectType.toUpperCase(),
+    )
+      ? v.subjectType.toUpperCase()
+      : "KYC") as ApprovalRequest["subjectType"],
+    subjectId: v.subjectId,
+    subjectRef: subject.ref,
+    subjectRevision: v.materialRevision,
+    title: `${humanize(v.action)} · ${humanize(v.subjectType)}`,
+    summary: `Approval requested in the system for ${subject.ref}.`,
+    clientId: subject.clientId,
+    client: subject.client,
+    policyVersion: v.policyVersion !== undefined ? `Policy v${v.policyVersion}` : "Backend policy",
+    requestedBy: (await personName(v.initiatedBy)) ?? "Requested in the system",
+    requestedAt,
+    dueAt: addWorkingDays(requestedAt, DECISION_DAYS),
+    status,
+    steps,
+    evidenceRequired: h.steps.some((st) => st.number === v.currentStep && st.evidenceRequired),
+    // Evidence attached in this tab but not sent yet stays until the decision.
+    evidence: known?.evidence ?? [],
+    version: v.version,
+    history: [{ at: requestedAt, by: "System", text: "Approval requested" }, ...history],
+  };
+}
+
+async function approvalHistory(id: string): Promise<BackendApprovalHistory> {
+  const res = await apiFetch(`/api/v1/approvals/${id}/history?size=100`);
+  if (!res.ok) throw new Error(await approvalProblem(res, "Could not load this approval request."));
+  return (await res.json()) as BackendApprovalHistory;
+}
+
+async function approvalProblem(res: Response, fallback: string): Promise<string> {
+  const problem = await readProblem(res);
+  if (res.status === 401) return "Your session has ended. Please sign in again.";
+  if (res.status === 403) return "You are not allowed to decide or see this request.";
+  if (res.status === 404) return "This approval request could not be found.";
+  if (res.status === 409) return "This request changed since you opened it. Close it and open it again to see the latest.";
+  if (problem.title) return problem.title;
+  return fallback;
+}
+
+/** Requests waiting for the signed-in user's decision (the backend's inbox). */
+async function listBackendApprovals(): Promise<ApprovalRequest[]> {
+  try {
+    const res = await apiFetch("/api/v1/approvals/inbox?size=100");
+    if (!res.ok) return [];
+    const items = ((await res.json()) as Page<BackendApprovalView>).items ?? [];
+    return await mapLimited(items, 4, async (v) => {
+      const history = await approvalHistory(v.id).catch(() => ({ request: v, steps: [], decisions: [] }));
+      const mapped = await toBackendApproval(history, true);
+      BACKEND_APPROVALS.set(mapped.id, mapped);
+      const step = history.steps.find((st) => st.number === v.currentStep);
+      BACKEND_APPROVAL_SUBJECTS.set(v.id, {
+        type: v.subjectType.toUpperCase(),
+        id: v.subjectId,
+        purpose: step?.evidencePurpose || "APPROVAL_EVIDENCE",
+      });
+      return mapped;
+    });
+  } catch (err) {
+    console.warn("Could not load the approval inbox:", err);
+    return [];
+  }
+}
+
+async function decideBackendApproval(id: string, input: DecisionInput): Promise<ApprovalRequest> {
+  const known = BACKEND_APPROVALS.get(id)!;
+  const comment = input.comment.trim();
+  if (input.decision !== "APPROVE" && !comment) throw new Error("Say why, so the requester knows what to change.");
+  if (input.decision === "APPROVE" && known.evidenceRequired && known.evidence.length === 0) {
+    throw new Error("Attach the written or signed evidence first.");
+  }
+  const res = await apiFetch(`/api/v1/approvals/${id}/decisions`, {
+    method: "POST",
+    body: JSON.stringify({
+      version: input.expectedVersion,
+      decision: input.decision,
+      comment,
+      evidence: known.evidence
+        .filter((e) => e.documentId)
+        .map((e) => ({ documentId: e.documentId, version: e.version ?? 1 })),
+    }),
+  });
+  if (!res.ok) throw new Error(await approvalProblem(res, "Could not save your decision. Please try again."));
+  const updated = await toBackendApproval(await approvalHistory(id));
+  BACKEND_APPROVALS.set(id, { ...updated, evidence: [] });
+  return BACKEND_APPROVALS.get(id)!;
+}
+
+type BackendTaskView = {
+  id: string;
+  subjectType: string;
+  subjectId: string;
+  kind: string;
+  assigneeId?: string;
+  dueDate?: string | null;
+  status: string;
+  completedBy?: string;
+  completedAt?: string;
+  version: number;
+  ownerControlled?: boolean;
+};
+
+/** Backend tasks already loaded, by ID, with the version the next change must send. */
+const BACKEND_TASKS = new Map<string, WorkTask & { version: number }>();
+
+function taskType(kind: string): WorkTask["type"] {
+  const k = kind.toUpperCase();
+  if (k.includes("APPROVAL")) return "APPROVAL";
+  if (k.includes("FOLLOW")) return "CLAIM_FOLLOW_UP";
+  if (k.includes("CLAIM")) return "CLAIM_STEP";
+  if (k.includes("RENEWAL")) return "RENEWAL_MILESTONE";
+  if (k.includes("KYC")) return "KYC_DOCUMENT";
+  if (k.includes("ONBOARD")) return "ONBOARDING_STEP";
+  return "MANUAL";
+}
+
+function taskResourceType(type: string): WorkTask["resourceType"] {
+  const t = type.toUpperCase();
+  return (["CLAIM", "RENEWAL", "CLIENT", "POLICY", "APPROVAL", "ONBOARDING"].includes(t) ? t : "CLIENT") as WorkTask["resourceType"];
+}
+
+async function toBackendTask(v: BackendTaskView): Promise<WorkTask & { version: number }> {
+  const subject = subjectReference(v.subjectType, v.subjectId);
+  const done = v.status.toUpperCase().includes("COMPLET") || v.status.toUpperCase() === "DONE";
+  return {
+    id: v.id,
+    key: `BACKEND:${v.id}`,
+    type: taskType(v.kind),
+    title: humanize(v.kind),
+    detail: subject.ref,
+    resourceType: taskResourceType(v.subjectType),
+    // Links open the record by the reference people know; the UUID when there is none.
+    resourceId: subject.ref.includes(" ") ? v.subjectId : subject.ref,
+    resourceRef: subject.ref,
+    client: subject.client,
+    owner: (await personName(v.assigneeId)) ?? (v.assigneeId ? "Assigned user" : undefined),
+    ownerRole: v.assigneeId ? undefined : "Unassigned",
+    // Some owner-controlled work has no deadline yet; it shows as due today.
+    dueDate: v.dueDate ?? todayIso(),
+    status: done ? "DONE" : "OPEN",
+    // Owner-controlled work is completed by hand; the rest closes when its workflow moves on.
+    source: v.ownerControlled ? "MANUAL" : "SYSTEM",
+    createdAt: todayIso(),
+    completedAt: v.completedAt?.slice(0, 10),
+    completedBy: await personName(v.completedBy),
+    history: [],
+    version: v.version,
+  };
+}
+
+/** Tasks from the backend: the whole team's for people who may assign work, otherwise the user's own. */
+async function listBackendTasks(): Promise<WorkTask[]> {
+  try {
+    let res = await apiFetch("/api/v1/tasks?assignedToMe=false&size=100");
+    if (res.status === 403) res = await apiFetch("/api/v1/tasks?assignedToMe=true&size=100");
+    if (!res.ok) return [];
+    const items = ((await res.json()) as Page<BackendTaskView>).items ?? [];
+    const tasks = await Promise.all(items.map(toBackendTask));
+    for (const t of tasks) BACKEND_TASKS.set(t.id, t);
+    return tasks.map(({ version: _version, ...t }) => t);
+  } catch (err) {
+    console.warn("Could not load tasks:", err);
+    return [];
+  }
+}
+
+async function taskProblem(res: Response, fallback: string): Promise<string> {
+  const problem = await readProblem(res);
+  if (res.status === 401) return "Your session has ended. Please sign in again.";
+  if (res.status === 403) return "You are not allowed to change this task.";
+  if (res.status === 409) return "This task changed since you opened it. Close it and open it again.";
+  if (problem.title) return problem.title;
+  return fallback;
+}
+
+async function completeBackendTask(id: string, note: string): Promise<void> {
+  const t = BACKEND_TASKS.get(id)!;
+  if (t.source !== "MANUAL") throw new Error("This task closes by itself when the record moves on. Open the record to do the work.");
+  const res = await apiFetch(`/api/v1/tasks/${id}/complete`, {
+    method: "POST",
+    body: JSON.stringify({ version: t.version, reason: note.trim() || "Completed" }),
+  });
+  if (!res.ok) throw new Error(await taskProblem(res, "Could not complete the task. Please try again."));
+  BACKEND_TASKS.set(id, await toBackendTask((await res.json()) as BackendTaskView));
+}
+
+async function reassignBackendTask(t: WorkTask & { version: number }, owner: string): Promise<void> {
+  const assignee = (await loadManagers()).find((m) => m.fullName === owner);
+  if (!assignee) throw new Error("Choose someone from the list. The backend can only assign work to its own users.");
+  const res = await apiFetch(`/api/v1/tasks/${t.id}/reassign`, {
+    method: "POST",
+    body: JSON.stringify({ version: t.version, assigneeId: assignee.id, reason: `Reassigned to ${owner}` }),
+  });
+  if (!res.ok) throw new Error(await taskProblem(res, "Could not reassign the task. Please try again."));
+  BACKEND_TASKS.set(t.id, await toBackendTask((await res.json()) as BackendTaskView));
+}
+
 /* ------------------------------- Policy detail ------------------------------- */
 // Mock version of POL-02 to POL-05 (TC). Balance and commission are worked
 // out here, as the backend will: balance = total premium − amount paid,
@@ -995,7 +1783,103 @@ export function policyFinancials(p: Policy): PolicyFinancials {
   };
 }
 
-export async function getPolicyDetail(policyId: string): Promise<PolicyDetail | null> {
+/**
+ * Finds a backend policy by its number. Uses what is already loaded; after a
+ * page refresh it looks through the clients' policies, 4 clients at a time.
+ */
+async function findBackendPolicy(policyNumber: string): Promise<{ uuid: string; clientRef: string } | null> {
+  const known = POLICY_INDEX.get(policyKey(policyNumber));
+  if (known) return known;
+  const clients = (await listClientChoices()).filter((c) => c.uuid);
+  await mapLimited(clients, 4, async (c) => {
+    if (POLICY_INDEX.has(policyKey(policyNumber))) return;
+    try {
+      await listClientPolicies(c.id);
+    } catch {
+      // A client whose policies cannot be read is skipped.
+    }
+  });
+  return POLICY_INDEX.get(policyKey(policyNumber)) ?? null;
+}
+
+/**
+ * Policy page for a backend policy: GET /policies/{id} for the policy and all
+ * its cover periods, plus the client's claims on those periods. Premiums,
+ * payments and policy history (POL-03, POL-05) are not on the backend yet.
+ */
+async function getBackendPolicyDetail(policyNumber: string, policyUuid?: string): Promise<PolicyDetail | null> {
+  const found = policyUuid ? { uuid: policyUuid, clientRef: "" } : await findBackendPolicy(policyNumber);
+  if (!found) return null;
+
+  const res = await apiFetch(`/api/v1/policies/${found.uuid}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await policyProblem(res, "Could not load this policy."));
+  const view = (await res.json()) as PolicyView;
+  const policy = toPolicy(view);
+  if (!policy) return null;
+
+  const client =
+    [...CLIENT_CACHE.values()].find((c) => c.uuid === view.clientId) ??
+    (await listClientChoices()).find((c) => c.uuid === view.clientId);
+  const clientRef = client?.id ?? found.clientRef;
+  const clientName = client?.name ?? "Client";
+  if (clientRef) POLICY_INDEX.set(policyKey(policy.id), { uuid: view.id, clientRef });
+
+  const financials = policyFinancials(policy);
+  // Newest period first; the oldest one is when the policy was placed.
+  const sorted = [...view.periods].sort((a, b) => b.effectDate.localeCompare(a.effectDate));
+  const periods: PolicyPeriod[] = sorted.map((per, i) => ({
+    periodId: per.id,
+    from: per.effectDate,
+    to: per.expiryDate,
+    // Premiums come from each period's latest money snapshot (POL-03).
+    // Sum insured is not on the backend yet, so only this session's value shows.
+    sumInsured: i === 0 ? (policy.sumInsured ?? null) : null,
+    netPremium: latestTerms(per) ? Number(latestTerms(per)!.netPremium) : null,
+    totalPremium: latestTerms(per) ? Number(latestTerms(per)!.totalPremium) : null,
+    movement: i === sorted.length - 1 ? "NEW" : "RENEWAL",
+    current: i === 0,
+  }));
+  const movements: PolicyMovement[] = sorted.map((per, i) => ({
+    id: `MOV-${per.id}`,
+    date: per.effectDate,
+    type: i === sorted.length - 1 ? "NEW" : "RENEWAL",
+    description:
+      i === sorted.length - 1
+        ? `Policy placed with ${per.insurerName}`
+        : `Renewed for ${formatIsoRange(per.effectDate, per.expiryDate)}`,
+    by: "Recorded in the system",
+  }));
+
+  // Claims registered on any of this policy's cover periods.
+  let claims: ClientClaim[] = [];
+  try {
+    const periodIds = new Set(view.periods.map((per) => per.id));
+    const claimRes = await apiFetch(`/api/v1/clients/${view.clientId}/claims?size=100`);
+    if (claimRes.ok) {
+      const items = ((await claimRes.json()) as Page<ClaimView>).items ?? [];
+      claims = items
+        .filter((c) => periodIds.has(c.policyPeriodId))
+        .map((c) => {
+          const per = view.periods.find((x) => x.id === c.policyPeriodId);
+          const period: PolicyPeriodDetail | null = per
+            ? { id: per.id, policyId: view.id, insurerName: per.insurerName, productName: per.productName, externalPolicyNumber: per.externalPolicyNumber, effectDate: per.effectDate, expiryDate: per.expiryDate }
+            : null;
+          return toClaimSummary(rememberClaim(toClaim(c, clientRef, clientName, period)));
+        });
+    }
+  } catch (err) {
+    console.warn("Could not load the claims on this policy:", err);
+  }
+
+  return { policy, clientId: clientRef, client: clientName, financials, periods, movements, claims };
+}
+
+export async function getPolicyDetail(policyId: string, policyUuid?: string): Promise<PolicyDetail | null> {
+  if (!MOCK_AUTH) {
+    const backend = await getBackendPolicyDetail(policyId, policyUuid);
+    if (backend) return backend;
+  }
   const client = allKnownClients().find((c) => c.policies.some((p) => sameText(p.id, policyId)));
   if (!client) return null;
   const policy = client.policies.find((p) => sameText(p.id, policyId))!;
@@ -1080,7 +1964,8 @@ const LOCAL_FILES = new Map<string, Blob>();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function usesDocumentBackend(subject: DocumentSubject) {
-  return !MOCK_AUTH && subject.type === "CLIENT" && UUID_PATTERN.test(subject.id);
+  // The backend accepts documents for clients and claims so far.
+  return !MOCK_AUTH && (subject.type === "CLIENT" || subject.type === "CLAIM") && UUID_PATTERN.test(subject.id);
 }
 
 function subjectKey(subject: DocumentSubject) {
@@ -1139,7 +2024,37 @@ export async function listDocuments(subject: DocumentSubject): Promise<StoredDoc
   const params = new URLSearchParams({ subjectType: subject.type, subjectId: subject.id, size: "100" });
   const res = await apiFetch(`/api/v1/documents?${params}`);
   if (!res.ok) throw new Error(await documentError(res, "Could not load the documents."));
-  return groupVersions(((await res.json()) as { items: BackendDocumentItem[] }).items ?? []);
+  const docs = groupVersions(((await res.json()) as { items: BackendDocumentItem[] }).items ?? []);
+  // The list only returns the newest version of each file. For files that
+  // were replaced, ask for their full version history (DOC-03).
+  return mapLimited(docs, 4, async (doc) => {
+    if (doc.version <= 1 || doc.previous.length >= doc.version - 1) return doc;
+    const previous = await loadDocumentVersions(subject, doc).catch(() => null);
+    return previous ? { ...doc, previous } : doc;
+  });
+}
+
+type BackendDocumentVersion = {
+  version: number;
+  fileName: string;
+  uploadedAt: string;
+};
+
+/** Earlier versions of a document, newest first, from GET /documents/{id}/versions. */
+async function loadDocumentVersions(subject: DocumentSubject, doc: StoredDocument): Promise<StoredDocument["previous"]> {
+  const params = new URLSearchParams({
+    subjectType: subject.type,
+    subjectId: subject.id,
+    purpose: doc.purpose,
+    size: "100",
+  });
+  const res = await apiFetch(`/api/v1/documents/${doc.id}/versions?${params}`);
+  if (!res.ok) throw new Error(await documentError(res, "Could not load the earlier versions."));
+  const items = ((await res.json()) as { items?: BackendDocumentVersion[] }).items ?? [];
+  return items
+    .filter((v) => v.version !== doc.version)
+    .sort((a, b) => b.version - a.version)
+    .map((v) => ({ version: v.version, originalFileName: v.fileName, uploadedAt: v.uploadedAt }));
 }
 
 export type UploadOptions = { classification: DocumentClassification; purpose: string };
@@ -1147,6 +2062,15 @@ export type UploadOptions = { classification: DocumentClassification; purpose: s
 export async function uploadDocument(subject: DocumentSubject, file: File, options: UploadOptions): Promise<StoredDocument> {
   const problem = documentProblem(file);
   if (problem) throw new Error(problem);
+
+  // Evidence for a backend approval is filed on the record being approved, so the decision can pin it.
+  const approvalSubject = subject.type === "APPROVAL" ? BACKEND_APPROVAL_SUBJECTS.get(subject.id) : undefined;
+  if (approvalSubject) {
+    return uploadDocument({ type: approvalSubject.type as DocumentSubject["type"], id: approvalSubject.id }, file, {
+      classification: "APPROVAL_EVIDENCE",
+      purpose: approvalSubject.purpose,
+    });
+  }
 
   if (!usesDocumentBackend(subject)) {
     const doc: StoredDocument = {
@@ -1506,6 +2430,9 @@ export async function updateRole(
 // at least 3 quotes unless justified, written acceptance before placement.
 
 function findOnboarding(id: string): OnboardingCase {
+  if (BACKEND_LEADS.has(id)) {
+    throw new Error("Saving steps for this lead to GRAL's system is not connected yet. It comes in the next update.");
+  }
   const found = ONBOARDING_CASES.find((c) => c.id === id);
   if (!found) throw new Error("This onboarding case could not be found.");
   return found;
@@ -1527,12 +2454,150 @@ function finishStep(c: OnboardingCase, code: OnboardingStepCode, input: { note: 
   );
 }
 
+/* -------------------------- Leads on the backend (ONB-01) -------------------------- */
+// The backend keeps a lead (the prospect) and, under it, one onboarding case per
+// policy track. The screens show one card per lead, so the two are combined:
+// steps 1 and 2 come from the lead, steps 3 to 11 from its furthest track,
+// whose milestones carry the SOP step number as "stage".
+
+type LeadView = {
+  id: string;
+  name: string;
+  type: string; // CORPORATE | INDIVIDUAL
+  industry: string;
+  source: string;
+  contactName: string;
+  email?: string;
+  phone?: string;
+  ownerId?: string;
+  clientId?: string;
+  status: string;
+  version: number;
+  receivedAt?: string;
+  registeredAt?: string;
+  updatedAt?: string;
+  assessed?: boolean;
+  assessment?: { meetingAt?: string };
+  blockers?: string[];
+};
+
+type OnboardingTrackView = {
+  id: string;
+  leadId: string;
+  stage: number;
+  status: string;
+  milestones?: { code: string; stage: number; dueAt?: string; status: string }[];
+  availableActions?: string[];
+  blockers?: string[];
+};
+
+/** Short references shown on screen (LD-1A2B3C4D), mapped to the backend UUID. */
+const LEAD_INDEX = new Map<string, string>();
+/** References of leads that live on the backend, so sample-only actions can refuse them. */
+const BACKEND_LEADS = new Set<string>();
+/** Milestone states that count as finished. To confirm with Toochukwu. */
+const DONE_MILESTONE = ["COMPLETED", "COMPLETE", "DONE", "SATISFIED", "SKIPPED", "NOT_APPLICABLE", "APPROVED"];
+
+function leadRef(id: string) {
+  return `LD-${id.slice(0, 8).toUpperCase()}`;
+}
+
+async function onboardingProblem(res: Response, fallback: string): Promise<string> {
+  const problem = await readProblem(res);
+  if (res.status === 401) return "Your session has ended. Please sign in again.";
+  if (res.status === 403) return "You do not have permission to do this on leads.";
+  if (res.status === 404) return "This lead could not be found.";
+  if (res.status === 409) return "Someone else changed this lead. Refresh the page and try again.";
+  if (res.status === 400 && problem.fields?.length) return `Please check these fields: ${problem.fields.join(", ")}.`;
+  if (problem.title && problem.title !== "Bad Request") return problem.title;
+  return fallback;
+}
+
+function leadToCase(lead: LeadView, tracks: OnboardingTrackView[], managers: ManagerChoice[]): OnboardingCase {
+  const ref = leadRef(lead.id);
+  LEAD_INDEX.set(ref, lead.id);
+  BACKEND_LEADS.add(ref);
+  const owner = lead.ownerId ? managerName(lead.ownerId, managers) : "Not assigned yet";
+  const createdAt = (lead.registeredAt ?? lead.receivedAt ?? new Date().toISOString()).slice(0, 10);
+
+  // Which SOP steps are finished, by step number.
+  const done = new Map<number, { at: string; note: string }>();
+  done.set(1, { at: createdAt, note: `Lead registered (${lead.source})` });
+  if (lead.assessed) {
+    done.set(2, { at: (lead.assessment?.meetingAt ?? lead.updatedAt ?? createdAt).slice(0, 10), note: "Needs assessment recorded" });
+  }
+  const track = [...tracks].sort((a, b) => b.stage - a.stage)[0];
+  for (const m of track?.milestones ?? []) {
+    if (m.stage > 2 && DONE_MILESTONE.includes(m.status.toUpperCase())) {
+      done.set(m.stage, { at: (m.dueAt ?? createdAt).slice(0, 10), note: `${m.code.replace(/_/g, " ").toLowerCase()} recorded` });
+    }
+  }
+  // The screens read the current step as the first unfinished one, so keep
+  // only the unbroken run of finished steps from step 1.
+  const completed: OnboardingStepRecord[] = [];
+  for (const step of ONBOARDING_STEPS) {
+    const d = done.get(step.n);
+    if (!d) break;
+    completed.push({ code: step.code, completedAt: d.at, completedBy: "Recorded in GRAL's system", note: d.note });
+  }
+
+  // The lead form only registers companies; INDIVIDUAL leads show as Corporate for now.
+  const type: ClientType = "Corporate";
+  return {
+    id: ref,
+    prospect: {
+      name: lead.name,
+      type,
+      sector: lead.industry,
+      address: "",
+      contact: { name: lead.contactName, title: "", email: lead.email ?? "", phone: lead.phone ?? "" },
+      referralSource: lead.source,
+    },
+    accountExecutive: owner,
+    registeredBy: "Recorded in GRAL's system",
+    createdAt,
+    completed,
+    kyc: { items: checklistFor(type) },
+    quotes: [],
+    history: [{ at: createdAt, by: "GRAL's system", text: `Lead registered (${lead.source})` }],
+  };
+}
+
+async function listBackendLeads(): Promise<OnboardingCase[]> {
+  const [leadsRes, tracksRes, managers] = await Promise.all([
+    apiFetch("/api/v1/leads?size=100"),
+    apiFetch("/api/v1/onboarding-cases?size=100").catch(() => null),
+    loadManagers(),
+  ]);
+  if (!leadsRes.ok) throw new Error(await onboardingProblem(leadsRes, "Could not load the leads."));
+  const leads = ((await leadsRes.json()) as Page<LeadView>).items ?? [];
+  const tracks = tracksRes?.ok ? (((await tracksRes.json()) as Page<OnboardingTrackView>).items ?? []) : [];
+  return leads.map((lead) => leadToCase(lead, tracks.filter((t) => t.leadId === lead.id), managers));
+}
+
 export async function listOnboarding(): Promise<OnboardingCase[]> {
-  return [...ONBOARDING_CASES];
+  if (MOCK_AUTH) return [...ONBOARDING_CASES];
+  return listBackendLeads();
 }
 
 export async function getOnboarding(id: string): Promise<OnboardingCase | null> {
-  return ONBOARDING_CASES.find((c) => c.id === id) ?? null;
+  if (MOCK_AUTH) return ONBOARDING_CASES.find((c) => c.id === id) ?? null;
+  let uuid = UUID_PATTERN.test(id) ? id : LEAD_INDEX.get(id.toUpperCase());
+  if (!uuid) {
+    await listBackendLeads();
+    uuid = LEAD_INDEX.get(id.toUpperCase());
+  }
+  if (!uuid) return null;
+  const [leadRes, tracksRes, managers] = await Promise.all([
+    apiFetch(`/api/v1/leads/${uuid}`),
+    apiFetch(`/api/v1/leads/${uuid}/onboarding-cases?size=50`).catch(() => null),
+    loadManagers(),
+  ]);
+  if (leadRes.status === 404) return null;
+  if (!leadRes.ok) throw new Error(await onboardingProblem(leadRes, "Could not load this lead."));
+  const lead = (await leadRes.json()) as LeadView;
+  const tracks = tracksRes?.ok ? (((await tracksRes.json()) as Page<OnboardingTrackView>).items ?? []) : [];
+  return leadToCase(lead, tracks, managers);
 }
 
 export type NewLeadInput = {
@@ -1547,6 +2612,7 @@ export type NewLeadInput = {
 
 /** Step 1: register the lead. The KYC checklist for the client type is created with it. */
 export async function createLead(input: NewLeadInput, by: string): Promise<OnboardingCase> {
+  if (!MOCK_AUTH) return createBackendLead(input);
   const name = input.name.trim();
   if (ONBOARDING_CASES.some((c) => sameText(c.prospect.name, name)) || allKnownClients().some((c) => sameText(c.name, name))) {
     throw new Error("A client or lead with this name already exists.");
@@ -1572,6 +2638,53 @@ export async function createLead(input: NewLeadInput, by: string): Promise<Onboa
     history: [{ at: todayIso(), by, text: "Lead registered" }],
   };
   ONBOARDING_CASES.unshift(created);
+  return created;
+}
+
+/**
+ * Step 1 on the backend: register the lead, then assign the Accounts Executive.
+ * The address and the contact's job title are recorded later, when the lead
+ * becomes a prospect client, so they are not sent here.
+ */
+async function createBackendLead(input: NewLeadInput): Promise<OnboardingCase> {
+  const name = input.name.trim();
+  const existing = await listBackendLeads().catch(() => [] as OnboardingCase[]);
+  if (existing.some((c) => sameText(c.prospect.name, name))) {
+    throw new Error("A lead with this name already exists.");
+  }
+
+  const body: Record<string, unknown> = {
+    commandId: crypto.randomUUID(),
+    name,
+    type: "CORPORATE",
+    industry: input.sector,
+    source: input.referralSource,
+    contactName: input.contact.name,
+    receivedAt: new Date().toISOString(),
+  };
+  if (input.contact.email) body.email = input.contact.email;
+  if (input.contact.phone) body.phone = input.contact.phone;
+
+  const res = await apiFetch("/api/v1/leads", { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(await onboardingProblem(res, "Could not register the lead. Please try again."));
+  let lead = (await res.json()) as LeadView;
+
+  // Assign the chosen Accounts Executive. The lead is already saved, so a
+  // failure here is reported on the lead instead of undoing the registration.
+  const managers = await loadManagers();
+  const owner = managers.find((m) => sameText(m.fullName, input.accountExecutive));
+  let note = "";
+  if (owner && owner.id !== lead.ownerId) {
+    const assigned = await apiFetch(`/api/v1/leads/${lead.id}/assignment`, {
+      method: "POST",
+      body: JSON.stringify({ command: { commandId: crypto.randomUUID(), expectedVersion: lead.version }, ownerId: owner.id }),
+    });
+    if (assigned.ok) lead = (await assigned.json()) as LeadView;
+    else note = `The Accounts Executive could not be assigned: ${await onboardingProblem(assigned, "please assign them from the lead.")}`;
+  }
+
+  const created = leadToCase(lead, [], managers);
+  if (note) created.history.push({ at: todayIso(), by: "GRAL's system", text: note });
   return created;
 }
 
@@ -1935,8 +3048,146 @@ function requireOpen(c: Claim) {
   if (isClosed(c)) throw new Error("This claim is closed.");
 }
 
+/* ----------------------------- Claims on the backend ----------------------------- */
+// Connected: GET /clients/{id}/claims, GET /policy-periods/{id} and POST /claims
+// (claim step 1, Register). The backend stores the client, policy period, date
+// of loss, description and estimated amount. Priority, handler, report date and
+// the later steps (documents, submission, follow-ups, settlement) are not on the
+// backend yet, so they are kept in this browser tab until refresh, like the
+// sample claims.
+
+type ClaimView = {
+  id: string;
+  reference: string;
+  clientId: string;
+  policyPeriodId: string;
+  lossDate: string;
+  description: string;
+  estimatedAmount: number;
+  currency: string;
+  ownerId?: string;
+  state: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type PolicyPeriodDetail = {
+  id: string;
+  policyId: string;
+  insurerName: string;
+  productName: string;
+  externalPolicyNumber: string;
+  effectDate: string;
+  expiryDate: string;
+};
+
+/** Details typed in this tab that the backend does not store yet, by claim UUID. */
+const LOCAL_CLAIM_DETAILS = new Map<string, Pick<Claim, "priority" | "handler" | "dateReported">>();
+
+/** Policy periods already loaded, by period UUID. */
+const PERIOD_CACHE = new Map<string, PolicyPeriodDetail | null>();
+
+async function loadPeriod(periodId: string): Promise<PolicyPeriodDetail | null> {
+  if (PERIOD_CACHE.has(periodId)) return PERIOD_CACHE.get(periodId)!;
+  try {
+    const res = await apiFetch(`/api/v1/policy-periods/${periodId}`);
+    const period = res.ok ? ((await res.json()) as PolicyPeriodDetail) : null;
+    PERIOD_CACHE.set(periodId, period);
+    return period;
+  } catch {
+    return null;
+  }
+}
+
+async function claimProblem(res: Response, fallback: string): Promise<string> {
+  const problem = await readProblem(res);
+  if (res.status === 401) return "Your session has ended. Please sign in again.";
+  if (res.status === 403) return "You do not have permission to register claims for this client.";
+  if (res.status === 404) return "This client or policy could not be found.";
+  if (res.status === 400 && problem.fields?.length) return `Please check these fields: ${problem.fields.join(", ")}.`;
+  if (problem.title) return problem.title;
+  return fallback;
+}
+
+function standardClaimDocuments(): Claim["documents"] {
+  return [
+    { name: "Notification of loss", required: true },
+    { name: "Supporting report (police, fire or medical)", required: true },
+    { name: "Repair or replacement quotation", required: true },
+  ];
+}
+
+/** Turns a backend claim into the shape the screens use. */
+function toClaim(v: ClaimView, clientRef: string, clientName: string, period: PolicyPeriodDetail | null): Claim {
+  const created = v.createdAt.slice(0, 10);
+  const local = LOCAL_CLAIM_DETAILS.get(v.id);
+  // Work done in this tab on the same claim (documents, steps, notes) is kept.
+  const existing = CLAIMS.find((c) => c.uuid === v.id);
+  return {
+    ...(existing ?? {
+      step: "REGISTER" as const,
+      stepStartedAt: created,
+      documents: standardClaimDocuments(),
+      followUps: [],
+      notes: [],
+      history: [{ at: created, by: "Backend", text: "Claim registered" }],
+    }),
+    id: v.reference,
+    uuid: v.id,
+    version: v.version,
+    clientId: clientRef,
+    client: clientName,
+    policyId: period?.externalPolicyNumber || undefined,
+    policyPeriodId: v.policyPeriodId,
+    classOfInsurance: period?.productName ?? "",
+    insurer: period?.insurerName ?? "",
+    dateOfLoss: v.lossDate,
+    dateReported: local?.dateReported ?? existing?.dateReported ?? created,
+    amount: Number(v.estimatedAmount),
+    currency: v.currency,
+    priority: local?.priority ?? existing?.priority ?? "P2",
+    handler: local?.handler ?? existing?.handler ?? "Not assigned",
+    description: v.description,
+  };
+}
+
+/** Adds or replaces a backend claim in the in-memory list, so the claim steps can work on it. */
+function rememberClaim(claim: Claim): Claim {
+  const index = CLAIMS.findIndex((c) => c.uuid === claim.uuid || c.id === claim.id);
+  if (index >= 0) CLAIMS[index] = claim;
+  else CLAIMS.unshift(claim);
+  return claim;
+}
+
+/** Claims on the backend, loaded client by client (4 at a time). */
+async function listBackendClaims(): Promise<Claim[]> {
+  let clients: Client[];
+  try {
+    clients = (await listClientChoices()).filter((c) => c.uuid);
+  } catch (err) {
+    console.warn("Could not load clients for the claims list:", err);
+    return [];
+  }
+  const perClient = await mapLimited(clients, 4, async (client) => {
+    try {
+      const res = await apiFetch(`/api/v1/clients/${client.uuid}/claims?size=100`);
+      if (!res.ok) return [];
+      const views = ((await res.json()) as Page<ClaimView>).items ?? [];
+      return await mapLimited(views, 4, async (v) =>
+        rememberClaim(toClaim(v, client.id, client.name, await loadPeriod(v.policyPeriodId))),
+      );
+    } catch (err) {
+      console.warn(`Could not load claims for ${client.id}:`, err);
+      return [];
+    }
+  });
+  return perClient.flat().sort((a, b) => b.dateReported.localeCompare(a.dateReported));
+}
+
 export async function listClaims(): Promise<Claim[]> {
-  return [...CLAIMS];
+  if (MOCK_AUTH) return [...CLAIMS];
+  return listBackendClaims();
 }
 
 export type NewClaimInput = {
@@ -1951,12 +3202,39 @@ export type NewClaimInput = {
   priority: ClaimPriority;
   handler: string;
   description: string;
+  /** Backend policy period. Required for backend clients: a claim must sit on a policy. */
+  policyPeriodId?: string;
 };
 
 /** Register a claim (step 1). Standard documents are added as the checklist. */
 export async function createClaim(input: NewClaimInput, by: string): Promise<Claim> {
   if (input.dateOfLoss > todayIso()) throw new Error("The date of loss cannot be in the future.");
   if (input.dateReported < input.dateOfLoss) throw new Error("The claim cannot be reported before the loss happened.");
+
+  const backendClient = !MOCK_AUTH ? CLIENT_CACHE.get(input.clientId) : undefined;
+  if (backendClient?.uuid) {
+    if (!input.policyPeriodId) throw new Error("Choose the policy this claim is on.");
+    const res = await apiFetch("/api/v1/claims", {
+      method: "POST",
+      body: JSON.stringify({
+        clientId: backendClient.uuid,
+        policyPeriodId: input.policyPeriodId,
+        lossDate: input.dateOfLoss,
+        description: input.description,
+        estimatedAmount: input.amount,
+        currency: "RWF",
+      }),
+    });
+    if (!res.ok) throw new Error(await claimProblem(res, "Could not register the claim. Please try again."));
+    const view = (await res.json()) as ClaimView;
+    LOCAL_CLAIM_DETAILS.set(view.id, {
+      priority: input.priority,
+      handler: input.handler,
+      dateReported: input.dateReported,
+    });
+    const claim = toClaim(view, backendClient.id, backendClient.name, await loadPeriod(view.policyPeriodId));
+    return rememberClaim({ ...claim, history: [{ at: todayIso(), by, text: "Claim registered" }] });
+  }
   const year = new Date().getFullYear();
   const highest = CLAIMS.reduce((max, c) => Math.max(max, Number(c.id.split("-").at(-1)) || 0), 0);
   const claim: Claim = {
@@ -2247,7 +3525,7 @@ function toSessionUser(me: MeResponse): SessionUser {
   // Roles this app does not know yet (e.g. a custom role made in Admin) sign in
   // as "Staff": their menus then follow their backend permissions only.
   const role = toFrontendRole(me.roles ?? []) ?? "Staff";
-  return {
+  CURRENT_USER = {
     id: me.id,
     email: me.email,
     name: me.fullName,
@@ -2255,6 +3533,7 @@ function toSessionUser(me: MeResponse): SessionUser {
     backendRoles: me.roles ?? [],
     permissions: me.permissions ?? [],
   };
+  return CURRENT_USER;
 }
 
 /**

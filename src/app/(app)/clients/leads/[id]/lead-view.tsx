@@ -8,12 +8,28 @@ import type { OnboardingCase } from "@/lib/types";
 
 export function LeadView({ caseId }: { caseId: string }) {
   const [value, setValue] = useState<OnboardingCase | null | undefined>(undefined);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const reload = useCallback(() => {
-    getOnboarding(caseId).then(setValue);
+    getOnboarding(caseId)
+      .then((c) => {
+        setValue(c);
+        setLoadError(null);
+      })
+      .catch((err) => setLoadError(err instanceof Error ? err.message : "Could not load this lead."));
   }, [caseId]);
   useEffect(reload, [reload]);
 
+  if (loadError) {
+    return (
+      <p className="text-sm text-danger">
+        {loadError}{" "}
+        <button type="button" onClick={reload} className="text-primary underline underline-offset-2">
+          Try again
+        </button>
+      </p>
+    );
+  }
   if (value === undefined) return <p className="text-sm text-muted-foreground">Loading lead…</p>;
   if (value === null) {
     return (

@@ -11,7 +11,8 @@ import { toast } from "sonner";
 import { SlideOver } from "@/components/gral/shell";
 import { NavyButton, OutlineButton } from "@/components/gral/ui";
 import { createClient, listManagers, updateClient, type ClientInput } from "@/lib/api";
-import type { Client, ClientType, Role } from "@/lib/types";
+import { clientEditPermissions } from "@/lib/permissions";
+import type { Client, ClientType, Role, SessionUser } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /** Client types from the requirements document, plus SME which the existing records use. */
@@ -23,9 +24,17 @@ export const CLIENT_FORM_TYPES: ClientType[] = [
   "SME",
 ];
 
-/** Requirements doc, section 2: the MD and the Commercial Director can add and update clients. */
-export function canManageClients(role: Role): boolean {
-  return role === "MD" || role === "Commercial Director" || role === "Accounts Executive" || role === "CRM Manager";
+/**
+ * Whether to show the Add Client button.
+ * Pass the signed-in user: with the backend it follows CLIENT_CREATE, and in
+ * demo mode it uses the role rule (MD, Commercial Director, Accounts
+ * Executive and CRM Manager). Passing only a role uses the role rule.
+ */
+export function canManageClients(who: Role | SessionUser): boolean {
+  if (typeof who === "string") {
+    return who === "MD" || who === "Commercial Director" || who === "Accounts Executive" || who === "CRM Manager";
+  }
+  return clientEditPermissions(who).canAddClient;
 }
 
 type FormValues = {

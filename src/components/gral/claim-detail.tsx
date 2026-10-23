@@ -592,7 +592,8 @@ function DocumentsTab({ claim, canUpdate, userName, run }: { claim: Claim; canUp
   // Bumped after a checklist upload so the file list below reloads.
   const [refresh, setRefresh] = useState(0);
   const editable = canUpdate && !isClosed(claim);
-  const subject = { type: "CLAIM" as const, id: claim.id };
+  // Backend claims upload to the backend by their UUID; sample claims stay in this tab.
+  const subject = { type: "CLAIM" as const, id: claim.uuid ?? claim.id };
 
   async function receive(name: string, file: File) {
     try {
@@ -647,7 +648,7 @@ function DocumentsTab({ claim, canUpdate, userName, run }: { claim: Claim; canUp
           purpose="CLAIM_DOCUMENT"
           canUpload={editable}
           title="Claim Files"
-          emptyText="No files uploaded yet. Files stay in this tab until the claims API accepts documents."
+          emptyText={claim.uuid ? "No files uploaded yet." : "No files uploaded yet. Files on sample claims stay in this tab."}
         />
       </div>
     </div>

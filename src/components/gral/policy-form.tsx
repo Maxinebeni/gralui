@@ -1,20 +1,22 @@
 "use client";
-
+ 
 // Add / Edit Policy form (task 18). Shown inside the Policies tab of the
 // client file. Fields follow the requirements document, section 4, Section B.
-// The insurer and class dropdowns use GRAL's official list (lib/reference-data.ts).
-
-import { useState } from "react";
+// The insurer and class dropdowns come from the backend catalog when it is
+// available, otherwise from GRAL's official list (lib/reference-data.ts). Once
+// an insurer is chosen, the class list shows only the products it offers.
+ 
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { NavyButton, OutlineButton } from "./ui";
 import { Field, Section, describedBy, inputClass } from "./client-form";
 import { AmountInput } from "./amount-input";
 import { ReviewDialog } from "./review-dialog";
 import { groupDigits, policyAmountWarnings } from "@/lib/amounts";
-import { createPolicy, updatePolicy, type PolicyInput } from "@/lib/api";
-import { CLASSES_OF_INSURANCE, INSURERS, INSURER_GROUPS, PRODUCT_GROUPS, type OptionGroup } from "@/lib/reference-data";
+import { createPolicy, getPolicyCatalog, productsForInsurer, updatePolicy, type PolicyCatalog, type PolicyInput } from "@/lib/api";
+import { INSURER_GROUPS, PRODUCT_GROUPS, type OptionGroup } from "@/lib/reference-data";
 import { POLICY_STATUSES, type Client, type Policy, type PolicyStatus } from "@/lib/types";
-
+ 
 type FormValues = {
   id: string;
   classOfInsurance: string;
@@ -28,9 +30,9 @@ type FormValues = {
   renewal: string;
   status: PolicyStatus | "";
 };
-
+ 
 type Errors = Partial<Record<keyof FormValues, string>>;
-
+ 
 const EMPTY: FormValues = {
   id: "",
   classOfInsurance: "",
@@ -44,7 +46,7 @@ const EMPTY: FormValues = {
   renewal: "",
   status: "Active",
 };
-
+ 
 /** "12 Mar 2026" style text to the yyyy-mm-dd a date box needs. Empty if it cannot be read. */
 function toInputDate(text: string): string {
   const d = new Date(text);
@@ -53,7 +55,7 @@ function toInputDate(text: string): string {
   const dd = String(d.getDate()).padStart(2, "0");
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
-
+ 
 /** yyyy-mm-dd from a date box to the "12 Mar 2026" style used across the app. */
 function toDisplayDate(value: string): string {
   const [y, m, d] = value.split("-").map(Number);
@@ -63,14 +65,15 @@ function toDisplayDate(value: string): string {
     year: "numeric",
   });
 }
-
+ 
 function fromPolicy(p: Policy): FormValues {
   return {
     id: p.id,
     classOfInsurance: p.classOfInsurance,
     insurer: p.insurer,
-    sumInsured: p.sumInsured === undefined ? "" : groupDigits(String(p.sumInsured)),
-    premium: p.premium === undefined ? "" : groupDigits(String(p.premium)),
+    // 0 means "not recorded yet", so start with an empty box.
+    sumInsured: p.sumInsured ? groupDigits(String(p.sumInsured)) : "",
+    premium: p.premium ? groupDigits(String(p.premium)) : "",
     netPremium: p.netPremium === undefined ? "" : groupDigits(String(p.netPremium)),
     amountPaid: p.amountPaid === undefined ? "" : groupDigits(String(p.amountPaid)),
     commissionRate: p.commissionRate === undefined ? "" : String(+(p.commissionRate * 100).toFixed(2)),
@@ -79,23 +82,27 @@ function fromPolicy(p: Policy): FormValues {
     status: p.status,
   };
 }
-
+ 
 /** Turns "1,500,000" or "1500000" into a number. NaN if it is not a number. */
 function toAmount(text: string): number {
   const cleaned = text.replace(/[,\s]/g, "");
   return cleaned === "" ? Number.NaN : Number(cleaned);
 }
-
-function validate(v: FormValues, allowed: { classes: string[]; insurers: string[] }): Errors {
+ 
+function validate(
+  v: FormValues,
+  allowed: { classes: string[]; insurers: string[] },
+  numberGenerated = false,
+): Errors {
   const e: Errors = {};
-  if (!v.id.trim()) e.id = "Enter the policy number issued by the insurer.";
+  if (!numberGenerated && !v.id.trim()) e.id = "Enter the policy number issued by the insurer.";
   if (!v.classOfInsurance) e.classOfInsurance = "Choose the class of insurance.";
   else if (!allowed.classes.includes(v.classOfInsurance)) {
     e.classOfInsurance = "Choose a class from GRAL's list.";
   }
   if (!v.insurer) e.insurer = "Choose the insurer.";
   else if (!allowed.insurers.includes(v.insurer)) e.insurer = "Choose an insurer from GRAL's list.";
-
+ 
   const sum = toAmount(v.sumInsured);
   const premium = toAmount(v.premium);
   if (!Number.isFinite(sum) || sum <= 0) e.sumInsured = "Enter the sum insured in RWF, numbers only.";
@@ -103,7 +110,7 @@ function validate(v: FormValues, allowed: { classes: string[]; insurers: string[
   if (!e.sumInsured && !e.premium && premium > sum) {
     e.premium = "The premium cannot be more than the sum insured.";
   }
-
+ 
   const net = toAmount(v.netPremium);
   const paid = toAmount(v.amountPaid);
   const rate = toAmount(v.commissionRate);
@@ -111,21 +118,29 @@ function validate(v: FormValues, allowed: { classes: string[]; insurers: string[
   else if (!e.premium && net > premium) e.netPremium = "The net premium cannot be more than the total premium.";
   if (!Number.isFinite(paid) || paid < 0) e.amountPaid = "Enter the amount paid so far in RWF (0 if nothing yet).";
   if (!Number.isFinite(rate) || rate < 0 || rate > 100) e.commissionRate = "Enter the commission rate as a percentage, e.g. 15.";
-
+ 
   if (!v.start) e.start = "Choose the start date.";
   if (!v.renewal) e.renewal = "Choose the renewal date.";
   if (v.start && v.renewal && v.renewal <= v.start) e.renewal = "The renewal date must be after the start date.";
-
+ 
   if (!v.status) e.status = "Choose the status.";
   return e;
 }
-
-/** Adds a "Current value" group when an older record uses a name that is not on GRAL's list. */
-function withCurrentValue(groups: OptionGroup[], flat: string[], current?: string): OptionGroup[] {
-  if (!current || flat.includes(current)) return groups;
+ 
+/** Adds a "Current value" group when an older record uses a name that is not on the list. */
+function withCurrentValue(groups: OptionGroup[], current?: string): OptionGroup[] {
+  if (!current || groups.some((g) => g.options.includes(current))) return groups;
   return [{ label: "Current value (older name)", options: [current] }, ...groups];
 }
-
+ 
+/** Keeps only the products the chosen insurer offers. null means "show all". */
+function onlyOffered(groups: OptionGroup[], offered: string[] | null): OptionGroup[] {
+  if (!offered) return groups;
+  return groups
+    .map((g) => ({ ...g, options: g.options.filter((o) => offered.includes(o)) }))
+    .filter((g) => g.options.length > 0);
+}
+ 
 export function PolicyForm({
   client,
   policy,
@@ -142,30 +157,63 @@ export function PolicyForm({
   const [values, setValues] = useState<FormValues>(policy ? fromPolicy(policy) : EMPTY);
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState(false);
+ 
+  const [catalog, setCatalog] = useState<PolicyCatalog>({
+    insurerGroups: INSURER_GROUPS,
+    productGroups: PRODUCT_GROUPS,
+    fromBackend: false,
+  });
+  // Products the chosen insurer offers. null: not known, so every product is shown.
+  const [offered, setOffered] = useState<string[] | null>(null);
+ 
+  useEffect(() => {
+    let cancelled = false;
+    getPolicyCatalog().then((c) => {
+      if (!cancelled) setCatalog(c);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+ 
+  useEffect(() => {
+    let cancelled = false;
+    setOffered(null);
+    if (!values.insurer) return;
+    productsForInsurer(values.insurer).then((list) => {
+      if (!cancelled) setOffered(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [values.insurer]);
+ 
+  const insurerGroups = withCurrentValue(catalog.insurerGroups, policy?.insurer);
+  const classGroups = withCurrentValue(onlyOffered(catalog.productGroups, offered), policy?.classOfInsurance);
+  const noProductsForInsurer = offered !== null && offered.length === 0;
+  // For new policies on GRAL's system, the backend generates the policy number.
+  const numberGenerated = catalog.fromBackend && !policy;
   // Set once the form is valid: the figures to check before saving.
   const [review, setReview] = useState<{ input: PolicyInput; warnings: string[] } | null>(null);
-
-  const classGroups = withCurrentValue(PRODUCT_GROUPS, CLASSES_OF_INSURANCE, policy?.classOfInsurance);
-  const insurerGroups = withCurrentValue(INSURER_GROUPS, INSURERS, policy?.insurer);
   const allowed = {
     classes: classGroups.flatMap((g) => g.options),
     insurers: insurerGroups.flatMap((g) => g.options),
   };
-
+ 
   function set<K extends keyof FormValues>(key: K, value: FormValues[K]) {
     setValues((v) => ({ ...v, [key]: value }));
     setErrors((e) => ({ ...e, [key]: undefined }));
   }
-
+ 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const found = validate(values, allowed);
+    const found = validate(values, allowed, numberGenerated);
     setErrors(found);
     if (Object.keys(found).length > 0) {
       toast.error("Please fix the highlighted fields.");
       return;
     }
-
+ 
     const input: PolicyInput = {
       id: values.id.trim().toUpperCase(),
       classOfInsurance: values.classOfInsurance,
@@ -200,7 +248,7 @@ export function PolicyForm({
       const updated = policy
         ? await updatePolicy(client.id, policy.id, input)
         : await createPolicy(client.id, input);
-      toast.success(policy ? `Policy ${input.id} updated.` : `Policy ${input.id} added to ${client.name}.`);
+      toast.success(policy ? `Policy ${input.id} updated.` : input.id ? `Policy ${input.id} added to ${client.name}.` : `Policy added to ${client.name}.`);
       setReview(null);
       onSaved(updated);
     } catch (err) {
@@ -211,7 +259,7 @@ export function PolicyForm({
       setSaving(false);
     }
   }
-
+ 
   return (
     <form onSubmit={handleSubmit} noValidate className="mt-4 rounded-2xl border border-border p-5">
       <h3 className="text-base font-semibold tracking-tight">
@@ -220,17 +268,40 @@ export function PolicyForm({
       <p className="mt-1 text-xs text-muted-foreground">
         All fields are required. Amounts are in RWF. Balance and commission are worked out automatically.
       </p>
-
+      {catalog.fromBackend ? (
+        <p className="mt-2 rounded-xl bg-pale px-3 py-2 text-[11px] text-muted-foreground">
+          {policy
+            ? "The policy number, insurer, class and dates cannot be changed here. Premium and payment changes are saved to GRAL's system with their history."
+            : "GRAL's system gives the policy its number when you save. The sum insured and status stay on this screen until the system can store them."}
+        </p>
+      ) : null}
+ 
       <div className="mt-4 space-y-6">
         <Section title="Policy details">
-          <Field id="policyId" label="Policy number" error={errors.id} wide>
-            <input
-              id="policyId"
-              value={values.id}
-              onChange={(e) => set("id", e.target.value)}
-              placeholder="As issued by the insurer, e.g. POL/2026/0001"
-              className={inputClass(errors.id)}
-              {...describedBy("policyId", errors.id)}
+          {numberGenerated ? null : (
+            <Field id="policyId" label="Policy number" error={errors.id} wide>
+              <input
+                id="policyId"
+                value={values.id}
+                onChange={(e) => set("id", e.target.value)}
+                placeholder="As issued by the insurer, e.g. POL/2026/0001"
+                readOnly={catalog.fromBackend}
+                className={inputClass(errors.id)}
+                {...describedBy("policyId", errors.id)}
+              />
+            </Field>
+          )}
+          <Field id="insurer" label="Insurer" error={errors.insurer} wide>
+            <GroupedSelect
+              id="insurer"
+              value={values.insurer}
+              onChange={(v) => {
+                set("insurer", v);
+                set("classOfInsurance", "");
+              }}
+              placeholder="Select an insurer"
+              groups={insurerGroups}
+              error={errors.insurer}
             />
           </Field>
           <Field id="classOfInsurance" label="Class of insurance" error={errors.classOfInsurance} wide>
@@ -238,23 +309,18 @@ export function PolicyForm({
               id="classOfInsurance"
               value={values.classOfInsurance}
               onChange={(v) => set("classOfInsurance", v)}
-              placeholder="Select a class"
+              placeholder={values.insurer ? "Select a class" : "Choose the insurer first"}
               groups={classGroups}
               error={errors.classOfInsurance}
             />
-          </Field>
-          <Field id="insurer" label="Insurer" error={errors.insurer} wide>
-            <GroupedSelect
-              id="insurer"
-              value={values.insurer}
-              onChange={(v) => set("insurer", v)}
-              placeholder="Select an insurer"
-              groups={insurerGroups}
-              error={errors.insurer}
-            />
+            {noProductsForInsurer ? (
+              <p className="mt-1.5 text-xs text-warning">
+                No classes are linked to this insurer in the catalog yet. Ask an administrator to link them.
+              </p>
+            ) : null}
           </Field>
         </Section>
-
+ 
         <Section title="Cover and premium">
           <Field id="sumInsured" label="Sum insured (RWF)" error={errors.sumInsured}>
             <AmountInput
@@ -308,7 +374,7 @@ export function PolicyForm({
             />
           </Field>
         </Section>
-
+ 
         <Section title="Dates and status">
           <Field id="start" label="Start date" error={errors.start}>
             <input
@@ -347,7 +413,7 @@ export function PolicyForm({
           </Field>
         </Section>
       </div>
-
+ 
       <div className="mt-6 flex justify-end gap-2">
         <OutlineButton onClick={onCancel} className="px-4 py-2 text-sm">
           Cancel
@@ -383,7 +449,7 @@ export function PolicyForm({
     </form>
   );
 }
-
+ 
 /** A dropdown with headings, for example "General (Non-Life) Insurance" and "Life Insurance". */
 function GroupedSelect({
   id,

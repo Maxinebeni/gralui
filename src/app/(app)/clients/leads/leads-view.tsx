@@ -36,16 +36,29 @@ type Tab = (typeof TABS)[number];
 export function LeadsView() {
   const router = useRouter();
   const { user } = useCurrentUser();
-  const { canRegisterLead } = onboardingPermissions(user.role);
+  const { canRegisterLead } = onboardingPermissions(user);
 
   const [cases, setCases] = useState<OnboardingCase[]>([]);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [tab, setTab] = useState<Tab>("In progress");
   const [newOpen, setNewOpen] = useState(false);
 
+  // null while loading; a message when the leads could not be loaded.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
   const reload = useCallback(() => {
-    listOnboarding().then(setCases);
-    listApprovals().then(setApprovals);
+    setLoading(true);
+    listOnboarding()
+      .then((list) => {
+        setCases(list);
+        setLoadError(null);
+      })
+      .catch((err) => setLoadError(err instanceof Error ? err.message : "Could not load the leads."))
+      .finally(() => setLoading(false));
+    listApprovals()
+      .then(setApprovals)
+      .catch(() => setApprovals([]));
   }, []);
   useEffect(reload, [reload]);
 
@@ -101,7 +114,16 @@ export function LeadsView() {
             {rows.map((c) => (
               <CaseCard key={c.id} value={c} />
             ))}
-            {rows.length === 0 ? <p className="text-xs text-muted-foreground">No leads in this view.</p> : null}
+            {loadError ? (
+              <p className="text-xs text-danger">
+                {loadError}{" "}
+                <button type="button" onClick={reload} className="text-primary underline underline-offset-2">
+                  Try again
+                </button>
+              </p>
+            ) : rows.length === 0 ? (
+              <p className="text-xs text-muted-foreground">{loading ? "Loading leads…" : "No leads in this view."}</p>
+            ) : null}
           </div>
         </FloatCard>
 

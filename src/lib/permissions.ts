@@ -179,6 +179,34 @@ export function claimPermissions(role: Role) {
   };
 }
 
+/**
+ * Who can add or edit clients and policies.
+ * With the backend these follow the user's permission codes:
+ *   Add Client    -> CLIENT_CREATE
+ *   Edit Client   -> CLIENT_UPDATE
+ *   Add Policy    -> POLICY_CREATE
+ *   Edit Policy   -> POLICY_UPDATE, or POLICY_CREATE until the backend has an edit permission
+ * In demo mode (sample logins with no permissions) the requirements doc rule
+ * stays: only the MD and the Commercial Director.
+ */
+export function clientEditPermissions(user: SessionUser) {
+  if (usesBackendPermissions(user)) {
+    return {
+      canAddClient: hasPermission(user, "CLIENT_CREATE"),
+      canEditClient: hasPermission(user, "CLIENT_UPDATE"),
+      canAddPolicy: hasPermission(user, "POLICY_CREATE"),
+      canEditPolicy: hasPermission(user, "POLICY_UPDATE") || hasPermission(user, "POLICY_CREATE"),
+    };
+  }
+  const demoManager = ["MD", "Commercial Director", "Accounts Executive", "CRM Manager"].includes(user.role);
+  return {
+    canAddClient: demoManager,
+    canEditClient: demoManager,
+    canAddPolicy: demoManager,
+    canEditPolicy: demoManager,
+  };
+}
+
 /** Fine-grained permissions used inside the client screens (from the design). */
 export function clientPermissions(role: Role) {
   return {
@@ -215,16 +243,19 @@ export function taskPermissions(role: Role) {
 }
 
 /**
- * Documents. With the backend, uploading needs DOCUMENT_UPLOAD (not granted to
- * any role yet — ask TC). In demo mode, everyone except the read-only
- * oversight roles may upload.
+ * Documents. With the backend, adding a new file needs DOCUMENT_UPLOAD and
+ * uploading a new version of an existing file needs DOCUMENT_REPLACE. In demo
+ * mode, everyone except the read-only oversight roles may do both.
  */
 export function documentPermissions(user: SessionUser) {
-  return {
-    canUpload: usesBackendPermissions(user)
-      ? hasPermission(user, "DOCUMENT_UPLOAD")
-      : user.role !== "Internal Audit Manager" && user.role !== "Finance Director",
-  };
+  if (usesBackendPermissions(user)) {
+    return {
+      canUpload: hasPermission(user, "DOCUMENT_UPLOAD"),
+      canReplace: hasPermission(user, "DOCUMENT_REPLACE") || hasPermission(user, "DOCUMENT_UPLOAD"),
+    };
+  }
+  const allowed = user.role !== "Internal Audit Manager" && user.role !== "Finance Director";
+  return { canUpload: allowed, canReplace: allowed };
 }
 
 /**
@@ -254,7 +285,17 @@ export function homePathFor(user: SessionUser) {
  * roles can only view. The KYC Approval Form and internal approval are
  * decided in Approvals, by the Risk & Compliance Manager and the TD / MD.
  */
-export function onboardingPermissions(role: Role) {
+export function onboardingPermissions(user: SessionUser) {
+  if (usesBackendPermissions(user)) {
+    // The backend gives each onboarding action its own permission. Any write
+    // permission on leads, onboarding or KYC lets the user work on a lead;
+    // the server still checks each action.
+    const writes = (user.permissions ?? []).filter(
+      (p) => /^(LEAD|ONBOARDING|KYC)_/.test(p) && !p.endsWith("_READ"),
+    );
+    return { canUpdate: writes.length > 0, canRegisterLead: hasPermission(user, "LEAD_CREATE") };
+  }
+  const role = user.role;
   return {
     canUpdate: [
       "MD",

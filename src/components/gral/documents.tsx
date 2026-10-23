@@ -204,6 +204,7 @@ export function DocumentPanel({
   classification,
   purpose,
   canUpload,
+  canReplace = canUpload,
   title = "Documents",
   emptyText = "No files uploaded yet.",
   onChange,
@@ -213,6 +214,8 @@ export function DocumentPanel({
   /** Why the file is kept, as an upper-case code, e.g. POLICY_SCHEDULE. */
   purpose: string;
   canUpload: boolean;
+  /** Whether the Replace button shows. Defaults to canUpload. */
+  canReplace?: boolean;
   title?: string;
   emptyText?: string;
   /** Called after an upload or replacement, with the new list. */
@@ -366,7 +369,7 @@ export function DocumentPanel({
                 <OutlineButton onClick={() => download(d)}>
                   <Download className="size-3.5" /> Download
                 </OutlineButton>
-                {canUpload ? (
+                {canReplace ? (
                   <FilePickButton
                     onFile={(f) => replace(d, f)}
                     disabled={!!busy}

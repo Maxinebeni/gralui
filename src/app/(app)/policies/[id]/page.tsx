@@ -6,7 +6,15 @@ export const metadata: Metadata = {
   description: "Policy cover periods, movements, financial terms, claims and documents.",
 };
 
-export default async function PolicyPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function PolicyPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ ref?: string }>;
+}) {
   const { id } = await params;
-  return <PolicyDetailView policyId={decodeURIComponent(id)} />;
+  // ?ref= carries the backend policy ID when the link comes from a client file.
+  const { ref } = await searchParams;
+  return <PolicyDetailView policyId={decodeURIComponent(id)} policyUuid={ref} />;
 }

@@ -68,7 +68,7 @@ export function ClientsView() {
         title="Client Records"
         extraPills={<FilterPill label="Sector" value="All sectors" />}
         action={
-          canManageClients(user.role) ? (
+             canManageClients(user) ? (
             <NavyButton className="px-4 py-2 text-sm" onClick={() => setAdding(true)}>
               <Plus className="size-4" /> Add Client
             </NavyButton>
