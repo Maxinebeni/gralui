@@ -60,6 +60,7 @@ import {
 import { displayToIso } from "./format";
 import {
   checklistFor,
+  ONBOARDING_STEPS,
   currentStep as onboardingCurrentStep,
   kycApproved,
   kycSubmitBlocker,
@@ -70,6 +71,7 @@ import { RWANDA_HOLIDAYS, type Holiday } from "./holidays";
 import { INSURER_GROUPS, PRODUCT_GROUPS, type OptionGroup } from "./reference-data";
 import { completionBlocker, currentMilestone, formatDate, milestoneDue, todayIso } from "./renewals";
 import type {
+  OnboardingStepRecord,
   AccessCategory,
   ActivityItem,
   ApprovalDecision,
@@ -2428,6 +2430,9 @@ export async function updateRole(
 // at least 3 quotes unless justified, written acceptance before placement.
 
 function findOnboarding(id: string): OnboardingCase {
+  if (BACKEND_LEADS.has(id)) {
+    throw new Error("Saving steps for this lead to GRAL's system is not connected yet. It comes in the next update.");
+  }
   const found = ONBOARDING_CASES.find((c) => c.id === id);
   if (!found) throw new Error("This onboarding case could not be found.");
   return found;
@@ -2449,8 +2454,150 @@ function finishStep(c: OnboardingCase, code: OnboardingStepCode, input: { note: 
   );
 }
 
+/* -------------------------- Leads on the backend (ONB-01) -------------------------- */
+// The backend keeps a lead (the prospect) and, under it, one onboarding case per
+// policy track. The screens show one card per lead, so the two are combined:
+// steps 1 and 2 come from the lead, steps 3 to 11 from its furthest track,
+// whose milestones carry the SOP step number as "stage".
+
+type LeadView = {
+  id: string;
+  name: string;
+  type: string; // CORPORATE | INDIVIDUAL
+  industry: string;
+  source: string;
+  contactName: string;
+  email?: string;
+  phone?: string;
+  ownerId?: string;
+  clientId?: string;
+  status: string;
+  version: number;
+  receivedAt?: string;
+  registeredAt?: string;
+  updatedAt?: string;
+  assessed?: boolean;
+  assessment?: { meetingAt?: string };
+  blockers?: string[];
+};
+
+type OnboardingTrackView = {
+  id: string;
+  leadId: string;
+  stage: number;
+  status: string;
+  milestones?: { code: string; stage: number; dueAt?: string; status: string }[];
+  availableActions?: string[];
+  blockers?: string[];
+};
+
+/** Short references shown on screen (LD-1A2B3C4D), mapped to the backend UUID. */
+const LEAD_INDEX = new Map<string, string>();
+/** References of leads that live on the backend, so sample-only actions can refuse them. */
+const BACKEND_LEADS = new Set<string>();
+/** Milestone states that count as finished. To confirm with Toochukwu. */
+const DONE_MILESTONE = ["COMPLETED", "COMPLETE", "DONE", "SATISFIED", "SKIPPED", "NOT_APPLICABLE", "APPROVED"];
+
+function leadRef(id: string) {
+  return `LD-${id.slice(0, 8).toUpperCase()}`;
+}
+
+async function onboardingProblem(res: Response, fallback: string): Promise<string> {
+  const problem = await readProblem(res);
+  if (res.status === 401) return "Your session has ended. Please sign in again.";
+  if (res.status === 403) return "You do not have permission to do this on leads.";
+  if (res.status === 404) return "This lead could not be found.";
+  if (res.status === 409) return "Someone else changed this lead. Refresh the page and try again.";
+  if (res.status === 400 && problem.fields?.length) return `Please check these fields: ${problem.fields.join(", ")}.`;
+  if (problem.title && problem.title !== "Bad Request") return problem.title;
+  return fallback;
+}
+
+function leadToCase(lead: LeadView, tracks: OnboardingTrackView[], managers: ManagerChoice[]): OnboardingCase {
+  const ref = leadRef(lead.id);
+  LEAD_INDEX.set(ref, lead.id);
+  BACKEND_LEADS.add(ref);
+  const owner = lead.ownerId ? managerName(lead.ownerId, managers) : "Not assigned yet";
+  const createdAt = (lead.registeredAt ?? lead.receivedAt ?? new Date().toISOString()).slice(0, 10);
+
+  // Which SOP steps are finished, by step number.
+  const done = new Map<number, { at: string; note: string }>();
+  done.set(1, { at: createdAt, note: `Lead registered (${lead.source})` });
+  if (lead.assessed) {
+    done.set(2, { at: (lead.assessment?.meetingAt ?? lead.updatedAt ?? createdAt).slice(0, 10), note: "Needs assessment recorded" });
+  }
+  const track = [...tracks].sort((a, b) => b.stage - a.stage)[0];
+  for (const m of track?.milestones ?? []) {
+    if (m.stage > 2 && DONE_MILESTONE.includes(m.status.toUpperCase())) {
+      done.set(m.stage, { at: (m.dueAt ?? createdAt).slice(0, 10), note: `${m.code.replace(/_/g, " ").toLowerCase()} recorded` });
+    }
+  }
+  // The screens read the current step as the first unfinished one, so keep
+  // only the unbroken run of finished steps from step 1.
+  const completed: OnboardingStepRecord[] = [];
+  for (const step of ONBOARDING_STEPS) {
+    const d = done.get(step.n);
+    if (!d) break;
+    completed.push({ code: step.code, completedAt: d.at, completedBy: "Recorded in GRAL's system", note: d.note });
+  }
+
+  // The lead form only registers companies; INDIVIDUAL leads show as Corporate for now.
+  const type: ClientType = "Corporate";
+  return {
+    id: ref,
+    prospect: {
+      name: lead.name,
+      type,
+      sector: lead.industry,
+      address: "",
+      contact: { name: lead.contactName, title: "", email: lead.email ?? "", phone: lead.phone ?? "" },
+      referralSource: lead.source,
+    },
+    accountExecutive: owner,
+    registeredBy: "Recorded in GRAL's system",
+    createdAt,
+    completed,
+    kyc: { items: checklistFor(type) },
+    quotes: [],
+    history: [{ at: createdAt, by: "GRAL's system", text: `Lead registered (${lead.source})` }],
+  };
+}
+
+async function listBackendLeads(): Promise<OnboardingCase[]> {
+  const [leadsRes, tracksRes, managers] = await Promise.all([
+    apiFetch("/api/v1/leads?size=100"),
+    apiFetch("/api/v1/onboarding-cases?size=100").catch(() => null),
+    loadManagers(),
+  ]);
+  if (!leadsRes.ok) throw new Error(await onboardingProblem(leadsRes, "Could not load the leads."));
+  const leads = ((await leadsRes.json()) as Page<LeadView>).items ?? [];
+  const tracks = tracksRes?.ok ? (((await tracksRes.json()) as Page<OnboardingTrackView>).items ?? []) : [];
+  return leads.map((lead) => leadToCase(lead, tracks.filter((t) => t.leadId === lead.id), managers));
+}
+
 export async function listOnboarding(): Promise<OnboardingCase[]> {
-  return [...ONBOARDING_CASES];
+  if (MOCK_AUTH) return [...ONBOARDING_CASES];
+  return listBackendLeads();
+}
+
+export async function getOnboarding(id: string): Promise<OnboardingCase | null> {
+  if (MOCK_AUTH) return ONBOARDING_CASES.find((c) => c.id === id) ?? null;
+  let uuid = UUID_PATTERN.test(id) ? id : LEAD_INDEX.get(id.toUpperCase());
+  if (!uuid) {
+    await listBackendLeads();
+    uuid = LEAD_INDEX.get(id.toUpperCase());
+  }
+  if (!uuid) return null;
+  const [leadRes, tracksRes, managers] = await Promise.all([
+    apiFetch(`/api/v1/leads/${uuid}`),
+    apiFetch(`/api/v1/leads/${uuid}/onboarding-cases?size=50`).catch(() => null),
+    loadManagers(),
+  ]);
+  if (leadRes.status === 404) return null;
+  if (!leadRes.ok) throw new Error(await onboardingProblem(leadRes, "Could not load this lead."));
+  const lead = (await leadRes.json()) as LeadView;
+  const tracks = tracksRes?.ok ? (((await tracksRes.json()) as Page<OnboardingTrackView>).items ?? []) : [];
+  return leadToCase(lead, tracks, managers);
 }
 
 export type NewLeadInput = {
@@ -2465,6 +2612,7 @@ export type NewLeadInput = {
 
 /** Step 1: register the lead. The KYC checklist for the client type is created with it. */
 export async function createLead(input: NewLeadInput, by: string): Promise<OnboardingCase> {
+  if (!MOCK_AUTH) return createBackendLead(input);
   const name = input.name.trim();
   if (ONBOARDING_CASES.some((c) => sameText(c.prospect.name, name)) || allKnownClients().some((c) => sameText(c.name, name))) {
     throw new Error("A client or lead with this name already exists.");
@@ -2490,6 +2638,53 @@ export async function createLead(input: NewLeadInput, by: string): Promise<Onboa
     history: [{ at: todayIso(), by, text: "Lead registered" }],
   };
   ONBOARDING_CASES.unshift(created);
+  return created;
+}
+
+/**
+ * Step 1 on the backend: register the lead, then assign the Accounts Executive.
+ * The address and the contact's job title are recorded later, when the lead
+ * becomes a prospect client, so they are not sent here.
+ */
+async function createBackendLead(input: NewLeadInput): Promise<OnboardingCase> {
+  const name = input.name.trim();
+  const existing = await listBackendLeads().catch(() => [] as OnboardingCase[]);
+  if (existing.some((c) => sameText(c.prospect.name, name))) {
+    throw new Error("A lead with this name already exists.");
+  }
+
+  const body: Record<string, unknown> = {
+    commandId: crypto.randomUUID(),
+    name,
+    type: "CORPORATE",
+    industry: input.sector,
+    source: input.referralSource,
+    contactName: input.contact.name,
+    receivedAt: new Date().toISOString(),
+  };
+  if (input.contact.email) body.email = input.contact.email;
+  if (input.contact.phone) body.phone = input.contact.phone;
+
+  const res = await apiFetch("/api/v1/leads", { method: "POST", body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(await onboardingProblem(res, "Could not register the lead. Please try again."));
+  let lead = (await res.json()) as LeadView;
+
+  // Assign the chosen Accounts Executive. The lead is already saved, so a
+  // failure here is reported on the lead instead of undoing the registration.
+  const managers = await loadManagers();
+  const owner = managers.find((m) => sameText(m.fullName, input.accountExecutive));
+  let note = "";
+  if (owner && owner.id !== lead.ownerId) {
+    const assigned = await apiFetch(`/api/v1/leads/${lead.id}/assignment`, {
+      method: "POST",
+      body: JSON.stringify({ command: { commandId: crypto.randomUUID(), expectedVersion: lead.version }, ownerId: owner.id }),
+    });
+    if (assigned.ok) lead = (await assigned.json()) as LeadView;
+    else note = `The Accounts Executive could not be assigned: ${await onboardingProblem(assigned, "please assign them from the lead.")}`;
+  }
+
+  const created = leadToCase(lead, [], managers);
+  if (note) created.history.push({ at: todayIso(), by: "GRAL's system", text: note });
   return created;
 }
 
@@ -2769,18 +2964,21 @@ function onboardingTask(c: OnboardingCase): WorkTask | null {
   const waiting = step.code === "KYC" ? c.kyc.approvalId : step.code === "APPROVAL" ? c.approvalId : undefined;
   if (waiting && APPROVALS.some((r) => r.id === waiting && r.status === "PENDING")) return null;
   const byAccountExecutive = step.owner === "Accounts Executive";
+  // Until the request is sent, the approvers have nothing to decide: the
+  // underwriting manager who made the recommendation sends it.
+  const toRequest = step.code === "APPROVAL";
   return {
     id: `T-${c.id}-${step.code}`,
     key: `ONBOARDING:${c.id}:${step.code}`,
     type: "ONBOARDING_STEP",
-    title: `${step.name}: ${c.prospect.name}`,
-    detail: step.task,
+    title: toRequest ? `Request internal approval: ${c.prospect.name}` : `${step.name}: ${c.prospect.name}`,
+    detail: toRequest ? "Send the recommended quote for approval. The approver depends on the expected commission." : step.task,
     resourceType: "ONBOARDING",
     resourceId: c.id,
     resourceRef: c.id,
     client: c.prospect.name,
     owner: byAccountExecutive ? c.accountExecutive : undefined,
-    ownerRole: byAccountExecutive ? undefined : step.owner.split(" / ")[0],
+    ownerRole: byAccountExecutive ? undefined : toRequest ? "GI Underwriting Manager" : step.owner.split(" / ")[0],
     dueDate: stepDue(c, step),
     status: "OPEN",
     source: "SYSTEM",

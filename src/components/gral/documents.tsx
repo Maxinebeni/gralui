@@ -3,9 +3,11 @@
 // Document upload and list (DOC-01 to DOC-03). Works on any record: client
 // files go to the backend's document API; other records keep files in this
 // tab until the backend accepts them. Replacing a file keeps the old one as
-// an earlier version.
+// an earlier version. Every chosen file is previewed first, with where it is
+// going, so a wrong file can be caught before it is stored.
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Download, FileText, History, RefreshCw, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -19,7 +21,7 @@ import {
   uploadDocument,
 } from "@/lib/api";
 import type { DocumentClassification, DocumentSubject, StoredDocument } from "@/lib/types";
-import { Chip, OutlineButton } from "./ui";
+import { Chip, NavyButton, OutlineButton } from "./ui";
 
 export const CLASSIFICATION_LABEL: Record<DocumentClassification, string> = {
   KYC: "KYC",
@@ -34,19 +36,123 @@ function uploadedOn(iso: string) {
   return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-/** A button that opens the file chooser. Used on its own, e.g. in a checklist row. */
+/** "Is this the right file?": a preview of the chosen file, with where it will be stored. */
+export function UploadPreview({
+  file,
+  destination,
+  confirmLabel = "Upload",
+  onConfirm,
+  onCancel,
+  onChooseAnother,
+}: {
+  file: File | null;
+  /** Where the file is going, e.g. "Trading licence · KYC checklist". */
+  destination?: string;
+  confirmLabel?: string;
+  onConfirm: (file: File) => void;
+  /** Escape or a click outside: close without uploading. */
+  onCancel: () => void;
+  /** Close and open the file chooser again. */
+  onChooseAnother: () => void;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+
+  useEffect(() => {
+    if (!file) return;
+    const objectUrl = URL.createObjectURL(file);
+    setUrl(objectUrl);
+    dialogRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onCancelRef.current();
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      URL.revokeObjectURL(objectUrl);
+      setUrl(null);
+    };
+  }, [file]);
+
+  if (!file) return null;
+  const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+  const saved = file.lastModified ? uploadedOn(new Date(file.lastModified).toISOString()) : null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-foreground/30 sm:items-center sm:p-4" onClick={onCancel}>
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="upload-preview-title"
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-t-3xl bg-card p-5 shadow-[var(--shadow-float)] outline-none sm:rounded-3xl sm:p-6"
+      >
+        <h2 id="upload-preview-title" className="text-lg font-semibold tracking-tight">
+          Is this the right file?
+        </h2>
+        {destination ? (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Uploading to <span className="font-medium text-foreground">{destination}</span>
+          </p>
+        ) : null}
+
+        <div className="mt-4 overflow-hidden rounded-2xl border border-border bg-secondary/50">
+          {url ? (
+            isPdf ? (
+              <iframe src={`${url}#page=1&toolbar=0&navpanes=0&view=FitH`} title={`Preview of ${file.name}`} className="h-80 w-full bg-card" />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={url} alt={`Preview of ${file.name}`} className="mx-auto max-h-80 w-auto object-contain" />
+            )
+          ) : (
+            <div className="h-80" />
+          )}
+        </div>
+
+        <div className="mt-3 flex items-start gap-2.5">
+          <FileText className="mt-0.5 size-4 shrink-0 text-primary" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium break-words">{file.name}</p>
+            <p className="text-[11px] text-muted-foreground">
+              {isPdf ? "PDF" : file.type.replace("image/", "").toUpperCase() || "Image"} · {formatBytes(file.size)}
+              {saved ? ` · last saved on this computer ${saved}` : ""}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <OutlineButton onClick={onChooseAnother} className="px-4 py-2 text-sm">
+            Choose another file
+          </OutlineButton>
+          <NavyButton onClick={() => onConfirm(file)} className="px-4 py-2 text-sm">
+            {confirmLabel}
+          </NavyButton>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** A button that opens the file chooser, then the preview. Used on its own, e.g. in a checklist row. */
 export function FilePickButton({
   onFile,
   children,
   disabled,
+  destination,
   variant = "outline",
 }: {
   onFile: (file: File) => void;
   children: ReactNode;
   disabled?: boolean;
+  /** Shown in the preview: where the file is going. */
+  destination?: string;
   variant?: "outline" | "navy";
 }) {
   const input = useRef<HTMLInputElement>(null);
+  const [pending, setPending] = useState<File | null>(null);
   return (
     <>
       <input
@@ -57,7 +163,10 @@ export function FilePickButton({
         onChange={(e) => {
           const file = e.target.files?.[0];
           e.target.value = "";
-          if (file) onFile(file);
+          if (!file) return;
+          const problem = documentProblem(file);
+          if (problem) toast.error(problem);
+          else setPending(file);
         }}
       />
       <button
@@ -73,6 +182,19 @@ export function FilePickButton({
       >
         {children}
       </button>
+      <UploadPreview
+        file={pending}
+        destination={destination}
+        onCancel={() => setPending(null)}
+        onChooseAnother={() => {
+          setPending(null);
+          input.current?.click();
+        }}
+        onConfirm={(file) => {
+          setPending(null);
+          onFile(file);
+        }}
+      />
     </>
   );
 }
@@ -104,6 +226,8 @@ export function DocumentPanel({
   const [busy, setBusy] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [openHistory, setOpenHistory] = useState<string | null>(null);
+  // A dropped or chosen file waiting in the preview.
+  const [pending, setPending] = useState<File | null>(null);
   const picker = useRef<HTMLInputElement>(null);
 
   // Depend on the subject's values, not the object, so callers can pass a literal.
@@ -125,9 +249,14 @@ export function DocumentPanel({
     load();
   }, [load]);
 
-  async function upload(file: File) {
+  function choose(file: File) {
     const problem = documentProblem(file);
     if (problem) return toast.error(problem);
+    setPending(file);
+  }
+
+  async function upload(file: File) {
+    setPending(null);
     setBusy(file.name);
     try {
       await uploadDocument(subject, file, { classification, purpose });
@@ -183,7 +312,7 @@ export function DocumentPanel({
             e.preventDefault();
             setDragging(false);
             const file = e.dataTransfer.files?.[0];
-            if (file) upload(file);
+            if (file) choose(file);
           }}
           className={cn(
             "mt-3 flex flex-col items-center gap-2 rounded-xl border border-dashed px-4 py-5 text-center transition-colors",
@@ -203,7 +332,7 @@ export function DocumentPanel({
               </>
             )}
           </p>
-          <p className="text-[11px] text-subtle">PDF, PNG or JPEG, up to 10 MB</p>
+          <p className="text-[11px] text-subtle">PDF, PNG or JPEG, up to 10 MB. You will see a preview before it is uploaded.</p>
           <input
             ref={picker}
             type="file"
@@ -213,7 +342,7 @@ export function DocumentPanel({
             onChange={(e) => {
               const file = e.target.files?.[0];
               e.target.value = "";
-              if (file) upload(file);
+              if (file) choose(file);
             }}
           />
         </div>
@@ -241,7 +370,11 @@ export function DocumentPanel({
                   <Download className="size-3.5" /> Download
                 </OutlineButton>
                 {canReplace ? (
-                  <FilePickButton onFile={(f) => replace(d, f)} disabled={!!busy}>
+                  <FilePickButton
+                    onFile={(f) => replace(d, f)}
+                    disabled={!!busy}
+                    destination={`${title}, replacing ${d.originalFileName} (it becomes version ${d.version + 1})`}
+                  >
                     <RefreshCw className="size-3.5" /> Replace
                   </FilePickButton>
                 ) : null}
@@ -273,6 +406,17 @@ export function DocumentPanel({
           </div>
         ))}
       </div>
+
+      <UploadPreview
+        file={pending}
+        destination={`${title} · ${CLASSIFICATION_LABEL[classification]}`}
+        onCancel={() => setPending(null)}
+        onChooseAnother={() => {
+          setPending(null);
+          picker.current?.click();
+        }}
+        onConfirm={upload}
+      />
     </div>
   );
 }

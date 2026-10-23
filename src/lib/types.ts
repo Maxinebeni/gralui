@@ -574,8 +574,9 @@ export type PermissionDefinition = {
  
 export type ClaimStep = { n: number; name: string; sla: string };
 export type ClaimMonth = { month: string; amount: number; count: number };
-export type ActivityItem = { who: string; what: string; when: string };
- 
+/** `module` decides who may see the entry, like the pages it comes from. */
+export type ActivityItem = { who: string; what: string; when: string; module: "Claims" | "Renewals" | "Clients" };
+
 export type SessionUser = {
   /** Backend user ID (UUID). */
   id?: string;

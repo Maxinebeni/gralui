@@ -1,11 +1,12 @@
 "use client";
 
-// One prospect's onboarding (SOP section 3): the 11 steps with their owner,
-// deadline and record, and the action for the current step.
+// One lead's onboarding (SOP section 3) as a full page: a tracker of the 11
+// steps across the top, the chosen step in detail below, and the prospect's
+// details and history on the side.
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Check, ChevronDown, Circle, Clock, FileText, Lock, Paperclip, ShieldCheck, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Clock, FileText, Lock, Paperclip, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
@@ -27,6 +28,7 @@ import {
 import { statusLabel } from "@/lib/approvals";
 import { useCurrentUser } from "@/lib/auth-context";
 import {
+  ONBOARDING_PHASES,
   ONBOARDING_STEPS,
   ONBOARDING_TARGET_DAYS,
   currentStep,
@@ -34,20 +36,32 @@ import {
   kycSubmitBlocker,
   onboardingAge,
   onboardingHealth,
+  phaseOf,
   stepDue,
+  stepOf,
   type OnboardingStepDef,
 } from "@/lib/onboarding";
 import { onboardingPermissions } from "@/lib/permissions";
 import { INSURER_GROUPS, PRODUCT_GROUPS, type OptionGroup } from "@/lib/reference-data";
 import { formatDate, todayIso } from "@/lib/renewals";
-import type { ApprovalRequest, OnboardingCase } from "@/lib/types";
+import type { ApprovalRequest, OnboardingCase, OnboardingStepCode } from "@/lib/types";
+import { PageHeader } from "./shell";
+import { AmountInput } from "./amount-input";
 import { FilePickButton } from "./documents";
-import { Chip, NavyButton, OutlineButton, Person } from "./ui";
+import { Chip, FloatCard, NavyButton, OutlineButton, Person } from "./ui";
 
 const INPUT =
   "w-full rounded-xl border border-input bg-card px-3 py-2 text-xs outline-none focus:border-sky focus:ring-2 focus:ring-sky/30";
 
 type Run = (action: () => Promise<OnboardingCase>, success: string) => Promise<boolean>;
+
+type StepState = "done" | "current" | "late" | "upcoming";
+
+function stateOf(c: OnboardingCase, step: OnboardingStepDef): StepState {
+  if (c.completed.some((r) => r.code === step.code)) return "done";
+  if (currentStep(c)?.code !== step.code) return "upcoming";
+  return stepDue(c, step) < todayIso() ? "late" : "current";
+}
 
 export function OnboardingHealthChip({ value }: { value: OnboardingCase }) {
   const health = onboardingHealth(value);
@@ -57,21 +71,16 @@ export function OnboardingHealthChip({ value }: { value: OnboardingCase }) {
   return <Chip tone="sky">On track</Chip>;
 }
 
-export function OnboardingCasePanel({
-  value: c,
-  onClose,
-  onChanged,
-}: {
-  value: OnboardingCase;
-  onClose: () => void;
-  onChanged: () => void;
-}) {
+export function OnboardingCaseView({ value: c, onChanged }: { value: OnboardingCase; onChanged: () => void }) {
   const { user } = useCurrentUser();
   const { canUpdate } = onboardingPermissions(user.role);
   const current = currentStep(c);
   const age = onboardingAge(c);
-  // Which finished step is opened to show its record.
-  const [expanded, setExpanded] = useState<string | null>(null);
+  // The step shown in detail: the current one unless another is picked.
+  const [selected, setSelected] = useState<OnboardingStepCode>(current?.code ?? "WELCOME");
+  useEffect(() => {
+    setSelected(current?.code ?? "WELCOME");
+  }, [current?.code]);
 
   async function run(action: () => Promise<OnboardingCase>, success: string) {
     try {
@@ -85,163 +94,412 @@ export function OnboardingCasePanel({
     }
   }
 
+  const step = stepOf(selected);
+  const done = c.completed.length;
+
   return (
-    <div>
-      <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-6 sm:py-5">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-lg font-semibold tracking-tight">{c.prospect.name}</span>
-            <OnboardingHealthChip value={c} />
+    <>
+      <Link href="/clients/leads" className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary">
+        <ArrowLeft className="size-3.5" /> Leads
+      </Link>
+      <PageHeader title={c.prospect.name} subtitle={`${c.id} · ${c.prospect.type} · ${c.prospect.sector}`} />
+
+      <FloatCard className="mt-5 p-4 sm:p-5" delay={60}>
+        <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <OnboardingHealthChip value={c} />
+              <span className="text-xs text-muted-foreground">
+                {current ? (
+                  <>
+                    Step {current.n} of {ONBOARDING_STEPS.length}: <span className="font-medium text-foreground">{current.name}</span>, due{" "}
+                    {formatDate(stepDue(c, current))}
+                  </>
+                ) : (
+                  "All 11 steps complete"
+                )}
+              </span>
+            </div>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {c.id} · {c.prospect.type} · {c.prospect.sector} · {c.prospect.referralSource}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {[
-              [c.prospect.contact.name, c.prospect.contact.title].filter(Boolean).join(", "),
-              c.prospect.contact.email,
-              c.prospect.contact.phone,
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-          </p>
-          <p className={cn("mt-1 text-xs", age > ONBOARDING_TARGET_DAYS ? "font-medium text-danger" : "text-muted-foreground")}>
-            {isComplete(c) ? "Onboarded in" : "Working day"} {age} of {ONBOARDING_TARGET_DAYS} (SOP: 10 to 15 working days)
-          </p>
-          <div className="mt-2">
-            <Person name={c.accountExecutive} />
+          <div className="min-w-0 sm:w-64">
+            <div className="flex items-baseline justify-between text-[11px] text-muted-foreground">
+              <span>{isComplete(c) ? "Onboarded in" : "Working day"}</span>
+              <span className={cn("font-semibold", age > ONBOARDING_TARGET_DAYS ? "text-danger" : "text-foreground")}>
+                {age} of {ONBOARDING_TARGET_DAYS}
+              </span>
+            </div>
+            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-secondary">
+              <div
+                className={cn("h-full rounded-full", age > ONBOARDING_TARGET_DAYS ? "bg-danger" : "bg-primary")}
+                style={{ width: `${Math.min(100, (age / ONBOARDING_TARGET_DAYS) * 100)}%` }}
+              />
+            </div>
           </div>
         </div>
-        <button
-          type="button"
-          aria-label="Close onboarding case"
-          onClick={onClose}
-          className="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground hover:text-foreground"
-        >
-          <X className="size-4" />
-        </button>
-      </div>
 
-      <div className="px-4 py-5 sm:px-6">
-        {isComplete(c) && c.clientId ? (
-          <div className="mb-4 rounded-2xl bg-success-soft/50 p-4 text-sm">
-            <p className="font-semibold">Onboarding complete</p>
-            <p className="mt-1 text-xs text-muted-foreground">The client file is open with the new policy.</p>
-            <Link
-              href={`/clients?client=${encodeURIComponent(c.clientId)}`}
-              className="mt-2 inline-block text-xs font-medium text-primary underline underline-offset-2"
-            >
-              Open client file {c.clientId}
-            </Link>
-          </div>
-        ) : null}
-        {!canUpdate ? (
-          <p className="mb-3 text-[11px] text-subtle">View only. Your role can follow this onboarding but not update it.</p>
-        ) : null}
+        <StepTracker value={c} selected={selected} onSelect={setSelected} />
+        <p className="mt-3 text-[11px] text-subtle">
+          {done} of {ONBOARDING_STEPS.length} steps done. Select any step to see what it needs or what was recorded.
+        </p>
+      </FloatCard>
 
-        <ol className="space-y-1.5">
-          {ONBOARDING_STEPS.map((step) => {
-            const record = c.completed.find((r) => r.code === step.code);
-            const isCurrent = current?.code === step.code;
-            const due = stepDue(c, step);
-            const late = isCurrent && due < todayIso();
+      <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
+        <StepDetail value={c} step={step} canUpdate={canUpdate} userName={user.name} run={run} onSelect={setSelected} />
 
-            // Finished: one line; click to see what was recorded.
-            if (record) {
-              const open = expanded === step.code;
-              return (
-                <li key={step.code} className="rounded-xl border border-border">
-                  <button
-                    type="button"
-                    onClick={() => setExpanded(open ? null : step.code)}
-                    aria-expanded={open}
-                    className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 px-3 py-2 text-left"
-                  >
-                    <Check className="size-4 text-success" />
-                    <span className="truncate text-xs">
-                      {step.n}. {step.name}
-                    </span>
-                    <span className="flex items-center gap-1 text-[11px] whitespace-nowrap text-subtle">
-                      {formatDate(record.completedAt)}
-                      <ChevronDown className={cn("size-3.5 transition-transform", open && "rotate-180")} />
-                    </span>
-                  </button>
-                  {open ? (
-                    <div className="border-t border-border px-3 py-2 text-[11px] text-muted-foreground">
-                      <p>{record.note}</p>
-                      <p className="mt-1">
-                        {record.completedBy} · {step.owner}
-                        {record.evidence ? (
-                          <span className="ml-1 inline-flex items-center gap-1 text-primary">
-                            · <FileText className="size-3" /> {record.evidence}
-                          </span>
-                        ) : null}
-                      </p>
-                    </div>
-                  ) : null}
-                </li>
-              );
-            }
-
-            // Not started yet: a quiet single line.
-            if (!isCurrent) {
-              return (
-                <li key={step.code} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2.5 px-3 py-1.5">
-                  <Circle className="size-4 text-subtle" />
-                  <span className="truncate text-xs text-muted-foreground">
-                    {step.n}. {step.name}
-                  </span>
-                  <span className="text-[11px] whitespace-nowrap text-subtle">{step.owner}</span>
-                </li>
-              );
-            }
-
-            // The current step: open, with what to do.
-            return (
-              <li
-                key={step.code}
-                className={cn("rounded-xl border px-3 py-3", late ? "border-danger/40 bg-danger-soft/40" : "border-sky/40 bg-pale")}
+        <div className="min-w-0 space-y-4">
+          {isComplete(c) && c.clientId ? (
+            <FloatCard className="bg-success-soft/40 p-5" delay={140}>
+              <p className="text-sm font-semibold">Onboarding complete</p>
+              <p className="mt-1 text-xs text-muted-foreground">The client file is open with the new policy.</p>
+              <Link
+                href={`/clients?client=${encodeURIComponent(c.clientId)}`}
+                className="mt-2 inline-block text-xs font-medium text-primary underline underline-offset-2"
               >
-                <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5">
-                  {late ? <Clock className="mt-0.5 size-4 text-danger" /> : <Circle className="mt-0.5 size-4 text-sky" />}
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold">
-                      {step.n}. {step.name}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {step.owner} · {step.deadlineLabel}
+                Open client file {c.clientId}
+              </Link>
+            </FloatCard>
+          ) : null}
+
+          <FloatCard className="p-5" delay={160}>
+            <h2 className="text-base font-semibold tracking-tight">Prospect</h2>
+            <dl className="mt-3 space-y-2.5 text-xs">
+              <Detail label="Accounts Executive" value={<Person name={c.accountExecutive} />} />
+              <Detail
+                label="Contact"
+                value={
+                  <>
+                    <span className="block">{[c.prospect.contact.name, c.prospect.contact.title].filter(Boolean).join(", ")}</span>
+                    {c.prospect.contact.email ? <span className="block text-muted-foreground">{c.prospect.contact.email}</span> : null}
+                    {c.prospect.contact.phone ? <span className="block text-muted-foreground">{c.prospect.contact.phone}</span> : null}
+                  </>
+                }
+              />
+              <Detail label="Client type" value={c.prospect.type} />
+              <Detail label="Industry" value={c.prospect.sector} />
+              {c.prospect.address ? <Detail label="Address" value={c.prospect.address} /> : null}
+              <Detail label="Source" value={c.prospect.referralSource} />
+              <Detail label="Registered" value={`${formatDate(c.createdAt)} by ${c.registeredBy}`} />
+            </dl>
+          </FloatCard>
+
+          <FloatCard className="p-5" delay={200}>
+            <h2 className="text-base font-semibold tracking-tight">History</h2>
+            <ol className="mt-3 space-y-3">
+              {[...c.history].reverse().map((e, i) => (
+                <li key={`${e.at}-${i}`} className="flex gap-3">
+                  <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-sky" />
+                  <div>
+                    <p className="text-xs">{e.text}</p>
+                    <p className="text-[11px] text-subtle">
+                      {formatDate(e.at)} · {e.by}
                     </p>
                   </div>
-                  <p className={cn("text-[11px] whitespace-nowrap", late ? "font-medium text-danger" : "text-muted-foreground")}>
-                    Due {formatDate(due)}
-                  </p>
-                </div>
-                <div className="mt-3 space-y-3 border-t border-border pt-3">
-                  <p className="text-[11px] text-muted-foreground">{step.task}</p>
-                  <StepAction value={c} step={step} canUpdate={canUpdate} userName={user.name} run={run} />
-                </div>
-              </li>
-            );
-          })}
-        </ol>
-
-        <section className="mt-6">
-          <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">History</h3>
-          <ol className="mt-3 space-y-3">
-            {[...c.history].reverse().map((e, i) => (
-              <li key={`${e.at}-${i}`} className="flex gap-3">
-                <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-sky" />
-                <div>
-                  <p className="text-xs">{e.text}</p>
-                  <p className="text-[11px] text-subtle">
-                    {formatDate(e.at)} · {e.by}
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </section>
+                </li>
+              ))}
+            </ol>
+          </FloatCard>
+        </div>
       </div>
+    </>
+  );
+}
+
+function Detail({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[110px_minmax(0,1fr)] gap-3">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="min-w-0">{value}</dd>
+    </div>
+  );
+}
+
+function StepDot({ n, state, selected }: { n: number; state: StepState; selected: boolean }) {
+  return (
+    <span
+      className={cn(
+        "relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold transition-shadow",
+        state === "done" && "bg-primary text-primary-foreground",
+        state === "current" && "bg-card text-primary ring-2 ring-sky",
+        state === "late" && "bg-danger text-white",
+        state === "upcoming" && "bg-secondary text-subtle",
+        selected && "shadow-[0_0_0_4px_var(--color-pale)]",
+      )}
+    >
+      {state === "done" ? <Check className="size-4" /> : state === "late" ? <Clock className="size-4" /> : n}
+    </span>
+  );
+}
+
+function stepCaption(c: OnboardingCase, step: OnboardingStepDef, state: StepState) {
+  if (state === "done") return formatDate(c.completed.find((r) => r.code === step.code)!.completedAt);
+  if (state === "upcoming") return step.owner;
+  return `Due ${formatDate(stepDue(c, step))}`;
+}
+
+/** The 11 steps grouped in four stages: across the page on wide screens, a list on phones. */
+function StepTracker({
+  value: c,
+  selected,
+  onSelect,
+}: {
+  value: OnboardingCase;
+  selected: OnboardingStepCode;
+  onSelect: (code: OnboardingStepCode) => void;
+}) {
+  return (
+    <>
+      {/* Wide screens */}
+      <div className="mt-6 hidden gap-3 md:flex">
+        {ONBOARDING_PHASES.map((phase) => (
+          <div key={phase.name} className="min-w-0" style={{ flex: phase.steps.length }}>
+            <p className="mb-3 border-b border-border pb-1.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+              {phase.name}
+            </p>
+            <ol className="flex">
+              {phase.steps.map((code, i) => {
+                const step = stepOf(code);
+                const state = stateOf(c, step);
+                const isSelected = selected === code;
+                const isLast = step.n === ONBOARDING_STEPS.length;
+                return (
+                  <li key={code} className="relative min-w-0 flex-1">
+                    {!isLast ? (
+                      <span
+                        aria-hidden
+                        className={cn(
+                          "absolute top-[22px] left-1/2 h-0.5 w-full",
+                          state === "done" ? "bg-primary" : "bg-border",
+                          // The line runs on into the next stage's column gap.
+                          i === phase.steps.length - 1 && "w-[calc(100%+0.75rem)]",
+                        )}
+                      />
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => onSelect(code)}
+                      aria-current={isSelected ? "step" : undefined}
+                      className={cn(
+                        "flex w-full flex-col items-center rounded-xl px-1 pt-1.5 pb-2 text-center transition-colors",
+                        isSelected ? "bg-pale" : "hover:bg-secondary/60",
+                      )}
+                    >
+                      <StepDot n={step.n} state={state} selected={isSelected} />
+                      <span
+                        className={cn(
+                          "mt-2 line-clamp-2 text-[11px] leading-tight",
+                          state === "upcoming" ? "text-muted-foreground" : "font-medium text-foreground",
+                        )}
+                      >
+                        {step.name}
+                      </span>
+                      <span className={cn("mt-0.5 block max-w-full truncate text-[10px]", state === "late" ? "font-medium text-danger" : "text-subtle")}>
+                        {stepCaption(c, step, state)}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
+        ))}
+      </div>
+
+      {/* Phones */}
+      <div className="mt-5 space-y-4 md:hidden">
+        {ONBOARDING_PHASES.map((phase) => (
+          <div key={phase.name}>
+            <p className="mb-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{phase.name}</p>
+            <ol>
+              {phase.steps.map((code) => {
+                const step = stepOf(code);
+                const state = stateOf(c, step);
+                const isSelected = selected === code;
+                return (
+                  <li key={code}>
+                    <button
+                      type="button"
+                      onClick={() => onSelect(code)}
+                      aria-current={isSelected ? "step" : undefined}
+                      className={cn(
+                        "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-xl px-2 py-1.5 text-left",
+                        isSelected && "bg-pale",
+                      )}
+                    >
+                      <StepDot n={step.n} state={state} selected={false} />
+                      <span className={cn("truncate text-xs", state === "upcoming" ? "text-muted-foreground" : "font-medium")}>
+                        {step.name}
+                      </span>
+                      <span className={cn("text-[11px] whitespace-nowrap", state === "late" ? "font-medium text-danger" : "text-subtle")}>
+                        {state === "upcoming" ? null : stepCaption(c, step, state)}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/** The chosen step: what the SOP asks, then the action (current), the record (done) or what it waits for (upcoming). */
+function StepDetail({
+  value: c,
+  step,
+  canUpdate,
+  userName,
+  run,
+  onSelect,
+}: {
+  value: OnboardingCase;
+  step: OnboardingStepDef;
+  canUpdate: boolean;
+  userName: string;
+  run: Run;
+  onSelect: (code: OnboardingStepCode) => void;
+}) {
+  const state = stateOf(c, step);
+  const record = c.completed.find((r) => r.code === step.code);
+  const due = stepDue(c, step);
+  const prev = ONBOARDING_STEPS[step.n - 2];
+  const next = ONBOARDING_STEPS[step.n];
+
+  return (
+    <FloatCard className="overflow-hidden" delay={120}>
+      <div
+        className={cn(
+          "border-b px-4 py-4 sm:px-6 sm:py-5",
+          state === "late" ? "border-danger/30 bg-danger-soft/40" : state === "current" ? "border-sky/30 bg-pale" : "border-border",
+        )}
+      >
+        <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+          Step {step.n} of {ONBOARDING_STEPS.length} · {phaseOf(step.code)}
+        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <h2 className="text-xl font-semibold tracking-tight">{step.name}</h2>
+          {state === "done" ? <Chip tone="success">Done</Chip> : null}
+          {state === "current" ? <Chip tone="sky">In progress</Chip> : null}
+          {state === "late" ? <Chip tone="danger">Overdue</Chip> : null}
+          {state === "upcoming" ? <Chip>Not started</Chip> : null}
+        </div>
+        <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-3">
+          <Fact label="Owner" value={step.owner} />
+          <Fact label="SOP deadline" value={step.deadlineLabel} />
+          {record ? (
+            <Fact label="Completed" value={`${formatDate(record.completedAt)} by ${record.completedBy}`} />
+          ) : state === "upcoming" ? (
+            <Fact label="Starts" value={`After step ${prev?.n}: ${prev?.name}`} />
+          ) : (
+            <Fact label="Due" value={formatDate(due)} danger={state === "late"} />
+          )}
+        </dl>
+      </div>
+
+      <div className="space-y-4 px-4 py-5 sm:px-6">
+        <div>
+          <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">What the SOP asks</p>
+          <p className="mt-1 text-sm">{step.task}</p>
+        </div>
+
+        {state === "upcoming" ? (
+          <p className="flex items-center gap-2 rounded-xl border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+            <Lock className="size-3.5 shrink-0" /> This step opens once step {prev?.n} ({prev?.name}) is complete.
+          </p>
+        ) : null}
+
+        {state === "current" || state === "late" ? (
+          <div className="space-y-3">
+            {!canUpdate ? (
+              <p className="text-[11px] text-subtle">View only. Your role can follow this onboarding but not update it.</p>
+            ) : null}
+            <StepAction value={c} step={step} canUpdate={canUpdate} userName={userName} run={run} />
+          </div>
+        ) : null}
+
+        {record ? <StepRecordView value={c} step={step} record={record} userName={userName} run={run} /> : null}
+      </div>
+
+      <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3 sm:px-6">
+        {prev ? (
+          <OutlineButton onClick={() => onSelect(prev.code)}>
+            <ArrowLeft className="size-3.5" /> <span className="hidden sm:inline">{prev.name}</span>
+            <span className="sm:hidden">Previous</span>
+          </OutlineButton>
+        ) : (
+          <span />
+        )}
+        {next ? (
+          <OutlineButton onClick={() => onSelect(next.code)}>
+            <span className="hidden sm:inline">{next.name}</span>
+            <span className="sm:hidden">Next</span> <ArrowRight className="size-3.5" />
+          </OutlineButton>
+        ) : null}
+      </div>
+    </FloatCard>
+  );
+}
+
+function Fact({ label, value, danger }: { label: string; value: string; danger?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[11px] text-muted-foreground">{label}</dt>
+      <dd className={cn("mt-0.5 font-medium", danger && "text-danger")}>{value}</dd>
+    </div>
+  );
+}
+
+/** What was recorded for a finished step, with that step's own details. */
+function StepRecordView({
+  value: c,
+  step,
+  record,
+  userName,
+  run,
+}: {
+  value: OnboardingCase;
+  step: OnboardingStepDef;
+  record: OnboardingCase["completed"][number];
+  userName: string;
+  run: Run;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl bg-secondary/60 px-4 py-3">
+        <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Recorded</p>
+        <p className="mt-1 text-sm">{record.note || "No note."}</p>
+        {record.evidence ? (
+          <p className="mt-2 flex items-center gap-1.5 text-xs text-primary">
+            <FileText className="size-3.5" /> {record.evidence}
+          </p>
+        ) : null}
+        {step.code === "RISK_SURVEY" && c.riskGrade ? (
+          <p className="mt-2 text-xs">
+            Risk grade: <span className="font-medium">{c.riskGrade}</span>
+          </p>
+        ) : null}
+      </div>
+      {step.code === "KYC" ? <KycSection value={c} canUpdate={false} userName={userName} run={run} /> : null}
+      {step.code === "QUOTES" || step.code === "COMPARISON" ? (
+        <QuoteList value={c} canRecommend={false} userName={userName} run={run} />
+      ) : null}
+      {step.code === "APPROVAL" && c.approvalId ? (
+        <p className="text-xs">
+          Approved in{" "}
+          <Link href={`/approvals?request=${encodeURIComponent(c.approvalId)}`} className="text-primary underline underline-offset-2">
+            {c.approvalId}
+          </Link>
+        </p>
+      ) : null}
+      {step.code === "PLACEMENT" && c.placement ? (
+        <dl className="grid gap-3 text-xs sm:grid-cols-2">
+          <Fact label="Policy number" value={c.placement.policyNumber} />
+          <Fact label="Insurer" value={`${c.placement.insurer} · ${formatRwf(c.placement.premium)}`} />
+          <Fact label="Class of insurance" value={c.placement.classOfInsurance} />
+          <Fact label="Cover" value={`${formatDate(c.placement.start)} to ${formatDate(c.placement.expiry)}`} />
+        </dl>
+      ) : null}
     </div>
   );
 }
@@ -298,6 +556,7 @@ function AttachRecord({
             toast.error(err instanceof Error ? err.message : "Could not attach the file.");
           }
         }}
+        destination={`${label.replace(/^Attach (the )?/, "")} · lead ${caseId}`}
       >
         <Paperclip className="size-3.5" /> {fileName ? "Replace file" : label}
       </FilePickButton>
@@ -430,7 +689,10 @@ function KycSection({ value: c, canUpdate, userName, run }: { value: OnboardingC
                 {item.receivedAt ? (
                   <Chip tone="success">Received {formatDate(item.receivedAt)}</Chip>
                 ) : editable ? (
-                  <FilePickButton onFile={(file) => run(() => receiveKycDocument(c.id, item.name, file, userName), `${item.name} received.`)}>
+                  <FilePickButton
+                    onFile={(file) => run(() => receiveKycDocument(c.id, item.name, file, userName), `${item.name} received.`)}
+                    destination={`${item.name} · KYC for ${c.prospect.name}`}
+                  >
                     Upload
                   </FilePickButton>
                 ) : (
@@ -597,7 +859,7 @@ function QuotesSection({ value: c, canUpdate, userName, run }: { value: Onboardi
           <div className="space-y-2 rounded-xl border border-border bg-card p-3">
             <p className="text-xs font-semibold">Record a quote</p>
             <GroupedSelect value={insurer} onChange={setInsurer} groups={INSURER_GROUPS} placeholder="Select an insurer" label="Insurer" />
-            <input value={premium} onChange={(e) => setPremium(e.target.value)} inputMode="numeric" placeholder="Premium in RWF, e.g. 12500000" aria-label="Premium" className={INPUT} />
+            <AmountInput value={premium} onChange={setPremium} placeholder="Premium in RWF, e.g. 12,500,000" aria-label="Premium" className={INPUT} />
             <input value={terms} onChange={(e) => setTerms(e.target.value)} placeholder="Main terms, e.g. Limit RWF 500m, deductible RWF 2m" aria-label="Terms" className={INPUT} />
             <OutlineButton
               onClick={async () => {

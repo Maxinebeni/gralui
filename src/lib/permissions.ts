@@ -83,7 +83,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "All Claims", href: "/claims/all", permission: "CLAIM_READ", roles: CLAIM_ROLES, parent: "/claims", businessOnly: true },
   { label: "Clients", href: "/clients", permission: "CLIENT_READ", roles: ROLES, businessOnly: true },
   { label: "All Clients", href: "/clients/all", permission: "CLIENT_READ", roles: ROLES, parent: "/clients", businessOnly: true },
-  { label: "Onboarding", href: "/clients/onboarding", permission: "CLIENT_READ", roles: ONBOARDING_ROLES, parent: "/clients", businessOnly: true },
+  { label: "Leads", href: "/clients/leads", permission: "CLIENT_READ", roles: ONBOARDING_ROLES, parent: "/clients", businessOnly: true },
   { label: "Renewals", href: "/renewals", permission: "RENEWAL_READ", roles: RENEWAL_ROLES, businessOnly: true },
   // Admin pages sit in the name (account) menu, not the top bar. Real backend
   // permissions; in demo mode only the MD sees them.

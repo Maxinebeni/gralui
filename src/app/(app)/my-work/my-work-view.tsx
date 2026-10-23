@@ -35,7 +35,7 @@ const TYPE_LABEL: Record<TaskType, string> = {
   RENEWAL_MILESTONE: "Renewal",
   APPROVAL: "Approval",
   KYC_DOCUMENT: "KYC",
-  ONBOARDING_STEP: "Onboarding",
+  ONBOARDING_STEP: "Lead",
   MANUAL: "Added by hand",
 };
 

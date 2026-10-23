@@ -30,6 +30,7 @@ import {
   renewalHealth,
 } from "@/lib/renewals";
 import type { RenewalCase } from "@/lib/types";
+import { AmountInput } from "./amount-input";
 import { Chip, NavyButton, OutlineButton, Person, SegmentedTabs } from "./ui";
 
 const TABS = ["Milestones", "Quotes", "Acceptance"] as const;
@@ -327,11 +328,10 @@ function QuotesTab({ renewal, canUpdate, run }: { renewal: RenewalCase; canUpdat
               </optgroup>
             ))}
           </select>
-          <input
+          <AmountInput
             value={premium}
-            onChange={(e) => setPremium(e.target.value)}
-            inputMode="numeric"
-            placeholder="Premium in RWF, e.g. 15000000"
+            onChange={setPremium}
+            placeholder="Premium in RWF, e.g. 15,000,000"
             aria-label="Premium"
             className={INPUT}
           />

@@ -1,17 +1,7 @@
-import type { Metadata } from "next";
-import { Suspense } from "react";
-import { OnboardingView } from "./onboarding-view";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = {
-  title: "Client Onboarding / GRAL Operations Platform",
-  description: "New clients from lead to welcome letter, following GRAL's Client Acquisition SOP, with the KYC checks.",
-};
-
-export default function OnboardingPage() {
-  // Suspense is required because OnboardingView reads the URL (?case=...).
-  return (
-    <Suspense>
-      <OnboardingView />
-    </Suspense>
-  );
+// The page was renamed to Leads; old links still land in the right place.
+export default async function OldOnboardingPage({ searchParams }: { searchParams: Promise<{ case?: string }> }) {
+  const { case: id } = await searchParams;
+  redirect(id ? `/clients/leads/${encodeURIComponent(id)}` : "/clients/leads");
 }
