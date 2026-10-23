@@ -73,7 +73,7 @@ export function OnboardingHealthChip({ value }: { value: OnboardingCase }) {
 
 export function OnboardingCaseView({ value: c, onChanged }: { value: OnboardingCase; onChanged: () => void }) {
   const { user } = useCurrentUser();
-  const { canUpdate } = onboardingPermissions(user.role);
+  const { canUpdate } = onboardingPermissions(user);
   const current = currentStep(c);
   const age = onboardingAge(c);
   // The step shown in detail: the current one unless another is picked.

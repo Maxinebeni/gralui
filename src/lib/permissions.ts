@@ -285,7 +285,17 @@ export function homePathFor(user: SessionUser) {
  * roles can only view. The KYC Approval Form and internal approval are
  * decided in Approvals, by the Risk & Compliance Manager and the TD / MD.
  */
-export function onboardingPermissions(role: Role) {
+export function onboardingPermissions(user: SessionUser) {
+  if (usesBackendPermissions(user)) {
+    // The backend gives each onboarding action its own permission. Any write
+    // permission on leads, onboarding or KYC lets the user work on a lead;
+    // the server still checks each action.
+    const writes = (user.permissions ?? []).filter(
+      (p) => /^(LEAD|ONBOARDING|KYC)_/.test(p) && !p.endsWith("_READ"),
+    );
+    return { canUpdate: writes.length > 0, canRegisterLead: hasPermission(user, "LEAD_CREATE") };
+  }
+  const role = user.role;
   return {
     canUpdate: [
       "MD",

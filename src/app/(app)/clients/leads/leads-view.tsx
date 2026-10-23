@@ -36,7 +36,7 @@ type Tab = (typeof TABS)[number];
 export function LeadsView() {
   const router = useRouter();
   const { user } = useCurrentUser();
-  const { canRegisterLead } = onboardingPermissions(user.role);
+  const { canRegisterLead } = onboardingPermissions(user);
 
   const [cases, setCases] = useState<OnboardingCase[]>([]);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
