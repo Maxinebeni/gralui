@@ -86,9 +86,13 @@ function toAmount(text: string): number {
   return cleaned === "" ? Number.NaN : Number(cleaned);
 }
  
-function validate(v: FormValues, allowed: { classes: string[]; insurers: string[] }): Errors {
+function validate(
+  v: FormValues,
+  allowed: { classes: string[]; insurers: string[] },
+  numberGenerated = false,
+): Errors {
   const e: Errors = {};
-  if (!v.id.trim()) e.id = "Enter the policy number issued by the insurer.";
+  if (!numberGenerated && !v.id.trim()) e.id = "Enter the policy number issued by the insurer.";
   if (!v.classOfInsurance) e.classOfInsurance = "Choose the class of insurance.";
   else if (!allowed.classes.includes(v.classOfInsurance)) {
     e.classOfInsurance = "Choose a class from GRAL's list.";
@@ -184,6 +188,8 @@ export function PolicyForm({
   const insurerGroups = withCurrentValue(catalog.insurerGroups, policy?.insurer);
   const classGroups = withCurrentValue(onlyOffered(catalog.productGroups, offered), policy?.classOfInsurance);
   const noProductsForInsurer = offered !== null && offered.length === 0;
+  // For new policies on GRAL's system, the backend generates the policy number.
+  const numberGenerated = catalog.fromBackend && !policy;
   const allowed = {
     classes: classGroups.flatMap((g) => g.options),
     insurers: insurerGroups.flatMap((g) => g.options),
@@ -196,7 +202,7 @@ export function PolicyForm({
  
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const found = validate(values, allowed);
+    const found = validate(values, allowed, numberGenerated);
     setErrors(found);
     if (Object.keys(found).length > 0) {
       toast.error("Please fix the highlighted fields.");
@@ -243,23 +249,27 @@ export function PolicyForm({
       </p>
       {catalog.fromBackend ? (
         <p className="mt-2 rounded-xl bg-pale px-3 py-2 text-[11px] text-muted-foreground">
-          The policy number, insurer, class and dates are saved to GRAL&apos;s system. The cover, premium and
-          status details stay on this screen until the system can store them.
+          {policy
+            ? "The policy number, insurer, class and dates cannot be changed here. Premium and payment changes are saved to GRAL's system with their history."
+            : "GRAL's system gives the policy its number when you save. The sum insured and status stay on this screen until the system can store them."}
         </p>
       ) : null}
  
       <div className="mt-4 space-y-6">
         <Section title="Policy details">
-          <Field id="policyId" label="Policy number" error={errors.id} wide>
-            <input
-              id="policyId"
-              value={values.id}
-              onChange={(e) => set("id", e.target.value)}
-              placeholder="As issued by the insurer, e.g. POL/2026/0001"
-              className={inputClass(errors.id)}
-              {...describedBy("policyId", errors.id)}
-            />
-          </Field>
+          {numberGenerated ? null : (
+            <Field id="policyId" label="Policy number" error={errors.id} wide>
+              <input
+                id="policyId"
+                value={values.id}
+                onChange={(e) => set("id", e.target.value)}
+                placeholder="As issued by the insurer, e.g. POL/2026/0001"
+                readOnly={catalog.fromBackend}
+                className={inputClass(errors.id)}
+                {...describedBy("policyId", errors.id)}
+              />
+            </Field>
+          )}
           <Field id="insurer" label="Insurer" error={errors.insurer} wide>
             <GroupedSelect
               id="insurer"
