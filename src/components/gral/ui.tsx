@@ -293,6 +293,38 @@ export function SegmentedBar({ segments }: { segments: { label: string; value: n
   );
 }
 
+/** Counts per stage of a process: one row per stage with its name, a bar sized by count, and the number. */
+export function StageBar({
+  stages,
+  onSelect,
+}: {
+  stages: { label: string; count: number }[];
+  onSelect?: (label: string) => void;
+}) {
+  const max = Math.max(...stages.map((s) => s.count), 1);
+  return (
+    <ul className="space-y-3">
+      {stages.map((s) => (
+        <li key={s.label}>
+          <button
+            type="button"
+            disabled={!onSelect}
+            onClick={() => onSelect?.(s.label)}
+            className="grid w-full grid-cols-[minmax(0,7.5rem)_minmax(0,1fr)_2rem] items-center gap-3 text-left disabled:cursor-default"
+            title={`${s.label}: ${s.count}`}
+          >
+            <span className="truncate text-xs text-muted-foreground">{s.label}</span>
+            <span className="h-2 overflow-hidden rounded-full bg-secondary">
+              <span className="block h-full rounded-full bg-sky" style={{ width: `${(s.count / max) * 100}%` }} />
+            </span>
+            <span className={cn("text-right text-sm font-semibold", !s.count && "text-subtle")}>{s.count}</span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function ChartCard({
   title,
   legend,

@@ -274,9 +274,7 @@ export type ApprovalSubjectType =
   | "CLAIM_SETTLEMENT"
   | "KYC"
   | "POLICY_ENDORSEMENT"
-  /** KYC Approval Form for a new client (onboarding step 3). */
-  | "ONBOARDING_KYC"
-  /** Internal approval of a new client's recommended cover (onboarding step 8). */
+  /** Internal approval of a policy track's recommendation or single-source request (onboarding step 8). */
   | "NEW_BUSINESS";
 export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED" | "RETURNED";
 export type ApprovalDecision = "APPROVE" | "REJECT" | "RETURN";
@@ -340,7 +338,7 @@ export type TaskType =
   | "ONBOARDING_STEP"
   | "MANUAL";
 
-export type TaskResourceType = "CLAIM" | "RENEWAL" | "CLIENT" | "POLICY" | "APPROVAL" | "ONBOARDING";
+export type TaskResourceType = "CLAIM" | "RENEWAL" | "CLIENT" | "POLICY" | "APPROVAL" | "LEAD" | "ONBOARDING" | "KYC_REVIEW";
 
 export type WorkTask = {
   id: string;
@@ -433,9 +431,9 @@ export type DocumentClassification =
   | "APPROVAL_EVIDENCE"
   | "CORRESPONDENCE";
  
-/** The record a document belongs to. The backend accepts CLIENT only so far. */
+/** The record a document belongs to. */
 export type DocumentSubject = {
-  type: "CLIENT" | "POLICY" | "CLAIM" | "RENEWAL" | "APPROVAL" | "ONBOARDING";
+  type: "CLIENT" | "POLICY" | "CLAIM" | "RENEWAL" | "APPROVAL" | "LEAD" | "ONBOARDING" | "KYC";
   /** Backend UUID when the record comes from the backend, otherwise its reference. */
   id: string;
 };
@@ -453,85 +451,215 @@ export type StoredDocument = {
   previous: { version: number; originalFileName: string; uploadedAt: string }[];
 };
 
-/* -------------------------------- Onboarding --------------------------------- */
-// GRAL's Client Acquisition SOP (SOP Handbook v3, section 3): 11 steps from
-// lead to welcome letter. Proposed contract; the backend has only the KYC
-// part planned so far (KYC-01 to KYC-03).
+/* ---------------------------- Leads and onboarding ---------------------------- */
+// The backend's model (ADR-027, docs/api/onboarding.md in the backend repo).
+// A lead is the prospect (SOP steps 1 and 2). Each policy being placed for it
+// is a separate policy track (steps 3 to 11) that moves on its own. KYC is a
+// review of the client, shared by all of its tracks. These shapes match the
+// backend's LeadView, OnboardingView and KycView, so screens read them as-is.
 
-export type OnboardingStepCode =
-  | "LEAD"
-  | "MEETING"
-  | "KYC"
-  | "RISK_SURVEY"
-  | "DESIGN"
-  | "QUOTES"
-  | "COMPARISON"
-  | "APPROVAL"
-  | "ACCEPTANCE"
-  | "PLACEMENT"
-  | "WELCOME";
+export type LeadStatus = "OPEN" | "CONVERTED" | "CLOSED_LOST" | "CANCELLED";
+export type LeadType = "CORPORATE" | "INDIVIDUAL";
 
-export type OnboardingStepRecord = {
-  code: OnboardingStepCode;
-  completedAt: string; // ISO date
-  completedBy: string;
-  note: string;
-  evidence?: string;
-};
-
-/** One document on the KYC checklist. */
-export type KycItem = {
-  name: string;
-  required: boolean;
-  /** The document expires (e.g. a trading licence), so an expiry date is recorded. */
-  hasExpiry?: boolean;
+/** A document recorded as proof of an action, pinned to an exact version. */
+export type Proof = {
+  purpose: string;
+  documentId: string;
+  documentVersion: number;
+  occurredAt: string; // ISO date-time
+  /** Shown on screen when known (demo mode, or a file uploaded in this tab). */
   fileName?: string;
-  receivedAt?: string;
-  expiry?: string;
 };
 
-export type KycScreening = {
-  result: "CLEAR" | "POSSIBLE_MATCH";
-  at: string;
-  by: string;
-  note: string;
-};
-
-export type OnboardingCase = {
-  id: string; // e.g. ONB-2026-004
-  prospect: {
-    name: string;
-    type: ClientType;
-    sector: string;
-    address: string;
-    contact: ClientContact;
-    referralSource: string;
-  };
-  accountExecutive: string;
-  registeredBy: string;
-  createdAt: string; // ISO date
-  completed: OnboardingStepRecord[];
-  kyc: {
-    items: KycItem[];
-    screening?: KycScreening;
-    approvalId?: string;
-  };
-  riskGrade?: "Low" | "Medium" | "High";
-  quotes: RenewalQuote[];
-  /** Written reason when fewer than 3 insurers quoted (needs the MD's approval). */
-  singleSourceReason?: string;
-  approvalId?: string;
-  placement?: {
-    policyNumber: string;
-    classOfInsurance: string;
-    insurer: string;
-    premium: number;
-    start: string; // ISO date
-    expiry: string; // ISO date
-  };
-  /** Set when the client file is opened (step 11). */
+export type Lead = {
+  id: string;
+  name: string;
+  type: LeadType;
+  industry: string;
+  source: string;
+  sourceReference?: string;
+  contactName: string;
+  email?: string;
+  phone?: string;
+  ownerId?: string;
   clientId?: string;
-  history: ClaimEvent[];
+  status: LeadStatus;
+  version: number;
+  /** The Commercial Director confirmed the registration. */
+  confirmed: boolean;
+  receivedAt: string;
+  respondedAt?: string;
+  assessed: boolean;
+  convertedAt?: string;
+  /** e.g. OWNER_REQUIRED, LEAD_CONFIRMATION_REQUIRED, ASSESSMENT_REQUIRED, CLIENT_IDENTITY_REQUIRED. */
+  blockers: string[];
+  assessment?: {
+    meetingAt: string;
+    needs: string;
+    assets: string;
+    employeeCount?: number;
+    existingCover: string;
+    evidence: Proof[];
+  };
+  possibleDuplicateLeadIds: string[];
+  responseDueAt?: string;
+  needsDueAt?: string;
+  work: { kind: string; taskId: string; status: string }[];
+  responseEvidence?: Proof;
+  registeredAt: string;
+  updatedAt: string;
+  /** Front-end additions: names resolved from IDs. */
+  ownerName?: string;
+  clientName?: string;
+};
+
+export type TrackStatus = "OPEN" | "ON_HOLD" | "COMPLETED" | "CLOSED_LOST" | "CANCELLED";
+
+export type TrackMilestone = {
+  /** KYC, SURVEY, PROGRAM, RFQ, COMPARISON, APPROVAL, ACCEPTANCE, PLACEMENT, WELCOME. */
+  code: string;
+  stage: number;
+  dueAt?: string;
+  status: string; // OPEN | COMPLETED | CANCELLED
+  assigneeId?: string;
+};
+
+export type PolicyTerms = {
+  insurerId: string;
+  productId: string;
+  insuredName: string;
+  effectDate: string; // ISO date
+  expiryDate: string;
+  netPremium: number;
+  totalPremium: number;
+  currency: string;
+  /** Fraction, e.g. 0.15 for 15%. */
+  commissionRate: number;
+  sumsInsured: string;
+  limits: string;
+  deductibles: string;
+  exclusions: string;
+  claimsSupport: string;
+};
+
+export type TrackQuote = {
+  id: string;
+  version: number;
+  terms: PolicyTerms;
+  insurerReference?: string;
+  receivedAt: string;
+  documentId?: string;
+  documentVersion?: number;
+};
+
+export type TrackInvitation = {
+  insurerId: string;
+  sentAt: string;
+  responseDue: string; // ISO date
+  /** QUOTED, DECLINED or NO_RESPONSE; empty while waiting. */
+  response?: string;
+  resolvedAt?: string;
+  responseDetail?: string;
+};
+
+/** The client's KYC as a policy track sees it: whether quotes may go ahead. */
+export type KycGate = {
+  clientId: string;
+  caseId?: string;
+  /** NOT_STARTED, DRAFT, SUBMITTED, RETURNED, APPROVED, REJECTED. */
+  status: string;
+  /** READY when the track may go ahead; otherwise why not. */
+  gateStatus: string;
+  completeDocumentsAt?: string;
+  dueAt?: string;
+  revisedDueAt?: string;
+  missingRequirements: string[];
+};
+
+export type PolicyTrack = {
+  id: string;
+  leadId: string;
+  clientId: string;
+  ownerId?: string;
+  productId: string;
+  /** GI_UNDERWRITING_MANAGER or MEDICAL_UNDERWRITING_MANAGER. */
+  underwritingRole: string;
+  /** SOP step, 3 to 11. */
+  stage: number;
+  status: TrackStatus;
+  version: number;
+  materialRevision: number;
+  milestones: TrackMilestone[];
+  quotes: TrackQuote[];
+  recommendation?: {
+    quoteId: string;
+    quoteVersion: number;
+    annualCommissionRwf: number;
+    basis: string;
+    comparison: string;
+    rationale: string;
+    /** STANDARD (under RWF 1m), LARGE (RWF 1m to 10m) or STRATEGIC (above). */
+    tier: string;
+  };
+  /** Approval request IDs by purpose: RECOMMENDATION, SINGLE_SOURCE. */
+  approvalRequests: Record<string, string>;
+  evidence: Proof[];
+  observedSchedule?: PolicyTerms;
+  discrepancies: string[];
+  policyId?: string;
+  policyPeriodId?: string;
+  renewalId?: string;
+  convertedAt?: string;
+  blockers: string[];
+  /** The buttons the backend allows the signed-in person right now. */
+  availableActions: string[];
+  riskGrade?: string;
+  surveyFindings?: string;
+  programTerms?: string;
+  invitations: TrackInvitation[];
+  renewalProfile?: string;
+  /** People by responsibility: OWNER, TECHNICAL, UNDERWRITING. */
+  assignees: Record<string, string>;
+  kyc?: KycGate;
+  boardApproval?: { authority: string; recordedBy: string; recordedAt: string; decisionAt: string };
+  /** Front-end additions. */
+  productName?: string;
+  leadName?: string;
+};
+
+/** One entry of a lead's, track's or KYC review's history. */
+export type CommandHistory = { action: string; actorId?: string; actorName?: string; reason?: string; occurredAt: string };
+
+export type KycReviewStatus = "DRAFT" | "SUBMITTED" | "RETURNED" | "APPROVED" | "REJECTED";
+
+export type KycRequirement = { code: string; label: string; required: boolean };
+
+/** GRAL's KYC checklist for a client type, set up in the system and versioned. */
+export type KycTemplate = { code: string; version: number; clientType: LeadType; requirements: KycRequirement[] };
+
+/** A KYC review of one client. */
+export type KycReview = {
+  id: string;
+  clientId: string;
+  version: number;
+  status: KycReviewStatus;
+  templateCode: string;
+  templateVersion: number;
+  items: (KycRequirement & { documentId?: string; documentVersion?: number })[];
+  /** CLEAR, REVIEW_REQUIRED or REJECTED. */
+  screeningResult?: string;
+  completeDocumentsAt?: string;
+  /** Review deadline: 3 working days after the last required document. */
+  dueAt?: string;
+  revisedDueAt?: string;
+  decidedBy?: string;
+  decidedAt?: string;
+  blockers: string[];
+  screeningNotes?: string;
+  decisionReason?: string;
+  evidence: (Proof & { receivedAt?: string })[];
+  /** Front-end addition. */
+  clientName?: string;
 };
 
 /* ------------------------------ Administration ------------------------------- */
@@ -587,8 +715,8 @@ export type PermissionDefinition = {
  
 export type ClaimStep = { n: number; name: string; sla: string };
 export type ClaimMonth = { month: string; amount: number; count: number };
-/** `module` decides who may see the entry, like the pages it comes from. */
-export type ActivityItem = { who: string; what: string; when: string; module: "Claims" | "Renewals" | "Clients" };
+/** One thing someone did, for Recent Activity. `at` is an ISO date or date-time. */
+export type ActivityItem = { at: string; who: string; what: string; module: "Claims" | "Renewals"; href: string };
 
 export type SessionUser = {
   /** Backend user ID (UUID). */

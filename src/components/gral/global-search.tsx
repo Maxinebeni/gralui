@@ -11,19 +11,19 @@ import { useRouter } from "next/navigation";
 import { Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
-import { listClaimsSummary, listClients, listRenewals } from "@/lib/api";
+import { listClaimsSummary, listClients, listManagedUsers, listRenewals } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { canAccessPath } from "@/lib/permissions";
 
 type Result = {
   key: string;
-  group: "Claims" | "Clients" | "Renewals";
+  group: "Users" | "Claims" | "Clients" | "Renewals";
   title: string;
   detail: string;
   href: string;
 };
 
-const GROUPS: Result["group"][] = ["Claims", "Clients", "Renewals"];
+const GROUPS: Result["group"][] = ["Users", "Claims", "Clients", "Renewals"];
 const PER_GROUP = 5;
 /** Client search goes to the backend, so wait for at least this many letters. */
 const CLIENT_MIN_CHARS = 2;
@@ -45,9 +45,21 @@ export function GlobalSearch({ open, onClose }: { open: boolean; onClose: () => 
       clients: canAccessPath(user, "/clients"),
       renewals: canAccessPath(user, "/renewals"),
       claims: canAccessPath(user, "/claims"),
+      users: canAccessPath(user, "/admin"),
     }),
     [user],
   );
+
+  // The placeholder names only what this person can search.
+  const searchable = [
+    canSee.users && "users by name or email",
+    canSee.clients && "clients",
+    canSee.claims && "claims",
+    canSee.renewals && "renewals",
+  ].filter(Boolean) as string[];
+  const placeholder = searchable.length
+    ? `Search ${searchable.length > 1 ? `${searchable.slice(0, -1).join(", ")} or ${searchable.at(-1)}` : searchable[0]}…`
+    : "Search…";
 
   useEffect(() => {
     if (!open) return undefined;
@@ -67,13 +79,23 @@ export function GlobalSearch({ open, onClose }: { open: boolean; onClose: () => 
     }
     let cancelled = false;
     const timer = setTimeout(async () => {
-      const [claims, clients, renewals] = await Promise.all([
+      const [users, claims, clients, renewals] = await Promise.all([
+        canSee.users ? listManagedUsers().catch(() => []) : Promise.resolve([]),
         canSee.claims ? listClaimsSummary().catch(() => []) : Promise.resolve([]),
         canSee.clients && q.length >= CLIENT_MIN_CHARS ? listClients(q).catch(() => []) : Promise.resolve([]),
         canSee.renewals ? listRenewals().catch(() => []) : Promise.resolve([]),
       ]);
 
       const found: Result[] = [];
+      for (const u of users.filter((u) => matches(q, u.fullName, u.email)).slice(0, PER_GROUP)) {
+        found.push({
+          key: `user-${u.id}`,
+          group: "Users",
+          title: u.fullName,
+          detail: u.email,
+          href: `/admin?user=${encodeURIComponent(u.id)}`,
+        });
+      }
       for (const c of claims.filter((c) => matches(q, c.id, c.client, c.classOfInsurance)).slice(0, PER_GROUP)) {
         found.push({
           key: `claim-${c.id}`,
@@ -154,13 +176,13 @@ export function GlobalSearch({ open, onClose }: { open: boolean; onClose: () => 
         aria-label="Search the platform"
         className="float-card relative w-full max-w-[560px] overflow-hidden shadow-[var(--shadow-float)]"
       >
-        <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
+        <div className={cn("flex items-center gap-2.5 px-4 py-3", query.trim() && "border-b border-border")}>
           <Search className="size-4 shrink-0 text-subtle" />
           <input
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search claims, clients or renewals…"
+            placeholder={placeholder}
             aria-label="Search the platform"
             className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-subtle"
           />
@@ -173,12 +195,8 @@ export function GlobalSearch({ open, onClose }: { open: boolean; onClose: () => 
             <X className="size-4" />
           </button>
         </div>
-        <div className="max-h-[50vh] overflow-y-auto p-2">
-          {query.trim() === "" ? (
-            <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-              Type a claim ID, client name, policy or insurer to search.
-            </p>
-          ) : ordered.length === 0 ? (
+        <div className={cn("max-h-[50vh] overflow-y-auto p-2", query.trim() === "" && "hidden")}>
+          {query.trim() === "" ? null : ordered.length === 0 ? (
             <p className="px-3 py-6 text-center text-xs text-muted-foreground">
               No matches for “{query.trim()}”.
             </p>

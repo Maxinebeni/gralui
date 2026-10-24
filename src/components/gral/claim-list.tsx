@@ -5,10 +5,10 @@
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Search } from "lucide-react";
-import { SlideOver } from "@/components/gral/shell";
+import Link from "next/link";
+import { ArrowLeft, Search } from "lucide-react";
 import { ClaimDetailPanel } from "@/components/gral/claim-detail";
-import { Chip, Person, PriorityPill, TextLink } from "@/components/gral/ui";
+import { Chip, FloatCard, Person, PriorityPill } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
 import { listClaims } from "@/lib/api";
 import {
@@ -83,6 +83,12 @@ export function useOpenClaim(claims: Claim[]) {
   const openId = searchParams.get("claim");
 
   const open = claims.find((c) => c.id === openId) ?? null;
+  const backHref = (() => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("claim");
+    const qs = params.toString();
+    return qs ? `${pathname}?${qs}` : pathname;
+  })();
   const setOpen = (c: Claim | null) => {
     const params = new URLSearchParams(searchParams.toString());
     if (c) params.set("claim", c.id);
@@ -90,7 +96,7 @@ export function useOpenClaim(claims: Claim[]) {
     const qs = params.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   };
-  return { open, setOpen };
+  return { open, openId, backHref, setOpen };
 }
 
 export function ClaimSlaChip({ claim }: { claim: Claim }) {
@@ -101,19 +107,27 @@ export function ClaimSlaChip({ claim }: { claim: Claim }) {
   return <Chip tone="sky">Within SLA</Chip>;
 }
 
-export function ClaimSlideOver({
+/** A claim is a long process, so it opens as its own full page. */
+export function ClaimPage({
   claim,
-  onClose,
+  backHref,
+  backLabel,
   onChanged,
 }: {
-  claim: Claim | null;
-  onClose: () => void;
+  claim: Claim;
+  backHref: string;
+  backLabel: string;
   onChanged: () => void;
 }) {
   return (
-    <SlideOver open={!!claim} onClose={onClose}>
-      {claim ? <ClaimDetailPanel key={claim.id} claim={claim} onClose={onClose} onChanged={onChanged} /> : null}
-    </SlideOver>
+    <>
+      <Link href={backHref} scroll={false} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="size-4" /> {backLabel}
+      </Link>
+      <FloatCard className="mt-4 overflow-hidden">
+        <ClaimDetailPanel key={claim.id} claim={claim} onChanged={onChanged} />
+      </FloatCard>
+    </>
   );
 }
 
@@ -150,20 +164,20 @@ export function ClaimsTable({
 }) {
   const rows = claims;
   return (
-    <div className="overflow-x-auto px-2 pb-4">
+    <div className="overflow-x-auto px-3 pb-4 sm:px-4">
       <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left">
         <thead>
-          <tr className="bg-pale text-[11px] text-muted-foreground">
+          <HeadRow>
             <Th className="rounded-l-xl">Claim</Th>
             <Th>Priority</Th>
             <Th>Days Open</Th>
             <Th>Amount (RWF)</Th>
             <Th>Step</Th>
-            <Th>Handler</Th>
-            <Th className="rounded-r-xl">Action</Th>
-          </tr>
+            <Th className="rounded-r-xl">Handler</Th>
+          </HeadRow>
         </thead>
         <tbody>
+          <HeadGap colSpan={6} />
           {rows.map((c) => (
             <tr key={c.id} className="cursor-pointer hover:bg-pale/50" onClick={() => onView(c)}>
               <Td>
@@ -184,15 +198,11 @@ export function ClaimsTable({
                   <Person name={c.handler} />
                 </div>
               </Td>
-              <Td>
-                {/* The whole row opens the claim; this link is the visible cue. */}
-                <TextLink>View Detail</TextLink>
-              </Td>
             </tr>
           ))}
           {rows.length === 0 ? (
             <tr>
-              <Td className="text-xs text-muted-foreground" colSpan={7}>
+              <Td className="text-xs text-muted-foreground" colSpan={6}>
                 {emptyMessage}
               </Td>
             </tr>
@@ -203,8 +213,21 @@ export function ClaimsTable({
   );
 }
 
+export function HeadRow({ children }: { children: ReactNode }) {
+  return <tr className="bg-pale text-xs text-foreground">{children}</tr>;
+}
+
+/** A little space between the table heading row and the first row. */
+export function HeadGap({ colSpan }: { colSpan: number }) {
+  return (
+    <tr aria-hidden>
+      <td colSpan={colSpan} className="h-2 p-0" />
+    </tr>
+  );
+}
+
 export function Th({ children, className }: { children?: ReactNode; className?: string }) {
-  return <th className={cn("px-3 py-2.5 font-medium whitespace-nowrap", className)}>{children}</th>;
+  return <th className={cn("px-3 py-3 font-semibold whitespace-nowrap", className)}>{children}</th>;
 }
 
 export function Td({
@@ -217,7 +240,7 @@ export function Td({
   colSpan?: number;
 }) {
   return (
-    <td colSpan={colSpan} className={cn("border-b border-border px-3 py-3 align-middle", className)}>
+    <td colSpan={colSpan} className={cn("border-b border-border px-3 py-3.5 align-middle", className)}>
       {children}
     </td>
   );

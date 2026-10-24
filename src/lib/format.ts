@@ -32,3 +32,17 @@ export const NOT_RECORDED = "Not recorded";
 export function rwfOrNotRecorded(amount: number | null | undefined) {
   return amount === null || amount === undefined ? NOT_RECORDED : formatRwf(amount);
 }
+
+/** "2h ago", "Yesterday", "3 days ago", or a date for anything older than a week. */
+export function timeAgo(iso: string, now = new Date()) {
+  const then = new Date(iso.length <= 10 ? `${iso}T12:00:00` : iso);
+  const mins = Math.round((now.getTime() - then.getTime()) / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24 && then.toDateString() === now.toDateString()) return `${hours}h ago`;
+  const days = Math.round((new Date(now.toDateString()).getTime() - new Date(then.toDateString()).getTime()) / 86400000);
+  if (days <= 1) return "Yesterday";
+  if (days < 7) return `${days} days ago`;
+  return then.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}

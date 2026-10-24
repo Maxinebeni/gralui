@@ -348,6 +348,36 @@ export function SlideOver({
   );
 }
 
+/** A centred pop-up for forms, set a little below the top of the screen. */
+export function CenteredModal({
+  open,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-16 pb-8 sm:pt-24">
+      <button
+        type="button"
+        aria-label="Close"
+        onClick={onClose}
+        className="absolute inset-0 bg-foreground/25 backdrop-blur-[2px]"
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="relative max-h-[calc(100dvh-8rem)] w-full max-w-[720px] overflow-y-auto rounded-3xl bg-card shadow-[var(--shadow-float)] duration-200 animate-in fade-in zoom-in-95 sm:max-h-[calc(100dvh-10rem)]"
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 /** Shown when the current role is not allowed on a page. */
 export function NoAccess() {
   const { user } = useCurrentUser();

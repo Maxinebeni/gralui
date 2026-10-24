@@ -18,9 +18,12 @@ export function recordHref(type: TaskResourceType | ApprovalSubjectType, id: str
       return `/policies/${ref}`;
     case "APPROVAL":
       return `/approvals?request=${ref}`;
-    case "ONBOARDING":
-    case "ONBOARDING_KYC":
-    case "NEW_BUSINESS":
+    case "LEAD":
       return `/clients/leads/${ref}`;
+    case "ONBOARDING":
+    case "NEW_BUSINESS":
+      return `/clients/leads/tracks/${ref}`;
+    case "KYC_REVIEW":
+      return `/clients/kyc/${ref}`;
   }
 }

@@ -14,14 +14,11 @@
 import {
   APPROVALS,
   CLAIMS,
-  CLAIM_MONTHLY,
   CLAIM_STEPS,
   CLIENTS,
   MANUAL_TASKS,
-  ONBOARDING_CASES,
   POLICIES_BY_INSURER,
   POLICY_TERMS,
-  RECENT_ACTIVITY,
   RENEWAL_CASES,
   RENEWAL_MONTHLY,
 } from "./mock-data";
@@ -33,6 +30,7 @@ import {
   mockUpdateClient,
 } from "./mock-clients";
 import { DEMO_ADMIN_ID, PERMISSIONS, ROLES_DATA, USERS_DATA } from "./mock-admin";
+import { DEMO_KYC_REVIEWS, DEMO_KYC_TEMPLATES, DEMO_LEADS, DEMO_TRACKS } from "./mock-leads";
 import {
   APPROVAL_POLICY_VERSION,
   DECISION_DAYS,
@@ -59,19 +57,20 @@ import {
 } from "./claims";
 import { displayToIso } from "./format";
 import {
-  checklistFor,
-  ONBOARDING_STEPS,
-  currentStep as onboardingCurrentStep,
-  kycApproved,
-  kycSubmitBlocker,
-  stepDue,
-  stepOf,
+  ACTION_LABEL,
+  TIER_LABEL,
+  blockerText,
+  commissionTier,
+  leadReady,
+  nextLeadStep,
+  openMilestone,
+  stageOf,
 } from "./onboarding";
 import { RWANDA_HOLIDAYS, type Holiday } from "./holidays";
+import { demoCanRunTrackAction } from "./permissions";
 import { INSURER_GROUPS, PRODUCT_GROUPS, type OptionGroup } from "./reference-data";
-import { completionBlocker, currentMilestone, formatDate, milestoneDue, todayIso } from "./renewals";
+import { RENEWAL_MILESTONES, completionBlocker, currentMilestone, formatDate, milestoneDue, todayIso } from "./renewals";
 import type {
-  OnboardingStepRecord,
   AccessCategory,
   ActivityItem,
   ApprovalDecision,
@@ -87,19 +86,27 @@ import type {
   ClientClaim,
   ClientContact,
   ClientType,
+  CommandHistory,
   DocumentClassification,
   DocumentSubject,
   EvidenceRef,
   InsurerSummary,
+  KycGate,
+  KycRequirement,
+  KycReview,
+  KycTemplate,
+  Lead,
+  LeadType,
   ManagedRole,
   ManagedSession,
-  OnboardingCase,
-  OnboardingStepCode,
   ManagedUser,
   PermissionDefinition,
   Policy,
   PolicyDetail,
   PolicyStatus,
+  PolicyTerms,
+  PolicyTrack,
+  Proof,
   PolicyFinancials,
   PolicyMovement,
   PolicyPeriod,
@@ -109,6 +116,7 @@ import type {
   Role,
   SessionUser,
   StoredDocument,
+  TrackStatus,
   WorkTask,
 } from "./types";
 
@@ -1135,10 +1143,8 @@ export async function decideApproval(
   const label = { APPROVE: "Approved", REJECT: "Rejected", RETURN: "Returned" }[input.decision];
   const saved = saveApproval({ ...r, steps, status: requestStatus }, actor.name, `${label} by ${step.role}`);
 
-  // A fully approved onboarding request completes its KYC or approval step.
-  if (saved.status === "APPROVED" && (saved.subjectType === "ONBOARDING_KYC" || saved.subjectType === "NEW_BUSINESS")) {
-    onOnboardingApproved(saved, actor.name);
-  }
+  // A fully approved onboarding request moves its policy track to the presentation step.
+  if (saved.subjectType === "NEW_BUSINESS") onTrackApprovalDecided(saved);
 
   // A fully approved renewal completes its Approval milestone.
   if (saved.status === "APPROVED" && saved.subjectType === "RENEWAL") {
@@ -1344,7 +1350,7 @@ export async function listTasks(): Promise<WorkTask[]> {
     ...CLAIMS.map(claimTask),
     ...RENEWAL_CASES.map((r) => renewalTask(r, pendingRenewals.has(r.id))),
     ...approvals.map(approvalTask),
-    ...ONBOARDING_CASES.map(onboardingTask),
+    ...(MOCK_AUTH ? onboardingTasks() : []),
   ].filter((t): t is WorkTask => t !== null);
 
   const backend = MOCK_AUTH ? [] : await listBackendTasks();
@@ -1564,11 +1570,11 @@ async function toBackendApproval(h: BackendApprovalHistory, inInbox = false): Pr
   return {
     id: v.id,
     // The screens group requests by type; backend types not known here show under KYC.
-    subjectType: (["RENEWAL", "CLAIM_SETTLEMENT", "KYC", "POLICY_ENDORSEMENT", "ONBOARDING_KYC", "NEW_BUSINESS"].includes(
-      v.subjectType.toUpperCase(),
-    )
-      ? v.subjectType.toUpperCase()
-      : "KYC") as ApprovalRequest["subjectType"],
+    subjectType: (v.subjectType.toUpperCase() === "ONBOARDING"
+      ? "NEW_BUSINESS"
+      : ["RENEWAL", "CLAIM_SETTLEMENT", "KYC", "POLICY_ENDORSEMENT", "NEW_BUSINESS"].includes(v.subjectType.toUpperCase())
+        ? v.subjectType.toUpperCase()
+        : "KYC") as ApprovalRequest["subjectType"],
     subjectId: v.subjectId,
     subjectRef: subject.ref,
     subjectRevision: v.materialRevision,
@@ -1684,7 +1690,8 @@ function taskType(kind: string): WorkTask["type"] {
 
 function taskResourceType(type: string): WorkTask["resourceType"] {
   const t = type.toUpperCase();
-  return (["CLAIM", "RENEWAL", "CLIENT", "POLICY", "APPROVAL", "ONBOARDING"].includes(t) ? t : "CLIENT") as WorkTask["resourceType"];
+  if (t === "KYC") return "KYC_REVIEW";
+  return (["CLAIM", "RENEWAL", "CLIENT", "POLICY", "APPROVAL", "LEAD", "ONBOARDING"].includes(t) ? t : "CLIENT") as WorkTask["resourceType"];
 }
 
 async function toBackendTask(v: BackendTaskView): Promise<WorkTask & { version: number }> {
@@ -1965,8 +1972,8 @@ const LOCAL_FILES = new Map<string, Blob>();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function usesDocumentBackend(subject: DocumentSubject) {
-  // The backend accepts documents for clients and claims so far.
-  return !MOCK_AUTH && (subject.type === "CLIENT" || subject.type === "CLAIM") && UUID_PATTERN.test(subject.id);
+  // The backend accepts documents for clients, claims, leads, policy tracks and KYC reviews.
+  return !MOCK_AUTH && ["CLIENT", "CLAIM", "LEAD", "ONBOARDING", "KYC"].includes(subject.type) && UUID_PATTERN.test(subject.id);
 }
 
 function subjectKey(subject: DocumentSubject) {
@@ -2478,360 +2485,1079 @@ export async function updateRole(
   return saved!;
 }
 
-/* -------------------------------- Onboarding --------------------------------- */
-// Mock version of GRAL's Client Acquisition SOP (section 3). Changes are kept
-// in memory until the page is refreshed. The backend has only the KYC part
-// planned (KYC-01 to KYC-03, Christian); the other steps need backlog items.
-// Rules the backend must also enforce: steps in order, evidence where the SOP
-// asks for a record, no quotation before the KYC Approval Form is signed,
-// at least 3 quotes unless justified, written acceptance before placement.
+/* ---------------------------- Leads and onboarding ---------------------------- */
+// The backend's onboarding (docs/api/onboarding.md in the backend repo): a lead
+// for steps 1 and 2, then one policy track per policy for steps 3 to 11, with
+// KYC as a review of the client. Every action is a command carrying a fresh
+// commandId and the version the screen was showing; most need a document as
+// proof, uploaded first and then referenced by ID and version. The backend
+// returns which actions are allowed (availableActions) and what is blocking.
+// Demo mode keeps sample data in the same shapes (mock-leads.ts) and applies
+// the main rules, so the screens behave the same way.
 
-function findOnboarding(id: string): OnboardingCase {
-  if (BACKEND_LEADS.has(id)) {
-    throw new Error("Saving steps for this lead to GRAL's system is not connected yet. It comes in the next update.");
-  }
-  const found = ONBOARDING_CASES.find((c) => c.id === id);
-  if (!found) throw new Error("This onboarding case could not be found.");
-  return found;
+export type ChoiceOption = { id: string; name: string };
+
+/** A document chosen as proof, with when the thing it proves happened. */
+export type EvidenceInput = { file: File; occurredAt: string; detail?: string };
+
+function commandEnvelope(version?: number, reason?: string) {
+  return { commandId: crypto.randomUUID(), expectedVersion: version, ...(reason ? { reason } : {}) };
 }
 
-function saveOnboarding(updated: OnboardingCase, by: string, event: string): OnboardingCase {
-  const saved = { ...updated, history: [...updated.history, { at: todayIso(), by, text: event }] };
-  ONBOARDING_CASES[ONBOARDING_CASES.findIndex((c) => c.id === updated.id)] = saved;
-  return saved;
+/** A date from a date box as an instant the backend accepts (never in the future). */
+function instantFrom(date: string): string {
+  if (date.length > 10) return date;
+  if (date >= todayIso()) return new Date(Date.now() - 60_000).toISOString();
+  return `${date}T09:00:00Z`;
 }
 
-function finishStep(c: OnboardingCase, code: OnboardingStepCode, input: { note: string; evidence?: string }, by: string) {
-  const step = onboardingCurrentStep(c);
-  if (!step || step.code !== code) throw new Error("This step is not the current one.");
-  return saveOnboarding(
-    { ...c, completed: [...c.completed, { code, completedAt: todayIso(), completedBy: by, note: input.note, evidence: input.evidence }] },
-    by,
-    `${step.name} completed`,
-  );
-}
-
-/* -------------------------- Leads on the backend (ONB-01) -------------------------- */
-// The backend keeps a lead (the prospect) and, under it, one onboarding case per
-// policy track. The screens show one card per lead, so the two are combined:
-// steps 1 and 2 come from the lead, steps 3 to 11 from its furthest track,
-// whose milestones carry the SOP step number as "stage".
-
-type LeadView = {
-  id: string;
-  name: string;
-  type: string; // CORPORATE | INDIVIDUAL
-  industry: string;
-  source: string;
-  contactName: string;
-  email?: string;
-  phone?: string;
-  ownerId?: string;
-  clientId?: string;
-  status: string;
-  version: number;
-  receivedAt?: string;
-  registeredAt?: string;
-  updatedAt?: string;
-  assessed?: boolean;
-  assessment?: { meetingAt?: string };
-  blockers?: string[];
+const ONBOARDING_MESSAGES: Record<string, string> = {
+  STALE_VERSION: "Someone else changed this since you opened it. Refresh the page and try again.",
+  LEAD_NOT_READY: "The lead needs a confirmed registration, a needs assessment and a client before a policy track can start.",
+  LEAD_NOT_CONFIRMED: "The Commercial Director must confirm the registration first.",
+  OWNER_REQUIRED: "Assign an Accounts Executive first.",
+  CLIENT_ALREADY_LINKED: "This lead already has a client.",
+  CLIENT_OWNER_MISMATCH: "The client's account manager must be the lead's Accounts Executive.",
+  CLIENT_TYPE_MISMATCH: "The client's type does not match the lead (company or individual).",
+  CLOSE_POLICY_TRACKS_FIRST: "Close the lead's open policy tracks first.",
+  INVALID_STAGE: "This action is not allowed at the current step.",
+  INVALID_STATE: "This action is not allowed in the current state.",
+  KYC_NOT_READY: "The client's KYC must be approved first.",
+  RFQ_ALREADY_DISPATCHED: "The requests for quotations were already sent.",
+  RESPONSE_NOT_DUE: "An insurer can be marked as not replying only after its response date.",
+  INSURER_PRODUCT_NOT_AVAILABLE: "That insurer does not offer this product.",
+  QUOTE_REQUIRED: "Choose a quote to recommend.",
+  RECOMMENDATION_REQUIRED: "Recommend a quote first.",
+  APPROVAL_ALREADY_REQUESTED: "Approval was already requested.",
+  PLACEMENT_ALREADY_INSTRUCTED: "The insurer was already instructed, so the recommendation can no longer be revised.",
+  ACCEPTANCE_ALREADY_RECORDED: "The written acceptance is already recorded.",
+  SCHEDULE_REQUIRED: "Record the policy schedule first.",
+  SCHEDULE_TERMS_MISMATCH: "The schedule does not match the accepted terms.",
+  OWNER_REASSIGNMENT_REQUIRED: "The client's account manager changed. Reassign the Accounts Executive first.",
+  UNKNOWN_TIMELINE_PROFILE: "Unknown renewal timeline.",
+  INVALID_ASSIGNEE: "That person cannot be assigned to this responsibility.",
+  KYC_TEMPLATE_UNAVAILABLE: "No KYC checklist is set up for this client type yet.",
+  KYC_REVIEW_ALREADY_OPEN: "This client already has an open KYC review.",
+  KYC_DOCUMENTS_INCOMPLETE: "Some required KYC documents are still missing.",
+  KYC_REVIEW_NOT_OVERDUE: "A KYC review can only be escalated after its deadline.",
+  CLIENT_TYPE_UNRESOLVED: "The client's type must be set before a KYC review can start.",
+  DOCUMENT_NOT_USABLE: "The document could not be used. Upload it again.",
 };
-
-type OnboardingTrackView = {
-  id: string;
-  leadId: string;
-  stage: number;
-  status: string;
-  milestones?: { code: string; stage: number; dueAt?: string; status: string }[];
-  availableActions?: string[];
-  blockers?: string[];
-};
-
-/** Short references shown on screen (LD-1A2B3C4D), mapped to the backend UUID. */
-const LEAD_INDEX = new Map<string, string>();
-/** References of leads that live on the backend, so sample-only actions can refuse them. */
-const BACKEND_LEADS = new Set<string>();
-/** Milestone states that count as finished. To confirm with Toochukwu. */
-const DONE_MILESTONE = ["COMPLETED", "COMPLETE", "DONE", "SATISFIED", "SKIPPED", "NOT_APPLICABLE", "APPROVED"];
-
-function leadRef(id: string) {
-  return `LD-${id.slice(0, 8).toUpperCase()}`;
-}
 
 async function onboardingProblem(res: Response, fallback: string): Promise<string> {
   const problem = await readProblem(res);
   if (res.status === 401) return "Your session has ended. Please sign in again.";
-  if (res.status === 403) return "You do not have permission to do this on leads.";
-  if (res.status === 404) return "This lead could not be found.";
-  if (res.status === 409) return "Someone else changed this lead. Refresh the page and try again.";
+  if (res.status === 403) return "You do not have permission to do this.";
+  if (res.status === 404) return "This record could not be found.";
+  if (problem.code && ONBOARDING_MESSAGES[problem.code]) return ONBOARDING_MESSAGES[problem.code]!;
+  if (problem.code) return blockerText(problem.code);
   if (res.status === 400 && problem.fields?.length) return `Please check these fields: ${problem.fields.join(", ")}.`;
   if (problem.title && problem.title !== "Bad Request") return problem.title;
   return fallback;
 }
 
-function leadToCase(lead: LeadView, tracks: OnboardingTrackView[], managers: ManagerChoice[]): OnboardingCase {
-  const ref = leadRef(lead.id);
-  LEAD_INDEX.set(ref, lead.id);
-  BACKEND_LEADS.add(ref);
-  const owner = lead.ownerId ? managerName(lead.ownerId, managers) : "Not assigned yet";
-  const createdAt = (lead.registeredAt ?? lead.receivedAt ?? new Date().toISOString()).slice(0, 10);
+async function sendOnboarding<T>(method: "POST" | "PUT", path: string, body: unknown, fallback: string): Promise<T> {
+  const res = await apiFetch(path, { method, body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(await onboardingProblem(res, fallback));
+  return (await res.json()) as T;
+}
 
-  // Which SOP steps are finished, by step number.
-  const done = new Map<number, { at: string; note: string }>();
-  done.set(1, { at: createdAt, note: `Lead registered (${lead.source})` });
-  if (lead.assessed) {
-    done.set(2, { at: (lead.assessment?.meetingAt ?? lead.updatedAt ?? createdAt).slice(0, 10), note: "Needs assessment recorded" });
-  }
-  const track = [...tracks].sort((a, b) => b.stage - a.stage)[0];
-  for (const m of track?.milestones ?? []) {
-    if (m.stage > 2 && DONE_MILESTONE.includes(m.status.toUpperCase())) {
-      done.set(m.stage, { at: (m.dueAt ?? createdAt).slice(0, 10), note: `${m.code.replace(/_/g, " ").toLowerCase()} recorded` });
-    }
-  }
-  // The screens read the current step as the first unfinished one, so keep
-  // only the unbroken run of finished steps from step 1.
-  const completed: OnboardingStepRecord[] = [];
-  for (const step of ONBOARDING_STEPS) {
-    const d = done.get(step.n);
-    if (!d) break;
-    completed.push({ code: step.code, completedAt: d.at, completedBy: "Recorded in GRAL's system", note: d.note });
-  }
+async function readOnboarding<T>(path: string, fallback: string): Promise<T | null> {
+  const res = await apiFetch(path);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await onboardingProblem(res, fallback));
+  return (await res.json()) as T;
+}
 
-  // The lead form only registers companies; INDIVIDUAL leads show as Corporate for now.
-  const type: ClientType = "Corporate";
+/** Uploads the proof under its record with the purpose the backend checks, and returns the reference. */
+async function uploadProof(
+  subject: { type: "LEAD" | "ONBOARDING" | "KYC"; id: string },
+  input: EvidenceInput,
+  purpose: string,
+  classification: DocumentClassification = "CORRESPONDENCE",
+) {
+  const occurredAt = instantFrom(input.occurredAt);
+  const detail = input.detail?.trim() || undefined;
+  if (MOCK_AUTH) {
+    const problem = documentProblem(input.file);
+    if (problem) throw new Error(problem);
+    return { documentId: crypto.randomUUID(), documentVersion: 1, occurredAt, detail, fileName: input.file.name };
+  }
+  const doc = await uploadDocument(subject, input.file, { classification, purpose });
+  return { documentId: doc.id, documentVersion: doc.version, occurredAt, detail, fileName: input.file.name };
+}
+
+/* Names and choices */
+
+/** Products, insurers and Accounts Executives for the onboarding forms. */
+export async function onboardingOptions(): Promise<{ products: ChoiceOption[]; insurers: ChoiceOption[]; accountExecutives: ChoiceOption[] }> {
+  if (MOCK_AUTH) {
+    const names = (groups: OptionGroup[]) => groups.flatMap((g) => g.options).map((n) => ({ id: n, name: n }));
+    return { products: names(PRODUCT_GROUPS), insurers: names(INSURER_GROUPS), accountExecutives: (await mockListManagers()).map((n) => ({ id: n, name: n })) };
+  }
+  const [catalog, managers] = await Promise.all([loadCatalog(), loadManagers()]);
   return {
-    id: ref,
-    prospect: {
-      name: lead.name,
-      type,
-      sector: lead.industry,
-      address: "",
-      contact: { name: lead.contactName, title: "", email: lead.email ?? "", phone: lead.phone ?? "" },
-      referralSource: lead.source,
-    },
-    accountExecutive: owner,
-    registeredBy: "Recorded in GRAL's system",
-    createdAt,
-    completed,
-    kyc: { items: checklistFor(type) },
-    quotes: [],
-    history: [{ at: createdAt, by: "GRAL's system", text: `Lead registered (${lead.source})` }],
+    products: (catalog?.products ?? []).filter((p) => p.active).map((p) => ({ id: p.id, name: p.name })),
+    insurers: (catalog?.insurers ?? []).filter((i) => i.active).map((i) => ({ id: i.id, name: i.name })),
+    accountExecutives: managers.map((m) => ({ id: m.id, name: m.fullName })),
   };
 }
 
-async function listBackendLeads(): Promise<OnboardingCase[]> {
-  const [leadsRes, tracksRes, managers] = await Promise.all([
-    apiFetch("/api/v1/leads?size=100"),
-    apiFetch("/api/v1/onboarding-cases?size=100").catch(() => null),
-    loadManagers(),
-  ]);
-  if (!leadsRes.ok) throw new Error(await onboardingProblem(leadsRes, "Could not load the leads."));
-  const leads = ((await leadsRes.json()) as Page<LeadView>).items ?? [];
-  const tracks = tracksRes?.ok ? (((await tracksRes.json()) as Page<OnboardingTrackView>).items ?? []) : [];
-  return leads.map((lead) => leadToCase(lead, tracks.filter((t) => t.leadId === lead.id), managers));
+/** Name of a person, insurer or product from its ID. Demo IDs are already names. */
+export async function nameOf(kind: "person" | "insurer" | "product", id?: string): Promise<string | undefined> {
+  if (!id) return undefined;
+  if (MOCK_AUTH) return id;
+  if (kind === "person") return personName(id);
+  const catalog = await loadCatalog();
+  const list = kind === "insurer" ? catalog?.insurers : catalog?.products;
+  return list?.find((x) => x.id === id)?.name;
 }
 
-export async function listOnboarding(): Promise<OnboardingCase[]> {
-  if (MOCK_AUTH) return [...ONBOARDING_CASES];
-  return listBackendLeads();
+/** Adds the Accounts Executive's name, and the client's name when `withClient` (one extra call, so not for lists). */
+async function decorateLead(l: Lead, withClient = true): Promise<Lead> {
+  const clientName = l.clientName ?? (withClient && l.clientId ? await clientNameById(l.clientId) : undefined);
+  return { ...l, ownerName: l.ownerName ?? (await nameOf("person", l.ownerId)), clientName };
 }
 
-export async function getOnboarding(id: string): Promise<OnboardingCase | null> {
-  if (MOCK_AUTH) return ONBOARDING_CASES.find((c) => c.id === id) ?? null;
-  let uuid = UUID_PATTERN.test(id) ? id : LEAD_INDEX.get(id.toUpperCase());
-  if (!uuid) {
-    await listBackendLeads();
-    uuid = LEAD_INDEX.get(id.toUpperCase());
+async function decorateTrack(t: PolicyTrack, leadName?: string): Promise<PolicyTrack> {
+  return { ...t, productName: t.productName ?? (await nameOf("product", t.productId)) ?? "Policy", leadName: t.leadName ?? leadName };
+}
+
+async function clientNameById(id: string): Promise<string | undefined> {
+  if (MOCK_AUTH) return DEMO_LEADS.find((l) => l.clientId === id)?.clientName;
+  const known = allKnownClients().find((c) => c.uuid === id || c.id === id);
+  if (known) return known.name;
+  const res = await apiFetch(`/api/v1/clients/${id}`).catch(() => null);
+  return res?.ok ? ((await res.json()) as { registeredName?: string; name?: string }).registeredName : undefined;
+}
+
+async function toHistory(items: { action: string; actorId?: string; reason?: string; occurredAt: string }[]): Promise<CommandHistory[]> {
+  return Promise.all(items.map(async (h) => ({ ...h, actorName: (await personName(h.actorId)) ?? undefined })));
+}
+
+/* Lists and records */
+
+export async function listLeads(): Promise<{ leads: Lead[]; tracks: PolicyTrack[] }> {
+  if (MOCK_AUTH) {
+    return {
+      leads: DEMO_LEADS.map(demoLeadView),
+      tracks: DEMO_TRACKS.map((t) => demoTrackView(t)),
+    };
   }
-  if (!uuid) return null;
-  const [leadRes, tracksRes, managers] = await Promise.all([
-    apiFetch(`/api/v1/leads/${uuid}`),
-    apiFetch(`/api/v1/leads/${uuid}/onboarding-cases?size=50`).catch(() => null),
-    loadManagers(),
+  const [leads, tracks] = await Promise.all([
+    readOnboarding<Page<Lead>>("/api/v1/leads?size=100", "Could not load the leads."),
+    readOnboarding<Page<PolicyTrack>>("/api/v1/onboarding-cases?size=100", "Could not load the policy tracks.").catch(() => null),
   ]);
-  if (leadRes.status === 404) return null;
-  if (!leadRes.ok) throw new Error(await onboardingProblem(leadRes, "Could not load this lead."));
-  const lead = (await leadRes.json()) as LeadView;
-  const tracks = tracksRes?.ok ? (((await tracksRes.json()) as Page<OnboardingTrackView>).items ?? []) : [];
-  return leadToCase(lead, tracks, managers);
+  const names = new Map((leads?.items ?? []).map((l) => [l.id, l.name]));
+  return {
+    leads: await Promise.all((leads?.items ?? []).map((l) => decorateLead(l, false))),
+    tracks: await Promise.all((tracks?.items ?? []).map((t) => decorateTrack(t, names.get(t.leadId)))),
+  };
 }
+
+export type LeadDetail = { lead: Lead; tracks: PolicyTrack[]; kyc: KycGate | null; history: CommandHistory[] };
+
+export async function getLead(id: string): Promise<LeadDetail | null> {
+  if (MOCK_AUTH) {
+    const l = DEMO_LEADS.find((x) => x.id === id);
+    if (!l) return null;
+    return {
+      lead: demoLeadView(l),
+      tracks: DEMO_TRACKS.filter((t) => t.leadId === id).map((t) => demoTrackView(t)),
+      kyc: l.clientId ? demoKycGate(l.clientId) : null,
+      history: DEMO_HISTORY.get(id) ?? [],
+    };
+  }
+  const raw = await readOnboarding<Lead>(`/api/v1/leads/${id}`, "Could not load this lead.");
+  if (!raw) return null;
+  const [lead, tracks, history, kyc] = await Promise.all([
+    decorateLead(raw),
+    readOnboarding<Page<PolicyTrack>>(`/api/v1/leads/${id}/onboarding-cases?size=50`, "Could not load the policy tracks.").catch(() => null),
+    readOnboarding<Page<{ action: string; actorId?: string; reason?: string; occurredAt: string }>>(`/api/v1/leads/${id}/history?size=50`, "").catch(() => null),
+    raw.clientId ? readOnboarding<KycGate>(`/api/v1/clients/${raw.clientId}/kyc-summary`, "").catch(() => null) : Promise.resolve(null),
+  ]);
+  return {
+    lead,
+    tracks: await Promise.all((tracks?.items ?? []).map((t) => decorateTrack(t, raw.name))),
+    kyc,
+    history: await toHistory(history?.items ?? []),
+  };
+}
+
+export type TrackDetail = { track: PolicyTrack; lead: Lead | null; history: CommandHistory[] };
+
+export async function getTrack(id: string): Promise<TrackDetail | null> {
+  if (MOCK_AUTH) {
+    const t = DEMO_TRACKS.find((x) => x.id === id);
+    if (!t) return null;
+    const l = DEMO_LEADS.find((x) => x.id === t.leadId);
+    return { track: demoTrackView(t), lead: l ? demoLeadView(l) : null, history: DEMO_HISTORY.get(id) ?? [] };
+  }
+  const raw = await readOnboarding<PolicyTrack>(`/api/v1/onboarding-cases/${id}`, "Could not load this policy track.");
+  if (!raw) return null;
+  const [lead, history] = await Promise.all([
+    readOnboarding<Lead>(`/api/v1/leads/${raw.leadId}`, "").catch(() => null),
+    readOnboarding<Page<{ action: string; actorId?: string; reason?: string; occurredAt: string }>>(`/api/v1/onboarding-cases/${id}/history?size=50`, "").catch(() => null),
+  ]);
+  return {
+    track: await decorateTrack(raw, lead?.name),
+    lead: lead ? await decorateLead(lead) : null,
+    history: await toHistory(history?.items ?? []),
+  };
+}
+
+/* Steps 1 and 2: the lead */
 
 export type NewLeadInput = {
   name: string;
-  type: ClientType;
-  sector: string;
-  address: string;
-  contact: ClientContact;
-  referralSource: string;
-  accountExecutive: string;
+  type: LeadType;
+  industry: string;
+  source: string;
+  sourceReference?: string;
+  contactName: string;
+  email?: string;
+  phone?: string;
+  /** When the enquiry arrived (date box value). */
+  receivedAt: string;
+  /** The Accounts Executive, when the CRM Manager assigns one straight away. */
+  ownerId?: string;
 };
 
-/** Step 1: register the lead. The KYC checklist for the client type is created with it. */
-export async function createLead(input: NewLeadInput, by: string): Promise<OnboardingCase> {
-  if (!MOCK_AUTH) return createBackendLead(input);
-  const name = input.name.trim();
-  if (ONBOARDING_CASES.some((c) => sameText(c.prospect.name, name)) || allKnownClients().some((c) => sameText(c.name, name))) {
-    throw new Error("A client or lead with this name already exists.");
-  }
-  const year = new Date().getFullYear();
-  const highest = ONBOARDING_CASES.reduce((max, c) => Math.max(max, Number(c.id.split("-").at(-1)) || 0), 0);
-  const created: OnboardingCase = {
-    id: `ONB-${year}-${String(highest + 1).padStart(3, "0")}`,
-    prospect: { ...input, name },
-    accountExecutive: input.accountExecutive,
-    registeredBy: by,
-    createdAt: todayIso(),
-    completed: [
-      {
-        code: "LEAD",
-        completedAt: todayIso(),
-        completedBy: by,
-        note: `Lead registered (${input.referralSource}); ${input.accountExecutive} assigned`,
-      },
-    ],
-    kyc: { items: checklistFor(input.type) },
-    quotes: [],
-    history: [{ at: todayIso(), by, text: "Lead registered" }],
-  };
-  ONBOARDING_CASES.unshift(created);
-  return created;
-}
-
-/**
- * Step 1 on the backend: register the lead, then assign the Accounts Executive.
- * The address and the contact's job title are recorded later, when the lead
- * becomes a prospect client, so they are not sent here.
- */
-async function createBackendLead(input: NewLeadInput): Promise<OnboardingCase> {
-  const name = input.name.trim();
-  const existing = await listBackendLeads().catch(() => [] as OnboardingCase[]);
-  if (existing.some((c) => sameText(c.prospect.name, name))) {
-    throw new Error("A lead with this name already exists.");
-  }
-
-  const body: Record<string, unknown> = {
+/** Step 1: register the lead, then assign the Accounts Executive if one was chosen. */
+export async function registerLead(input: NewLeadInput): Promise<Lead> {
+  const body = {
     commandId: crypto.randomUUID(),
-    name,
-    type: "CORPORATE",
-    industry: input.sector,
-    source: input.referralSource,
-    contactName: input.contact.name,
-    receivedAt: new Date().toISOString(),
+    name: input.name.trim(),
+    type: input.type,
+    industry: input.industry.trim(),
+    source: input.source,
+    sourceReference: input.sourceReference?.trim() || undefined,
+    contactName: input.contactName.trim(),
+    email: input.email?.trim().toLowerCase() || undefined,
+    phone: input.phone?.trim() || undefined,
+    receivedAt: instantFrom(input.receivedAt),
   };
-  if (input.contact.email) body.email = input.contact.email;
-  if (input.contact.phone) body.phone = input.contact.phone;
-
-  const res = await apiFetch("/api/v1/leads", { method: "POST", body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(await onboardingProblem(res, "Could not register the lead. Please try again."));
-  let lead = (await res.json()) as LeadView;
-
-  // Assign the chosen Accounts Executive. The lead is already saved, so a
-  // failure here is reported on the lead instead of undoing the registration.
-  const managers = await loadManagers();
-  const owner = managers.find((m) => sameText(m.fullName, input.accountExecutive));
-  let note = "";
-  if (owner && owner.id !== lead.ownerId) {
-    const assigned = await apiFetch(`/api/v1/leads/${lead.id}/assignment`, {
-      method: "POST",
-      body: JSON.stringify({ command: { commandId: crypto.randomUUID(), expectedVersion: lead.version }, ownerId: owner.id }),
-    });
-    if (assigned.ok) lead = (await assigned.json()) as LeadView;
-    else note = `The Accounts Executive could not be assigned: ${await onboardingProblem(assigned, "please assign them from the lead.")}`;
+  if (MOCK_AUTH) {
+    if (DEMO_LEADS.some((l) => sameText(l.name, body.name))) throw new Error("A lead with this name already exists.");
+    const highest = DEMO_LEADS.reduce((max, l) => Math.max(max, Number(l.id.split("-").at(-1)) || 0), 0);
+    const created: Lead = {
+      ...body,
+      id: `LD-${new Date().getFullYear()}-${String(highest + 1).padStart(3, "0")}`,
+      status: "OPEN",
+      version: 1,
+      confirmed: false,
+      assessed: false,
+      blockers: [],
+      possibleDuplicateLeadIds: [],
+      work: [],
+      registeredAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      responseDueAt: new Date(new Date(body.receivedAt).getTime() + 24 * 3600_000).toISOString(),
+      needsDueAt: `${addWorkingDays(body.receivedAt.slice(0, 10), 3)}T17:00:00Z`,
+      ownerId: input.ownerId,
+    };
+    DEMO_LEADS.unshift(created);
+    demoLog(created.id, "LEAD_REGISTERED");
+    if (input.ownerId) demoLog(created.id, "LEAD_ASSIGNED");
+    return demoLeadView(created);
   }
-
-  const created = leadToCase(lead, [], managers);
-  if (note) created.history.push({ at: todayIso(), by: "GRAL's system", text: note });
-  return created;
-}
-
-/**
- * Complete a step that only needs a note and its record (meeting, risk survey,
- * programme design, comparison, acceptance). KYC, quotes, approval, placement
- * and welcome have their own actions below.
- */
-export async function completeOnboardingStep(
-  id: string,
-  input: { note: string; evidence?: string; riskGrade?: OnboardingCase["riskGrade"] },
-  by: string,
-): Promise<OnboardingCase> {
-  const c = findOnboarding(id);
-  const step = onboardingCurrentStep(c);
-  if (!step) throw new Error("Onboarding is already complete.");
-  if (!["MEETING", "RISK_SURVEY", "DESIGN", "COMPARISON", "ACCEPTANCE"].includes(step.code)) {
-    throw new Error("This step is completed from its own section.");
+  let lead = await sendOnboarding<Lead>("POST", "/api/v1/leads", body, "Could not register the lead. Please try again.");
+  if (input.ownerId && input.ownerId !== lead.ownerId) {
+    // The lead is saved; a failed assignment is shown on the lead to retry, not undone.
+    lead = await assignLead(lead, input.ownerId).catch(() => lead);
   }
-  if (!input.note.trim()) throw new Error("Add a short note about what was done.");
-  if (step.evidenceHint && !input.evidence?.trim()) throw new Error("Attach the record for this step.");
-  if (step.code === "RISK_SURVEY" && !input.riskGrade) throw new Error("Choose the risk grade.");
-  if (step.code === "COMPARISON" && !c.quotes.some((q) => q.recommended)) throw new Error("Recommend one of the quotes first.");
-  const updated = step.code === "RISK_SURVEY" ? { ...c, riskGrade: input.riskGrade } : c;
-  return finishStep(updated, step.code, { note: input.note.trim(), evidence: input.evidence?.trim() }, by);
+  return decorateLead(lead);
 }
 
-/* KYC (step 3) */
-
-export async function receiveKycDocument(id: string, itemName: string, file: File, by: string): Promise<OnboardingCase> {
-  const c = findOnboarding(id);
-  await uploadDocument({ type: "ONBOARDING", id }, file, { classification: "KYC", purpose: "KYC_EVIDENCE" });
-  const items = c.kyc.items.map((i) => (i.name === itemName ? { ...i, receivedAt: todayIso(), fileName: file.name } : i));
-  return saveOnboarding({ ...c, kyc: { ...c.kyc, items } }, by, `${itemName} received`);
+function demoLeadCommand(lead: Lead, action: string, change: (l: Lead) => Partial<Lead>): Lead {
+  const index = DEMO_LEADS.findIndex((l) => l.id === lead.id);
+  const current = DEMO_LEADS[index];
+  if (!current) throw new Error("This lead could not be found.");
+  if (current.version !== lead.version) throw new Error(ONBOARDING_MESSAGES.STALE_VERSION!);
+  const updated = { ...current, ...change(current), version: current.version + 1, updatedAt: new Date().toISOString() };
+  DEMO_LEADS[index] = updated;
+  demoLog(lead.id, action);
+  return demoLeadView(updated);
 }
 
-export async function setKycExpiry(id: string, itemName: string, expiry: string, by: string): Promise<OnboardingCase> {
-  const c = findOnboarding(id);
-  if (expiry <= todayIso()) throw new Error("This document has already expired. Ask the client for a current one.");
-  const items = c.kyc.items.map((i) => (i.name === itemName ? { ...i, expiry } : i));
-  return saveOnboarding({ ...c, kyc: { ...c.kyc, items } }, by, `Expiry date recorded for ${itemName}`);
-}
-
-export async function recordKycScreening(
-  id: string,
-  input: { result: "CLEAR" | "POSSIBLE_MATCH"; note: string },
-  by: string,
-): Promise<OnboardingCase> {
-  const c = findOnboarding(id);
-  if (!input.note.trim()) throw new Error("Say which lists were checked and what was found.");
-  return saveOnboarding(
-    { ...c, kyc: { ...c.kyc, screening: { result: input.result, note: input.note.trim(), at: todayIso(), by } } },
-    by,
-    input.result === "CLEAR" ? "Sanctions screening: clear" : "Sanctions screening: possible match (enhanced due diligence)",
+export async function assignLead(lead: Lead, ownerId: string): Promise<Lead> {
+  if (MOCK_AUTH) return demoLeadCommand(lead, "LEAD_ASSIGNED", () => ({ ownerId }));
+  return decorateLead(
+    await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/assignment`, { command: commandEnvelope(lead.version), ownerId }, "Could not assign the Accounts Executive."),
   );
 }
 
-/** Send the KYC to the Risk & Compliance Manager, who signs the KYC Approval Form in Approvals. */
-export async function submitKycForApproval(id: string, by: string): Promise<OnboardingCase> {
-  const c = findOnboarding(id);
-  if (onboardingCurrentStep(c)?.code !== "KYC") throw new Error("KYC is not the current step.");
-  const blocker = kycSubmitBlocker(c);
-  if (blocker) throw new Error(blocker);
-  const live = c.kyc.approvalId ? APPROVALS.find((r) => r.id === c.kyc.approvalId && r.status === "PENDING") : undefined;
-  if (live) throw new Error(`Already waiting for the Risk & Compliance Manager (${live.id}).`);
-  const request: ApprovalRequest = {
-    id: nextApprovalId(),
-    subjectType: "ONBOARDING_KYC",
-    subjectId: c.id,
-    subjectRef: c.id,
-    subjectRevision: c.history.length,
-    title: `KYC Approval Form · ${c.prospect.name}`,
-    summary: `${c.kyc.items.filter((i) => i.receivedAt).length} KYC documents received; sanctions screening ${
-      c.kyc.screening!.result === "CLEAR" ? "clear" : "found a possible match (enhanced due diligence needed)"
-    }. ${c.kyc.screening!.note}`,
-    client: c.prospect.name,
-    policyVersion: APPROVAL_POLICY_VERSION.ONBOARDING_KYC,
-    requestedBy: by,
-    requestedAt: todayIso(),
-    // SOP: KYC approval within 3 working days of receiving all documents.
-    dueAt: stepDue(c, stepOf("KYC")),
-    status: "PENDING",
-    steps: buildSteps([{ role: "Risk & Compliance Manager" }]),
-    evidenceRequired: true,
-    evidence: c.kyc.items.filter((i) => i.fileName).map((i) => ({ name: i.fileName!, version: 1 })),
-    version: 1,
-    history: [{ at: todayIso(), by, text: "Approval requested" }],
+export async function confirmLead(lead: Lead): Promise<Lead> {
+  if (MOCK_AUTH) {
+    return demoLeadCommand(lead, "LEAD_CONFIRMED", (l) => {
+      if (!l.ownerId) throw new Error(ONBOARDING_MESSAGES.OWNER_REQUIRED);
+      return { confirmed: true };
+    });
+  }
+  return decorateLead(await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/confirm-registration`, commandEnvelope(lead.version), "Could not confirm the registration."));
+}
+
+/** Step 2, first part: the Accounts Executive's first response, within 24 hours. */
+export async function recordLeadResponse(lead: Lead, evidence: EvidenceInput): Promise<Lead> {
+  const p = await uploadProof({ type: "LEAD", id: lead.id }, evidence, "LEAD_RESPONSE");
+  if (MOCK_AUTH) {
+    return demoLeadCommand(lead, "LEAD_RESPONDED", () => ({ respondedAt: p.occurredAt, responseEvidence: { purpose: "LEAD_RESPONSE", ...p } }));
+  }
+  return decorateLead(
+    await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/record-response`, { command: commandEnvelope(lead.version), ...p, fileName: undefined }, "Could not record the response."),
+  );
+}
+
+export type AssessmentInput = {
+  meetingAt: string;
+  needs: string;
+  assets: string;
+  employeeCount?: number;
+  existingCover: string;
+  request: EvidenceInput;
+  summary: EvidenceInput;
+  confirmation: EvidenceInput;
+};
+
+/** Step 2: the meeting and needs assessment, with the pre-meeting request, the summary and the client's confirmation. */
+export async function recordAssessment(lead: Lead, input: AssessmentInput): Promise<Lead> {
+  const subject = { type: "LEAD" as const, id: lead.id };
+  const [request, summary, confirmation] = await Promise.all([
+    uploadProof(subject, input.request, "PRE_MEETING_REQUEST"),
+    uploadProof(subject, input.summary, "MEETING_SUMMARY"),
+    uploadProof(subject, input.confirmation, "MEETING_CONFIRMATION"),
+  ]);
+  const fields = { meetingAt: instantFrom(input.meetingAt), needs: input.needs.trim(), assets: input.assets.trim(), employeeCount: input.employeeCount, existingCover: input.existingCover.trim() };
+  if (MOCK_AUTH) {
+    return demoLeadCommand(lead, "LEAD_ASSESSED", (l) => {
+      if (!l.confirmed || !l.ownerId) throw new Error(ONBOARDING_MESSAGES.LEAD_NOT_CONFIRMED);
+      return {
+        assessed: true,
+        assessment: {
+          ...fields,
+          evidence: [
+            { purpose: "PRE_MEETING_REQUEST", ...request },
+            { purpose: "MEETING_SUMMARY", ...summary },
+            { purpose: "MEETING_CONFIRMATION", ...confirmation },
+          ],
+        },
+      };
+    });
+  }
+  const strip = ({ fileName: _fileName, ...rest }: typeof request) => rest;
+  return decorateLead(
+    await sendOnboarding<Lead>(
+      "POST",
+      `/api/v1/leads/${lead.id}/assessment`,
+      { command: commandEnvelope(lead.version), ...fields, request: strip(request), summary: strip(summary), confirmation: strip(confirmation) },
+      "Could not record the needs assessment.",
+    ),
+  );
+}
+
+export type ProspectInput = {
+  registeredName: string;
+  clientType: string;
+  sector: string;
+  address: string;
+  contactName: string;
+  jobTitle: string;
+  email: string;
+  phone: string;
+  /** Required when the backend warned about a possible duplicate and the person goes ahead. */
+  duplicateReason?: string;
+};
+
+/** Step 2, last part: open the prospect client (a client record that is not insured yet). */
+export async function openProspect(lead: Lead, input: ProspectInput): Promise<Lead> {
+  if (MOCK_AUTH) {
+    return demoLeadCommand(lead, "LEAD_PROSPECT_CREATED", (l) => {
+      if (!l.assessed) throw new Error(ONBOARDING_MESSAGES.LEAD_NOT_READY);
+      const n = DEMO_LEADS.length + 100;
+      return { clientId: `CLT-P${n}`, clientName: input.registeredName.trim() };
+    });
+  }
+  return decorateLead(
+    await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/prospect`, { command: commandEnvelope(lead.version), ...input }, "Could not open the prospect client."),
+  );
+}
+
+/** Or link a client GRAL already has (its account manager must be the lead's Accounts Executive). */
+export async function linkLeadClient(lead: Lead, client: Client): Promise<Lead> {
+  if (MOCK_AUTH) return demoLeadCommand(lead, "LEAD_CLIENT_LINKED", () => ({ clientId: client.id, clientName: client.name }));
+  if (!client.uuid) throw new Error("This client is not on the backend yet.");
+  return decorateLead(
+    await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/link-client`, { command: commandEnvelope(lead.version), clientId: client.uuid }, "Could not link the client."),
+  );
+}
+
+export async function closeLead(lead: Lead, disposition: "CLOSED_LOST" | "CANCELLED", reason: string): Promise<Lead> {
+  if (!reason.trim()) throw new Error("Say why the lead is being closed.");
+  if (MOCK_AUTH) {
+    return demoLeadCommand(lead, "LEAD_CLOSED", () => {
+      if (DEMO_TRACKS.some((t) => t.leadId === lead.id && (t.status === "OPEN" || t.status === "ON_HOLD"))) throw new Error(ONBOARDING_MESSAGES.CLOSE_POLICY_TRACKS_FIRST);
+      return { status: disposition };
+    });
+  }
+  return decorateLead(
+    await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/close`, { command: commandEnvelope(lead.version, reason.trim()), disposition }, "Could not close the lead."),
+  );
+}
+
+/** Start a policy track: one policy to place for this lead, moving through steps 3 to 11 on its own. */
+export async function startTrack(lead: Lead, input: { productId: string; underwritingRole: string; property: boolean }): Promise<PolicyTrack> {
+  if (MOCK_AUTH) {
+    const l = DEMO_LEADS.find((x) => x.id === lead.id);
+    if (!l || !leadReady(l)) throw new Error(ONBOARDING_MESSAGES.LEAD_NOT_READY);
+    const highest = DEMO_TRACKS.reduce((max, t) => Math.max(max, Number(t.id.split("-").at(-1)) || 0), 0);
+    const created: PolicyTrack = {
+      id: `TRK-${new Date().getFullYear()}-${String(highest + 1).padStart(3, "0")}`,
+      leadId: l.id,
+      clientId: l.clientId!,
+      ownerId: l.ownerId,
+      productId: input.productId,
+      underwritingRole: input.underwritingRole,
+      stage: 3,
+      status: "OPEN",
+      version: 1,
+      materialRevision: 0,
+      milestones: [{ code: "KYC", stage: 3, status: "OPEN" }],
+      quotes: [],
+      approvalRequests: {},
+      evidence: [],
+      discrepancies: [],
+      blockers: [],
+      availableActions: [],
+      invitations: [],
+      renewalProfile: "STANDARD",
+      assignees: {},
+      property: input.property,
+    } as PolicyTrack & { property: boolean };
+    DEMO_TRACKS.unshift(created);
+    demoLog(created.id, "ONBOARDING_STARTED");
+    demoLog(l.id, "ONBOARDING_STARTED");
+    return demoTrackView(created);
+  }
+  return decorateTrack(
+    await sendOnboarding<PolicyTrack>(
+      "POST",
+      `/api/v1/leads/${lead.id}/onboarding-cases`,
+      { command: commandEnvelope(lead.version), productId: input.productId, underwritingRole: input.underwritingRole, property: input.property },
+      "Could not start the policy track.",
+    ),
+    lead.name,
+  );
+}
+
+/* Steps 3 to 11: a policy track */
+
+export type TrackActionInput = {
+  /** An action code from availableActions, or INSURER_RESPONSE / SINGLE_SOURCE / DEADLINE. */
+  action: string;
+  fields?: Record<string, unknown>;
+  /** Proof documents by slot: main, letter, delivery, fileChecklist. */
+  evidence?: Record<string, EvidenceInput>;
+  reason?: string;
+};
+
+/** Where each action goes, which document purpose it proves, and how its body is shaped. */
+const TRACK_ROUTES: Record<string, { path: string; purpose?: string; classification?: DocumentClassification; shape: "plain" | "flat" | "nested" | "custom" }> = {
+  QUALIFY_KYC: { path: "qualify-kyc", shape: "plain" },
+  SURVEY: { path: "risk-survey", purpose: "RISK_SURVEY", shape: "nested" },
+  SURVEY_NOT_APPLICABLE: { path: "risk-survey-not-applicable", shape: "plain" },
+  PROGRAM: { path: "program", purpose: "PROGRAM", classification: "APPROVAL_EVIDENCE", shape: "nested" },
+  LICENSE: { path: "insurer-license", purpose: "INSURER_LICENSE", shape: "nested" },
+  SINGLE_SOURCE: { path: "request-single-source", purpose: "SINGLE_SOURCE", shape: "flat" },
+  RFQ: { path: "dispatch-rfq", purpose: "RFQ", shape: "nested" },
+  INSURER_RESPONSE: { path: "insurer-response", shape: "custom" },
+  QUOTE: { path: "quotes", purpose: "QUOTE", shape: "nested" },
+  RECOMMEND: { path: "recommend", purpose: "RECOMMENDATION", shape: "nested" },
+  REQUEST_APPROVAL: { path: "request-approval", shape: "plain" },
+  REVISE: { path: "revise", shape: "plain" },
+  RECORD_BOARD_EVIDENCE: { path: "record-board-approval", purpose: "BOARD_APPROVAL", classification: "APPROVAL_EVIDENCE", shape: "flat" },
+  PRESENT: { path: "record-presentation", purpose: "CLIENT_PRESENTATION", shape: "flat" },
+  ACCEPT: { path: "record-client-acceptance", purpose: "CLIENT_ACCEPTANCE", classification: "CLIENT_ACCEPTANCE", shape: "flat" },
+  PROPERTY_ASSETS: { path: "property-assets", purpose: "PROPERTY_ASSET_LIST", shape: "flat" },
+  PLACE: { path: "place", purpose: "PLACEMENT", shape: "flat" },
+  CONFIRM_PLACEMENT: { path: "confirm-placement", purpose: "PLACEMENT_CONFIRMATION", shape: "flat" },
+  SCHEDULE: { path: "receive-schedule", purpose: "SCHEDULE", classification: "POLICY_SCHEDULE", shape: "nested" },
+  TECHNICAL_VERIFICATION: { path: "technical-verification", purpose: "POLICY_TECHNICAL_APPROVAL", classification: "APPROVAL_EVIDENCE", shape: "flat" },
+  VERIFY: { path: "verify", shape: "plain" },
+  CONVERT: { path: "convert", shape: "custom" },
+  WELCOME: { path: "complete-welcome", shape: "custom" },
+  ASSIGN: { path: "assignment", shape: "custom" },
+  ON_HOLD: { path: "disposition", shape: "custom" },
+  RESUME: { path: "disposition", shape: "custom" },
+  CLOSE: { path: "disposition", shape: "custom" },
+  DEADLINE: { path: "deadline", shape: "custom" },
+};
+
+/** Runs one action on a policy track and returns the track as the backend now shows it. */
+export async function runTrackAction(track: PolicyTrack, input: TrackActionInput): Promise<PolicyTrack> {
+  const route = TRACK_ROUTES[input.action];
+  if (!route) throw new Error("This action is not available here.");
+  const reasonRequired = ["SURVEY_NOT_APPLICABLE", "REVISE", "ON_HOLD", "CLOSE", "DEADLINE"].includes(input.action);
+  if (reasonRequired && !input.reason?.trim()) throw new Error("Give the reason. It is kept in the history.");
+  const subject = { type: "ONBOARDING" as const, id: track.id };
+  const f = input.fields ?? {};
+  const purpose = input.action === "LICENSE" ? `INSURER_LICENSE_${String(f.insurerId ?? "").replace(/-/g, "")}` : route.purpose;
+
+  const proofs: Record<string, Awaited<ReturnType<typeof uploadProof>>> = {};
+  if (input.action === "WELCOME") {
+    const slots: [string, string][] = [["letter", "WELCOME_LETTER"], ["delivery", "POLICY_DELIVERY"], ["fileChecklist", "FILE_CHECKLIST"]];
+    for (const [slot, p] of slots) {
+      const e = input.evidence?.[slot];
+      if (!e) throw new Error("Attach the welcome letter, the delivery proof and the file checklist.");
+      proofs[slot] = await uploadProof(subject, e, p);
+    }
+  } else if (purpose) {
+    const e = input.evidence?.main;
+    if (!e) throw new Error("Attach the document that proves this step.");
+    proofs.main = await uploadProof(subject, e, purpose, route.classification);
+  }
+
+  if (MOCK_AUTH) return demoTrackAction(track, input, proofs, purpose);
+
+  const command = commandEnvelope(track.version, input.reason?.trim());
+  const strip = (p?: Awaited<ReturnType<typeof uploadProof>>) => (p ? { documentId: p.documentId, documentVersion: p.documentVersion, occurredAt: p.occurredAt, detail: p.detail } : undefined);
+  let body: unknown;
+  switch (route.shape) {
+    case "plain":
+      body = command;
+      break;
+    case "flat":
+      body = { command, ...strip(proofs.main) };
+      break;
+    case "nested":
+      body = { evidence: { command, ...strip(proofs.main) }, ...f };
+      break;
+    case "custom":
+      body =
+        input.action === "INSURER_RESPONSE"
+          ? { command, insurerId: f.insurerId, outcome: f.outcome, detail: f.detail }
+          : input.action === "CONVERT"
+            ? { command, amountPaid: f.amountPaid }
+            : input.action === "WELCOME"
+              ? { command, letter: strip(proofs.letter), delivery: strip(proofs.delivery), fileChecklist: strip(proofs.fileChecklist) }
+              : input.action === "ASSIGN"
+                ? { command, responsibility: f.responsibility, assigneeId: f.assigneeId }
+                : input.action === "DEADLINE"
+                  ? { command, milestone: f.milestone, dueAt: instantFrom(String(f.dueAt)) }
+                  : { command, disposition: input.action === "CLOSE" ? (f.disposition ?? "CLOSED_LOST") : input.action };
+  }
+  const saved = await sendOnboarding<PolicyTrack>("POST", `/api/v1/onboarding-cases/${track.id}/${route.path}`, body, "Could not save this step.");
+  return decorateTrack(saved, track.leadName);
+}
+
+/* KYC: a review of the client */
+
+export async function listKycTemplates(): Promise<KycTemplate[]> {
+  if (MOCK_AUTH) return [...DEMO_KYC_TEMPLATES];
+  return (await readOnboarding<KycTemplate[]>("/api/v1/kyc-templates", "Could not load the KYC checklists.")) ?? [];
+}
+
+/** Adds a new version of GRAL's checklist for a client type (needs the KYC policy permission). */
+export async function saveKycTemplate(
+  code: string,
+  input: { clientType: LeadType; requirements: KycRequirement[]; reason: string },
+  expectedVersion?: number,
+): Promise<KycTemplate> {
+  if (!input.reason.trim()) throw new Error("Say why the checklist is being set up or changed.");
+  if (!input.requirements.length) throw new Error("Add at least one document to the checklist.");
+  if (MOCK_AUTH) {
+    const existing = DEMO_KYC_TEMPLATES.findIndex((t) => t.code === code);
+    const saved: KycTemplate = { code, version: (DEMO_KYC_TEMPLATES[existing]?.version ?? 0) + 1, clientType: input.clientType, requirements: input.requirements };
+    if (existing >= 0) DEMO_KYC_TEMPLATES[existing] = saved;
+    else DEMO_KYC_TEMPLATES.push(saved);
+    return saved;
+  }
+  return sendOnboarding<KycTemplate>("PUT", `/api/v1/kyc-templates/${encodeURIComponent(code)}`, { expectedVersion, ...input }, "Could not save the KYC checklist.");
+}
+
+export async function getClientKyc(clientId: string): Promise<{ summary: KycGate | null; reviews: KycReview[] }> {
+  if (MOCK_AUTH) return { summary: demoKycGate(clientId), reviews: DEMO_KYC_REVIEWS.filter((r) => r.clientId === clientId).map(demoKycView) };
+  const [summary, reviews] = await Promise.all([
+    readOnboarding<KycGate>(`/api/v1/clients/${clientId}/kyc-summary`, "Could not load the KYC summary.").catch(() => null),
+    readOnboarding<Page<KycReview> | KycReview[]>(`/api/v1/clients/${clientId}/kyc-cases?size=20`, "Could not load the KYC reviews.").catch(() => null),
+  ]);
+  return { summary, reviews: Array.isArray(reviews) ? reviews : (reviews?.items ?? []) };
+}
+
+export async function getKycReview(id: string): Promise<{ review: KycReview; history: CommandHistory[] } | null> {
+  if (MOCK_AUTH) {
+    const r = DEMO_KYC_REVIEWS.find((x) => x.id === id);
+    return r ? { review: demoKycView(r), history: DEMO_HISTORY.get(id) ?? [] } : null;
+  }
+  const review = await readOnboarding<KycReview>(`/api/v1/kyc-cases/${id}`, "Could not load this KYC review.");
+  if (!review) return null;
+  const history = await readOnboarding<Page<{ action: string; actorId?: string; occurredAt: string }>>(`/api/v1/kyc-cases/${id}/history?size=50`, "").catch(() => null);
+  return { review: { ...review, clientName: review.clientName ?? (await clientNameById(review.clientId)) }, history: await toHistory(history?.items ?? []) };
+}
+
+function kycCommand(review: KycReview) {
+  return { commandId: crypto.randomUUID(), expectedVersion: review.version };
+}
+
+function demoKycCommand(review: KycReview, action: string, change: (r: KycReview) => Partial<KycReview>): KycReview {
+  const index = DEMO_KYC_REVIEWS.findIndex((r) => r.id === review.id);
+  const current = DEMO_KYC_REVIEWS[index];
+  if (!current) throw new Error("This KYC review could not be found.");
+  if (current.version !== review.version) throw new Error(ONBOARDING_MESSAGES.STALE_VERSION!);
+  const updated = { ...current, ...change(current), version: current.version + 1 };
+  DEMO_KYC_REVIEWS[index] = updated;
+  demoLog(review.id, action);
+  return demoKycView(updated);
+}
+
+export async function startKycReview(clientId: string, templateCode: string): Promise<KycReview> {
+  if (MOCK_AUTH) {
+    if (DEMO_KYC_REVIEWS.some((r) => r.clientId === clientId && ["DRAFT", "SUBMITTED", "RETURNED"].includes(r.status))) throw new Error(ONBOARDING_MESSAGES.KYC_REVIEW_ALREADY_OPEN);
+    const template = DEMO_KYC_TEMPLATES.find((t) => t.code === templateCode);
+    if (!template) throw new Error(ONBOARDING_MESSAGES.KYC_TEMPLATE_UNAVAILABLE);
+    const highest = DEMO_KYC_REVIEWS.reduce((max, r) => Math.max(max, Number(r.id.split("-").at(-1)) || 0), 0);
+    const created: KycReview = {
+      id: `KYC-${new Date().getFullYear()}-${String(highest + 1).padStart(3, "0")}`,
+      clientId,
+      clientName: DEMO_LEADS.find((l) => l.clientId === clientId)?.clientName,
+      version: 1,
+      status: "DRAFT",
+      templateCode: template.code,
+      templateVersion: template.version,
+      items: template.requirements.map((r) => ({ ...r })),
+      blockers: [],
+      evidence: [],
+    };
+    DEMO_KYC_REVIEWS.unshift(created);
+    demoLog(created.id, "KYC_STARTED");
+    return demoKycView(created);
+  }
+  return sendOnboarding<KycReview>("POST", "/api/v1/kyc-cases", { commandId: crypto.randomUUID(), clientId, templateCode }, "Could not start the KYC review.");
+}
+
+/** Files one checklist document, with the date it actually arrived (the review clock starts from the last one). */
+export async function attachKycDocument(review: KycReview, code: string, evidence: EvidenceInput): Promise<KycReview> {
+  const p = await uploadProof({ type: "KYC", id: review.id }, evidence, code, "KYC");
+  if (MOCK_AUTH) {
+    return demoKycCommand(review, "KYC_EVIDENCE", (r) => {
+      const items = r.items.map((i) => (i.code === code ? { ...i, documentId: p.documentId, documentVersion: 1 } : i));
+      const evidenceList = [...r.evidence.filter((e) => e.purpose !== code), { purpose: code, documentId: p.documentId, documentVersion: 1, occurredAt: p.occurredAt, receivedAt: p.occurredAt, fileName: p.fileName }];
+      const complete = items.filter((i) => i.required).every((i) => i.documentId);
+      const last = evidenceList.map((e) => e.receivedAt ?? e.occurredAt).sort().at(-1);
+      return { items, evidence: evidenceList, completeDocumentsAt: complete ? last : undefined, dueAt: complete && last ? `${addWorkingDays(last.slice(0, 10), 3)}T17:00:00Z` : undefined };
+    });
+  }
+  return sendOnboarding<KycReview>(
+    "PUT",
+    `/api/v1/kyc-cases/${review.id}/requirements/${encodeURIComponent(code)}`,
+    { command: kycCommand(review), documentId: p.documentId, documentVersion: p.documentVersion, receivedAt: p.occurredAt },
+    "Could not file the document.",
+  );
+}
+
+export async function recordKycScreening(review: KycReview, input: { result: "CLEAR" | "REVIEW_REQUIRED" | "REJECTED"; notes: string; evidence: EvidenceInput }): Promise<KycReview> {
+  if (!input.notes.trim()) throw new Error("Say which lists were checked and what was found.");
+  const p = await uploadProof({ type: "KYC", id: review.id }, input.evidence, "SCREENING", "KYC");
+  if (MOCK_AUTH) {
+    return demoKycCommand(review, "KYC_SCREENED", (r) => ({
+      screeningResult: input.result,
+      screeningNotes: input.notes.trim(),
+      evidence: [...r.evidence.filter((e) => e.purpose !== "SCREENING"), { purpose: "SCREENING", documentId: p.documentId, documentVersion: 1, occurredAt: p.occurredAt, fileName: p.fileName }],
+    }));
+  }
+  return sendOnboarding<KycReview>(
+    "POST",
+    `/api/v1/kyc-cases/${review.id}/record-screening`,
+    { command: kycCommand(review), result: input.result, notes: input.notes.trim(), documentId: p.documentId, documentVersion: p.documentVersion },
+    "Could not record the screening.",
+  );
+}
+
+export async function submitKycReview(review: KycReview): Promise<KycReview> {
+  if (MOCK_AUTH) {
+    return demoKycCommand(review, "KYC_SUBMITTED", (r) => {
+      if (r.items.some((i) => i.required && !i.documentId)) throw new Error(ONBOARDING_MESSAGES.KYC_DOCUMENTS_INCOMPLETE);
+      if (!r.screeningResult) throw new Error("Record the sanctions and watchlist screening first.");
+      return { status: "SUBMITTED" };
+    });
+  }
+  return sendOnboarding<KycReview>("POST", `/api/v1/kyc-cases/${review.id}/submit`, kycCommand(review), "Could not send the KYC review.");
+}
+
+/** The Risk & Compliance Manager's decision. Approval needs a clear screening and the signed KYC Approval Form. */
+export async function decideKycReview(review: KycReview, input: { decision: "APPROVE" | "RETURN" | "REJECT"; reason: string; evidence?: EvidenceInput }): Promise<KycReview> {
+  if (!input.reason.trim()) throw new Error("Give the reason for the decision.");
+  if (input.decision === "APPROVE" && !input.evidence) throw new Error("Attach the signed KYC Approval Form.");
+  const p = input.evidence ? await uploadProof({ type: "KYC", id: review.id }, input.evidence, "KYC_APPROVAL", "APPROVAL_EVIDENCE") : undefined;
+  if (MOCK_AUTH) {
+    return demoKycCommand(review, "KYC_DECIDED", (r) => {
+      if (r.status !== "SUBMITTED") throw new Error("Only a submitted review can be decided.");
+      if (input.decision === "APPROVE" && r.screeningResult !== "CLEAR") throw new Error("Approval needs a clear screening result.");
+      const status = ({ APPROVE: "APPROVED", RETURN: "RETURNED", REJECT: "REJECTED" } as const)[input.decision];
+      return {
+        status,
+        decisionReason: input.reason.trim(),
+        decidedAt: new Date().toISOString(),
+        decidedBy: CURRENT_USER?.name ?? "Risk & Compliance Manager",
+        evidence: p ? [...r.evidence, { purpose: "KYC_APPROVAL", documentId: p.documentId, documentVersion: 1, occurredAt: p.occurredAt, fileName: p.fileName }] : r.evidence,
+      };
+    });
+  }
+  return sendOnboarding<KycReview>(
+    "POST",
+    `/api/v1/kyc-cases/${review.id}/decisions`,
+    { command: kycCommand(review), decision: input.decision, reason: input.reason.trim(), documentId: p?.documentId, documentVersion: p?.documentVersion },
+    "Could not record the decision.",
+  );
+}
+
+export async function escalateKycReview(review: KycReview, input: { evidence: EvidenceInput; revisedDueAt: string; reason: string }): Promise<KycReview> {
+  if (!input.reason.trim()) throw new Error("Give the reason for the delay.");
+  const p = await uploadProof({ type: "KYC", id: review.id }, input.evidence, "KYC_ESCALATION");
+  if (MOCK_AUTH) return demoKycCommand(review, "KYC_ESCALATED", () => ({ revisedDueAt: `${input.revisedDueAt}T17:00:00Z` }));
+  return sendOnboarding<KycReview>(
+    "POST",
+    `/api/v1/kyc-cases/${review.id}/escalate`,
+    { command: kycCommand(review), documentId: p.documentId, documentVersion: p.documentVersion, revisedDueAt: `${input.revisedDueAt}T17:00:00Z`, reason: input.reason.trim() },
+    "Could not escalate the review.",
+  );
+}
+
+/* Demo mode: the same rules on sample data */
+
+const DEMO_HISTORY = new Map<string, CommandHistory[]>();
+
+/** Demo mode: the signed-in sample role, so track actions follow the backend's permissions. */
+let DEMO_ROLE: Role | null = null;
+export function setDemoRole(role: Role | null) {
+  DEMO_ROLE = role;
+}
+
+function demoLog(id: string, action: string, reason?: string) {
+  const list = DEMO_HISTORY.get(id) ?? [];
+  list.unshift({ action, actorName: CURRENT_USER?.name ?? "You", reason, occurredAt: new Date().toISOString() });
+  DEMO_HISTORY.set(id, list);
+}
+
+function demoLeadView(l: Lead): Lead {
+  const blockers: string[] = [];
+  if (!l.ownerId) blockers.push("OWNER_REQUIRED");
+  if (!l.confirmed) blockers.push("LEAD_CONFIRMATION_REQUIRED");
+  if (!l.assessed) blockers.push("ASSESSMENT_REQUIRED");
+  if (!l.clientId) blockers.push("CLIENT_IDENTITY_REQUIRED");
+  return { ...l, blockers: l.status === "OPEN" ? blockers : [], ownerName: l.ownerId };
+}
+
+function demoKycGate(clientId: string): KycGate {
+  const r = DEMO_KYC_REVIEWS.find((x) => x.clientId === clientId);
+  if (!r) return { clientId, status: "NOT_STARTED", gateStatus: "NOT_STARTED", missingRequirements: [] };
+  return {
+    clientId,
+    caseId: r.id,
+    status: r.status,
+    gateStatus: r.status === "APPROVED" ? "READY" : r.status,
+    completeDocumentsAt: r.completeDocumentsAt,
+    dueAt: r.dueAt,
+    revisedDueAt: r.revisedDueAt,
+    missingRequirements: r.items.filter((i) => i.required && !i.documentId).map((i) => i.label),
   };
-  APPROVALS.unshift(request);
-  return saveOnboarding({ ...c, kyc: { ...c.kyc, approvalId: request.id } }, by, `KYC sent for approval (${request.id})`);
+}
+
+function demoKycView(r: KycReview): KycReview {
+  const blockers: string[] = [];
+  if (r.items.some((i) => i.required && !i.documentId)) blockers.push("KYC_DOCUMENTS_INCOMPLETE");
+  if (!r.screeningResult) blockers.push("SCREENING_REQUIRED");
+  return { ...r, blockers: ["DRAFT", "RETURNED"].includes(r.status) ? blockers : [] };
+}
+
+function demoApprovalStatus(id?: string) {
+  return id ? (APPROVALS.find((r) => r.id === id)?.status ?? "STATUS_UNAVAILABLE") : undefined;
+}
+
+function hasProof(t: PolicyTrack, purpose: string) {
+  return t.evidence.some((e) => e.purpose === purpose);
+}
+
+/** Blockers and allowed actions, worked out the way the backend's OnboardingViews does. */
+function demoTrackView(t: PolicyTrack): PolicyTrack {
+  const blockers: string[] = [];
+  const actions: string[] = [];
+  const kyc = demoKycGate(t.clientId);
+  const kycReady = kyc.gateStatus === "READY";
+  if (!kycReady) blockers.push(kyc.gateStatus);
+  const lead = DEMO_LEADS.find((l) => l.id === t.leadId);
+  const individual = lead?.type === "INDIVIDUAL";
+  const property = (t as PolicyTrack & { property?: boolean }).property ?? /property/i.test(t.productId);
+  const discrepancy = t.discrepancies.length > 0;
+  if (discrepancy) blockers.push("SCHEDULE_TERMS_MISMATCH");
+  const approval = demoApprovalStatus(t.approvalRequests.RECOMMENDATION);
+  let primary: string | null = null;
+  switch (t.stage) {
+    case 3:
+      if (kycReady) primary = "QUALIFY_KYC";
+      break;
+    case 4:
+      primary = individual ? "SURVEY_NOT_APPLICABLE" : "SURVEY";
+      blockers.push(individual ? "SURVEY_APPLICABILITY_REQUIRED" : "RISK_SURVEY_REQUIRED");
+      break;
+    case 5:
+      primary = "PROGRAM";
+      blockers.push("PROGRAM_SIGNOFF_REQUIRED");
+      break;
+    case 6:
+      primary = "RFQ";
+      blockers.push("RFQ_DISPATCH_REQUIRED");
+      break;
+    case 7:
+      primary = "QUOTE";
+      if (t.invitations.some((i) => !i.response)) blockers.push("RFQ_RESPONSES_UNACCOUNTED");
+      else if (t.quotes.length === 0) blockers.push("QUOTE_REQUIRED");
+      else if (new Set(t.quotes.map((q) => q.terms.insurerId)).size < 2 && demoApprovalStatus(t.approvalRequests.SINGLE_SOURCE) !== "APPROVED") blockers.push("SINGLE_SOURCE_APPROVAL_REQUIRED");
+      else primary = "RECOMMEND";
+      break;
+    case 8:
+      if (!approval) {
+        blockers.push("APPROVAL_REQUIRED");
+        primary = "REQUEST_APPROVAL";
+      } else if (approval !== "APPROVED") blockers.push(`APPROVAL_${approval}`);
+      else primary = "PRESENT";
+      if (t.recommendation?.tier === "STRATEGIC" && approval && !hasProof(t, "BOARD_APPROVAL")) {
+        const r = APPROVALS.find((x) => x.id === t.approvalRequests.RECOMMENDATION);
+        if (r && r.steps[0]?.status === "APPROVED") actions.push("RECORD_BOARD_EVIDENCE");
+      }
+      break;
+    case 9:
+      if (!hasProof(t, "CLIENT_PRESENTATION")) {
+        primary = "PRESENT";
+        blockers.push("CLIENT_PRESENTATION_REQUIRED");
+      } else if (!hasProof(t, "CLIENT_ACCEPTANCE")) {
+        primary = "ACCEPT";
+        blockers.push("WRITTEN_ACCEPTANCE_REQUIRED");
+      } else if (property && !hasProof(t, "PROPERTY_ASSET_LIST")) {
+        blockers.push("PROPERTY_ASSET_LIST_REQUIRED");
+        actions.push("PROPERTY_ASSETS");
+      } else primary = "PLACE";
+      break;
+    case 10:
+      if (!hasProof(t, "PLACEMENT_CONFIRMATION")) {
+        primary = "CONFIRM_PLACEMENT";
+        blockers.push("PLACEMENT_CONFIRMATION_REQUIRED");
+      } else if (!t.observedSchedule || discrepancy) {
+        primary = "SCHEDULE";
+        if (!t.observedSchedule) blockers.push("POLICY_SCHEDULE_REQUIRED");
+      } else if (!hasProof(t, "POLICY_TECHNICAL_APPROVAL")) {
+        primary = "TECHNICAL_VERIFICATION";
+        blockers.push("TECHNICAL_VERIFICATION_REQUIRED");
+      } else if (!hasProof(t, "VERIFIED")) {
+        primary = "VERIFY";
+        blockers.push("POLICY_VERIFICATION_REQUIRED");
+      } else primary = "CONVERT";
+      break;
+    case 11:
+      if (!t.convertedAt || !hasProof(t, "WELCOME_LETTER")) primary = "WELCOME";
+      break;
+  }
+  const needsKyc = ["QUALIFY_KYC", "SURVEY", "PROGRAM", "RFQ", "QUOTE", "RECOMMEND", "REQUEST_APPROVAL", "PRESENT", "PLACE", "CONVERT"];
+  const open = t.status === "OPEN";
+  if (open && primary && (!needsKyc.includes(primary) || kycReady)) actions.push(primary);
+  if (open && t.stage === 7 && kycReady && !actions.includes("QUOTE")) actions.push("QUOTE");
+  if (open && t.stage >= 6 && t.stage <= 10) actions.push("LICENSE");
+  if (open && [7, 8, 9].includes(t.stage) && !hasProof(t, "PLACEMENT")) actions.push("REVISE");
+  if (t.status === "OPEN" || t.status === "ON_HOLD") {
+    actions.push("ASSIGN", t.status === "ON_HOLD" ? "RESUME" : "ON_HOLD");
+    if (!t.convertedAt) actions.push("CLOSE");
+  }
+  return {
+    ...t,
+    blockers: t.status === "OPEN" || t.status === "ON_HOLD" ? blockers : [],
+    availableActions: DEMO_ROLE ? actions.filter((a) => demoCanRunTrackAction(DEMO_ROLE!, a)) : actions,
+    kyc,
+    productName: t.productId,
+    leadName: lead?.name,
+  };
+}
+
+const STAGE_CODES: Record<number, string> = { 3: "KYC", 4: "SURVEY", 5: "PROGRAM", 6: "RFQ", 7: "COMPARISON", 8: "APPROVAL", 9: "ACCEPTANCE", 10: "PLACEMENT", 11: "WELCOME" };
+const STAGE_DAYS: Record<number, number> = { 4: 5, 5: 3, 6: 1, 7: 2, 8: 2, 9: 3, 10: 2, 11: 2 };
+
+/** Moves a demo track to a new step: closes the open milestone and opens the next with its deadline. */
+function demoAdvance(t: PolicyTrack, stage: number): PolicyTrack {
+  const milestones = t.milestones.map((m) => (m.status === "OPEN" ? { ...m, status: "COMPLETED" } : m));
+  milestones.push({ code: STAGE_CODES[stage]!, stage, status: "OPEN", dueAt: STAGE_DAYS[stage] ? `${addWorkingDays(todayIso(), STAGE_DAYS[stage]!)}T17:00:00Z` : undefined });
+  return { ...t, stage, milestones };
+}
+
+function demoTrackAction(track: PolicyTrack, input: TrackActionInput, proofs: Record<string, Awaited<ReturnType<typeof uploadProof>>>, purpose?: string): PolicyTrack {
+  const index = DEMO_TRACKS.findIndex((t) => t.id === track.id);
+  const current = DEMO_TRACKS[index];
+  if (!current) throw new Error("This policy track could not be found.");
+  if (current.version !== track.version) throw new Error(ONBOARDING_MESSAGES.STALE_VERSION!);
+  const view = demoTrackView(current);
+  const free = ["INSURER_RESPONSE", "SINGLE_SOURCE", "DEADLINE"];
+  if (!free.includes(input.action) && !view.availableActions.includes(input.action)) {
+    throw new Error(view.blockers[0] ? blockerText(view.blockers[0]) : ONBOARDING_MESSAGES.INVALID_STAGE!);
+  }
+  const f = input.fields ?? {};
+  const proofOf = (slot: string, p: string): Proof => ({ purpose: p, documentId: proofs[slot]!.documentId, documentVersion: 1, occurredAt: proofs[slot]!.occurredAt, fileName: proofs[slot]!.fileName });
+  let t: PolicyTrack = { ...current, evidence: proofs.main && purpose ? [...current.evidence.filter((e) => e.purpose !== purpose), proofOf("main", purpose)] : current.evidence };
+
+  switch (input.action) {
+    case "QUALIFY_KYC":
+      t = demoAdvance(t, 4);
+      break;
+    case "SURVEY":
+      t = demoAdvance({ ...t, riskGrade: String(f.grade), surveyFindings: String(f.findings ?? "") }, 5);
+      break;
+    case "SURVEY_NOT_APPLICABLE":
+      t = demoAdvance({ ...t, riskGrade: "NOT_APPLICABLE", surveyFindings: input.reason }, 5);
+      break;
+    case "PROGRAM":
+      t = demoAdvance({ ...t, programTerms: String(f.terms ?? "") }, 6);
+      break;
+    case "RFQ": {
+      const insurerIds = (f.insurerIds as string[]) ?? [];
+      if (insurerIds.length < 3 && demoApprovalStatus(t.approvalRequests.SINGLE_SOURCE) !== "APPROVED") {
+        throw new Error("Ask at least 3 insurers, or get the MD's single-source exception first.");
+      }
+      t = demoAdvance({ ...t, invitations: insurerIds.map((insurerId) => ({ insurerId, sentAt: new Date().toISOString(), responseDue: String(f.responseDue) })) }, 7);
+      break;
+    }
+    case "INSURER_RESPONSE": {
+      const due = t.invitations.find((i) => i.insurerId === f.insurerId)?.responseDue ?? "";
+      if (f.outcome === "NO_RESPONSE" && due >= todayIso()) throw new Error(ONBOARDING_MESSAGES.RESPONSE_NOT_DUE);
+      t = { ...t, invitations: t.invitations.map((i) => (i.insurerId === f.insurerId ? { ...i, response: String(f.outcome), resolvedAt: new Date().toISOString(), responseDetail: String(f.detail ?? "") } : i)) };
+      break;
+    }
+    case "QUOTE": {
+      const terms = f.terms as PolicyTerms;
+      const id = `Q-${t.id.slice(-3)}-${t.quotes.length + 1}`;
+      t = {
+        ...t,
+        quotes: [...t.quotes, { id, version: 1, terms, insurerReference: f.insurerReference as string | undefined, receivedAt: new Date().toISOString(), documentId: proofs.main?.documentId }],
+        invitations: t.invitations.map((i) => (i.insurerId === terms.insurerId && !i.response ? { ...i, response: "QUOTED", resolvedAt: new Date().toISOString() } : i)),
+      };
+      break;
+    }
+    case "RECOMMEND": {
+      const amount = Number(f.annualCommissionRwf);
+      t = demoAdvance(
+        { ...t, materialRevision: t.materialRevision + 1, recommendation: { quoteId: String(f.quoteId), quoteVersion: 1, annualCommissionRwf: amount, basis: String(f.commissionBasis ?? ""), comparison: String(f.comparison ?? ""), rationale: String(f.rationale ?? ""), tier: commissionTier(amount) } },
+        8,
+      );
+      break;
+    }
+    case "SINGLE_SOURCE":
+    case "REQUEST_APPROVAL": {
+      const purposeKey = input.action === "SINGLE_SOURCE" ? "SINGLE_SOURCE" : "RECOMMENDATION";
+      const tier = purposeKey === "SINGLE_SOURCE" ? "SINGLE_SOURCE" : (t.recommendation?.tier ?? "STANDARD");
+      const roles = tier === "STANDARD" ? ["Technical Director"] : tier === "STRATEGIC" ? ["MD"] : ["Technical Director", "MD"];
+      const requestedAt = todayIso();
+      const quote = t.quotes.find((q) => q.id === t.recommendation?.quoteId);
+      const request: ApprovalRequest = {
+        id: nextApprovalId(),
+        subjectType: "NEW_BUSINESS",
+        subjectId: t.id,
+        subjectRef: t.id,
+        subjectRevision: t.materialRevision,
+        title: purposeKey === "SINGLE_SOURCE" ? `Single-source exception · ${t.productId}` : `New business · ${t.productId}`,
+        summary:
+          purposeKey === "SINGLE_SOURCE"
+            ? `Fewer than two usable quotes for ${view.leadName}'s ${t.productId}. The written justification is attached.`
+            : `Place ${t.productId} for ${view.leadName} with ${quote?.terms.insurerId ?? "the recommended insurer"} at RWF ${(quote?.terms.totalPremium ?? 0).toLocaleString("en-US")}. ${TIER_LABEL[tier] ?? ""}.`,
+        client: view.leadName,
+        amount: purposeKey === "RECOMMENDATION" ? t.recommendation?.annualCommissionRwf : undefined,
+        amountLabel: purposeKey === "RECOMMENDATION" ? "Annual commission" : undefined,
+        policyVersion: APPROVAL_POLICY_VERSION.NEW_BUSINESS,
+        requestedBy: CURRENT_USER?.name ?? "Underwriting Manager",
+        requestedAt,
+        dueAt: addWorkingDays(requestedAt, DECISION_DAYS),
+        status: "PENDING",
+        steps: buildSteps(roles.map((role) => ({ role }))),
+        evidenceRequired: false,
+        evidence: [],
+        version: 1,
+        history: [{ at: requestedAt, by: CURRENT_USER?.name ?? "Underwriting Manager", text: "Approval requested" }],
+      };
+      APPROVALS.unshift(request);
+      t = { ...t, approvalRequests: { ...t.approvalRequests, [purposeKey]: request.id } };
+      break;
+    }
+    case "REVISE": {
+      const pending = APPROVALS.find((r) => r.id === t.approvalRequests.RECOMMENDATION && r.status === "PENDING");
+      if (pending) pending.status = "REJECTED";
+      const { RECOMMENDATION: _old, ...rest } = t.approvalRequests;
+      t = demoAdvance(
+        { ...t, approvalRequests: rest, recommendation: undefined, evidence: t.evidence.filter((e) => !["CLIENT_PRESENTATION", "CLIENT_ACCEPTANCE", "BOARD_APPROVAL"].includes(e.purpose)) },
+        7,
+      );
+      break;
+    }
+    case "RECORD_BOARD_EVIDENCE":
+      t = demoAdvance({ ...t, boardApproval: { authority: "BOARD_OF_DIRECTORS", recordedBy: CURRENT_USER?.name ?? "MD", recordedAt: new Date().toISOString(), decisionAt: proofs.main!.occurredAt } }, 9);
+      break;
+    case "PRESENT":
+      if (t.stage === 8) t = demoAdvance(t, 9);
+      break;
+    case "ACCEPT":
+    case "PROPERTY_ASSETS":
+      break;
+    case "PLACE":
+      t = demoAdvance(t, 10);
+      break;
+    case "CONFIRM_PLACEMENT":
+      break;
+    case "SCHEDULE":
+      t = { ...t, observedSchedule: f.observed as PolicyTerms, discrepancies: (f.discrepancies as string[]) ?? [] };
+      break;
+    case "TECHNICAL_VERIFICATION":
+      break;
+    case "VERIFY":
+      t = { ...t, evidence: [...t.evidence, { purpose: "VERIFIED", documentId: "", documentVersion: 0, occurredAt: new Date().toISOString() }] };
+      break;
+    case "CONVERT": {
+      const lead = DEMO_LEADS.find((l) => l.id === t.leadId);
+      if (lead && lead.status === "OPEN") Object.assign(lead, { status: "CONVERTED", convertedAt: new Date().toISOString(), version: lead.version + 1 });
+      t = demoAdvance({ ...t, convertedAt: new Date().toISOString(), policyId: String(f.externalPolicyNumber ?? `POL-${t.id.slice(-3)}`) }, 11);
+      break;
+    }
+    case "WELCOME":
+      t = {
+        ...t,
+        status: "COMPLETED",
+        evidence: [...t.evidence, proofOf("letter", "WELCOME_LETTER"), proofOf("delivery", "POLICY_DELIVERY"), proofOf("fileChecklist", "FILE_CHECKLIST")],
+        milestones: t.milestones.map((m) => (m.status === "OPEN" ? { ...m, status: "COMPLETED" } : m)),
+      };
+      break;
+    case "ASSIGN":
+      t = { ...t, assignees: { ...t.assignees, [String(f.responsibility)]: String(f.assigneeId) }, ownerId: f.responsibility === "OWNER" ? String(f.assigneeId) : t.ownerId };
+      break;
+    case "ON_HOLD":
+      t = { ...t, status: "ON_HOLD" };
+      break;
+    case "RESUME":
+      t = { ...t, status: "OPEN" };
+      break;
+    case "CLOSE":
+      t = { ...t, status: (f.disposition as TrackStatus) ?? "CLOSED_LOST", milestones: t.milestones.map((m) => (m.status === "OPEN" ? { ...m, status: "CANCELLED" } : m)) };
+      break;
+    case "DEADLINE":
+      t = { ...t, milestones: t.milestones.map((m) => (m.code === f.milestone && m.status === "OPEN" ? { ...m, dueAt: `${String(f.dueAt)}T17:00:00Z` } : m)) };
+      break;
+  }
+  t = { ...t, version: current.version + 1 };
+  DEMO_TRACKS[index] = t;
+  demoLog(t.id, `ONBOARDING_${input.action}`, input.reason);
+  return demoTrackView(t);
+}
+
+/** Demo: a decided onboarding approval moves its track on (the backend does this itself). */
+function onTrackApprovalDecided(r: ApprovalRequest) {
+  const index = DEMO_TRACKS.findIndex((t) => t.id === r.subjectId);
+  const t = DEMO_TRACKS[index];
+  if (!t || r.status !== "APPROVED") return;
+  if (t.approvalRequests.RECOMMENDATION === r.id && t.stage === 8 && t.recommendation?.tier !== "STRATEGIC") {
+    DEMO_TRACKS[index] = { ...demoAdvance(t, 9), version: t.version + 1 };
+    demoLog(t.id, "ONBOARDING_APPROVAL_HANDOFF");
+  }
 }
 
 function nextApprovalId() {
@@ -2840,208 +3566,87 @@ function nextApprovalId() {
   return `APR-${year}-${String(highest + 1).padStart(3, "0")}`;
 }
 
-/* Quotes (steps 6 and 7) */
-
-export async function addOnboardingQuote(
-  id: string,
-  input: Omit<RenewalQuote, "id" | "recommended">,
-  by: string,
-): Promise<OnboardingCase> {
-  const c = findOnboarding(id);
-  if (!kycApproved(c)) throw new Error("No quotation before the KYC Approval Form is signed (SOP 3.2, step 3).");
-  if (!["QUOTES", "COMPARISON"].includes(onboardingCurrentStep(c)?.code ?? "")) throw new Error("Quotes are recorded in steps 6 and 7.");
-  if (!input.insurer || !(input.premium > 0)) throw new Error("Choose the insurer and enter the premium.");
-  const quote: RenewalQuote = { ...input, id: `Q${c.quotes.length + 1}`, recommended: false };
-  return saveOnboarding({ ...c, quotes: [...c.quotes, quote] }, by, `Quote from ${input.insurer} recorded`);
-}
-
-export async function recommendOnboardingQuote(id: string, quoteId: string, by: string): Promise<OnboardingCase> {
-  const c = findOnboarding(id);
-  if (c.approvalId) throw new Error("The recommendation is already with the approvers.");
-  const quotes = c.quotes.map((q) => ({ ...q, recommended: q.id === quoteId }));
-  return saveOnboarding({ ...c, quotes }, by, `${quotes.find((q) => q.recommended)?.insurer} recommended`);
-}
-
-/** Step 6 done: at least 3 quotes, or a written reason for fewer (single source needs the MD). */
-export async function completeQuotation(id: string, input: { singleSourceReason?: string }, by: string): Promise<OnboardingCase> {
-  const c = findOnboarding(id);
-  if (c.quotes.length === 0) throw new Error("Record the quotes received first.");
-  const reason = input.singleSourceReason?.trim();
-  if (c.quotes.length < 3 && !reason) {
-    throw new Error("The SOP asks for quotes from at least 3 insurers. Give a written reason for fewer; the MD must then approve.");
+/** Demo: who acts next on each lead and track, for My Work. The backend creates real tasks itself. */
+function onboardingTasks(): WorkTask[] {
+  const tasks: WorkTask[] = [];
+  for (const raw of DEMO_LEADS) {
+    if (raw.status !== "OPEN") continue;
+    const step = nextLeadStep(raw);
+    if (!step) continue;
+    const byOwner = step.owner === "Accounts Executive";
+    tasks.push({
+      id: `T-${raw.id}-${step.key}`,
+      key: `LEAD:${raw.id}:${step.key}`,
+      type: "ONBOARDING_STEP",
+      title: `${step.name}: ${raw.name}`,
+      detail: `Lead step ${step.step}. ${step.deadline}.`,
+      resourceType: "LEAD",
+      resourceId: raw.id,
+      resourceRef: raw.id,
+      client: raw.name,
+      owner: byOwner ? raw.ownerId : undefined,
+      ownerRole: byOwner ? undefined : step.owner,
+      dueDate: ((step.key === "RESPOND" ? raw.responseDueAt : raw.needsDueAt) ?? raw.receivedAt).slice(0, 10),
+      status: "OPEN",
+      source: "SYSTEM",
+      createdAt: raw.receivedAt.slice(0, 10),
+      history: [],
+    });
   }
-  return finishStep(
-    { ...c, singleSourceReason: c.quotes.length < 3 ? reason : undefined },
-    "QUOTES",
-    { note: c.quotes.length < 3 ? `${c.quotes.length} quote(s); reason: ${reason}` : `Quotes received from ${c.quotes.length} insurers` },
-    by,
-  );
-}
-
-/* Internal approval (step 8) */
-
-/**
- * Ask for internal approval of the recommended cover, by expected annual
- * commission (SOP step 8). Fewer than 3 quotes always needs the MD.
- */
-export async function requestNewBusinessApproval(id: string, commissionRate: number, by: string): Promise<OnboardingCase> {
-  const c = findOnboarding(id);
-  if (onboardingCurrentStep(c)?.code !== "APPROVAL") throw new Error("Internal approval is not the current step.");
-  const quote = c.quotes.find((q) => q.recommended);
-  if (!quote) throw new Error("Recommend a quote first.");
-  if (!(commissionRate > 0 && commissionRate < 1)) throw new Error("Enter the expected commission rate, e.g. 15.");
-  const live = c.approvalId ? APPROVALS.find((r) => r.id === c.approvalId && r.status === "PENDING") : undefined;
-  if (live) throw new Error(`Already waiting for approval (${live.id}).`);
-  const commission = Math.round(quote.premium * commissionRate);
-  let approvers = renewalApprovers(commission);
-  if (c.singleSourceReason && !approvers.some((a) => a.role === "MD")) approvers = [...approvers, { role: "MD" }];
-  const comparison = c.completed.find((r) => r.code === "COMPARISON");
-  const request: ApprovalRequest = {
-    id: nextApprovalId(),
-    subjectType: "NEW_BUSINESS",
-    subjectId: c.id,
-    subjectRef: c.id,
-    subjectRevision: c.history.length,
-    title: `New business · ${c.prospect.name}`,
-    summary: `Place with ${quote.insurer} at RWF ${quote.premium.toLocaleString("en-US")} (${quote.terms}).${
-      c.singleSourceReason ? ` Fewer than 3 quotes: ${c.singleSourceReason}` : ""
-    }`,
-    client: c.prospect.name,
-    amount: commission,
-    amountLabel: "Annual commission",
-    policyVersion: APPROVAL_POLICY_VERSION.NEW_BUSINESS,
-    requestedBy: by,
-    requestedAt: todayIso(),
-    dueAt: addWorkingDays(todayIso(), DECISION_DAYS),
-    status: "PENDING",
-    steps: buildSteps(approvers),
-    evidenceRequired: true,
-    evidence: comparison?.evidence ? [{ name: comparison.evidence, version: 1 }] : [],
-    version: 1,
-    history: [{ at: todayIso(), by, text: "Approval requested" }],
-  };
-  APPROVALS.unshift(request);
-  return saveOnboarding({ ...c, approvalId: request.id }, by, `Internal approval requested (${request.id})`);
-}
-
-/** Called when an onboarding approval is fully approved: completes KYC or the approval step. */
-function onOnboardingApproved(r: ApprovalRequest, by: string) {
-  const c = ONBOARDING_CASES.find((x) => x.id === r.subjectId);
-  if (!c) return;
-  const code: OnboardingStepCode = r.subjectType === "ONBOARDING_KYC" ? "KYC" : "APPROVAL";
-  if (onboardingCurrentStep(c)?.code !== code) return;
-  finishStep(
-    c,
-    code,
-    {
-      note: code === "KYC" ? `KYC Approval Form signed (${r.id})` : `Approved through ${r.id}`,
-      evidence: code === "KYC" ? "KYC Approval Form (signed in Approvals)" : undefined,
-    },
-    by,
-  );
-}
-
-/* Placement and welcome (steps 10 and 11) */
-
-export async function recordPlacement(
-  id: string,
-  input: { policyNumber: string; classOfInsurance: string; start: string; expiry: string; evidence: string },
-  by: string,
-): Promise<OnboardingCase> {
-  const c = findOnboarding(id);
-  if (onboardingCurrentStep(c)?.code !== "PLACEMENT") throw new Error("Placement is not the current step.");
-  const quote = c.quotes.find((q) => q.recommended);
-  if (!quote) throw new Error("No accepted quote to place.");
-  if (!input.policyNumber.trim()) throw new Error("Enter the policy number from the insurer.");
-  if (!input.classOfInsurance) throw new Error("Choose the class of insurance.");
-  if (!input.start || !input.expiry || input.expiry <= input.start) throw new Error("Enter the cover dates; expiry must be after the start.");
-  if (!input.evidence.trim()) throw new Error("Attach the verified policy schedule.");
-  const placement = {
-    policyNumber: input.policyNumber.trim().toUpperCase(),
-    classOfInsurance: input.classOfInsurance,
-    insurer: quote.insurer,
-    premium: quote.premium,
-    start: input.start,
-    expiry: input.expiry,
-  };
-  return finishStep({ ...c, placement }, "PLACEMENT", { note: `Placed with ${quote.insurer}, policy ${placement.policyNumber}`, evidence: input.evidence.trim() }, by);
-}
-
-/** Step 11: welcome letter sent; the client file is opened with the new policy. */
-export async function completeWelcome(id: string, evidence: string, by: string): Promise<OnboardingCase> {
-  const c = findOnboarding(id);
-  if (onboardingCurrentStep(c)?.code !== "WELCOME") throw new Error("Welcome & filing is not the current step.");
-  if (!evidence.trim()) throw new Error("Attach the welcome letter.");
-  const p = c.placement!;
-  const client = await createClient({
-    name: c.prospect.name,
-    type: c.prospect.type,
-    sector: c.prospect.sector,
-    address: c.prospect.address,
-    contact: c.prospect.contact,
-    manager: c.accountExecutive,
-  });
-  await createPolicy(client.id, {
-    id: p.policyNumber,
-    classOfInsurance: p.classOfInsurance,
-    insurer: p.insurer,
-    premium: p.premium,
-    start: formatDate(p.start),
-    renewal: formatDate(p.expiry),
-    status: "Active",
-  });
-  // The documents collected and approved in KYC go into Section A of the client file.
-  const received = c.kyc.items.filter((i) => i.receivedAt);
-  const withKyc = (x: Client): Client => ({
-    ...x,
-    kyc: true,
-    docsFiled: received.length,
-    docsTotal: received.length,
-    documents: received.map((i) => ({ name: i.name, filed: true, expiry: i.expiry ? formatDate(i.expiry) : undefined, status: "ok" as const })),
-  });
-  const mockIndex = CLIENTS.findIndex((x) => x.id === client.id);
-  if (mockIndex >= 0) CLIENTS[mockIndex] = withKyc(CLIENTS[mockIndex]!);
-  const cached = CLIENT_CACHE.get(client.id);
-  if (cached) CLIENT_CACHE.set(client.id, withKyc(cached));
-  // The KYC files themselves move to the client file too (kept in this tab until
-  // the backend stores onboarding documents).
-  const kycFiles = (LOCAL_DOCUMENTS.get(subjectKey({ type: "ONBOARDING", id: c.id })) ?? []).filter((d) => d.classification === "KYC");
-  if (kycFiles.length) {
-    const target = subjectKey({ type: "CLIENT", id: client.uuid ?? client.id });
-    LOCAL_DOCUMENTS.set(target, [...kycFiles, ...(LOCAL_DOCUMENTS.get(target) ?? [])]);
+  for (const raw of DEMO_TRACKS) {
+    const t = demoTrackView(raw);
+    const action = t.availableActions.find((a) => !["LICENSE", "REVISE", "ASSIGN", "ON_HOLD", "RESUME", "CLOSE"].includes(a));
+    if (t.status !== "OPEN" || !action) continue;
+    const stage = stageOf(t.stage);
+    // Who acts, by the action's permission in the backend's matrix.
+    const byOwner = ["QUALIFY_KYC", "PRESENT", "ACCEPT", "WELCOME"].includes(action);
+    const role = ["SURVEY", "SURVEY_NOT_APPLICABLE", "PROGRAM", "TECHNICAL_VERIFICATION"].includes(action)
+      ? "Technical Director"
+      : action === "RECORD_BOARD_EVIDENCE"
+        ? "MD"
+        : t.underwritingRole === "MEDICAL_UNDERWRITING_MANAGER"
+          ? "Medical Underwriting Manager"
+          : "GI Underwriting Manager";
+    const due = openMilestone(t)?.dueAt?.slice(0, 10) ?? todayIso();
+    tasks.push({
+      id: `T-${t.id}-${action}`,
+      key: `ONBOARDING:${t.id}:${action}`,
+      type: "ONBOARDING_STEP",
+      title: `${ACTION_LABEL[action] ?? action}: ${t.leadName} · ${t.productName}`,
+      detail: `Step ${t.stage}: ${stage.name}.`,
+      resourceType: "ONBOARDING",
+      resourceId: t.id,
+      resourceRef: t.id,
+      client: t.leadName,
+      owner: byOwner ? t.ownerId : undefined,
+      ownerRole: byOwner ? undefined : role,
+      dueDate: due,
+      status: "OPEN",
+      source: "SYSTEM",
+      createdAt: todayIso(),
+      history: [],
+    });
   }
-  return finishStep({ ...c, clientId: client.id }, "WELCOME", { note: `Welcome letter sent; client file ${client.id} opened`, evidence: evidence.trim() }, by);
-}
-
-/** Who acts on a case's current step, for My Work. */
-function onboardingTask(c: OnboardingCase): WorkTask | null {
-  const step = onboardingCurrentStep(c);
-  if (!step) return null;
-  // Waiting in Approvals: the approval task covers it.
-  const waiting = step.code === "KYC" ? c.kyc.approvalId : step.code === "APPROVAL" ? c.approvalId : undefined;
-  if (waiting && APPROVALS.some((r) => r.id === waiting && r.status === "PENDING")) return null;
-  const byAccountExecutive = step.owner === "Accounts Executive";
-  // Until the request is sent, the approvers have nothing to decide: the
-  // underwriting manager who made the recommendation sends it.
-  const toRequest = step.code === "APPROVAL";
-  return {
-    id: `T-${c.id}-${step.code}`,
-    key: `ONBOARDING:${c.id}:${step.code}`,
-    type: "ONBOARDING_STEP",
-    title: toRequest ? `Request internal approval: ${c.prospect.name}` : `${step.name}: ${c.prospect.name}`,
-    detail: toRequest ? "Send the recommended quote for approval. The approver depends on the expected commission." : step.task,
-    resourceType: "ONBOARDING",
-    resourceId: c.id,
-    resourceRef: c.id,
-    client: c.prospect.name,
-    owner: byAccountExecutive ? c.accountExecutive : undefined,
-    ownerRole: byAccountExecutive ? undefined : toRequest ? "GI Underwriting Manager" : step.owner.split(" / ")[0],
-    dueDate: stepDue(c, step),
-    status: "OPEN",
-    source: "SYSTEM",
-    createdAt: c.createdAt,
-    history: [],
-  };
+  for (const r of DEMO_KYC_REVIEWS.filter((x) => x.status === "SUBMITTED")) {
+    tasks.push({
+      id: `T-${r.id}-DECIDE`,
+      key: `KYC:${r.id}:DECIDE`,
+      type: "KYC_DOCUMENT",
+      title: `Decide the KYC review: ${r.clientName}`,
+      detail: "Check the documents and screening, then approve with the signed KYC Approval Form, return or reject.",
+      resourceType: "KYC_REVIEW",
+      resourceId: r.id,
+      resourceRef: r.id,
+      client: r.clientName,
+      ownerRole: "Risk & Compliance Manager",
+      dueDate: (r.revisedDueAt ?? r.dueAt ?? new Date().toISOString()).slice(0, 10),
+      status: "OPEN",
+      source: "SYSTEM",
+      createdAt: todayIso(),
+      history: [],
+    });
+  }
+  return tasks;
 }
 
 /* --------------------------------- Calendar ---------------------------------- */
@@ -3066,7 +3671,7 @@ export async function getHolidays(): Promise<Holiday[]> {
 
 /** Short claim rows for the Overview, search and client file (open claims only). */
 export async function listClaimsSummary(): Promise<ClientClaim[]> {
-  return CLAIMS.filter((c) => !isClosed(c)).map(toClaimSummary);
+  return (await listClaims()).filter((c) => !isClosed(c)).map(toClaimSummary);
 }
 
 function toClaimSummary(c: Claim): ClientClaim {
@@ -3467,12 +4072,60 @@ export async function getClaimSteps(): Promise<ClaimStep[]> {
   return CLAIM_STEPS;
 }
 
-export async function getClaimMonthly(): Promise<ClaimMonth[]> {
-  return CLAIM_MONTHLY;
+/**
+ * Claims reported per month, from the first month with a claim (at least the
+ * last 6 months, at most 12): how many, and their total (RWF m).
+ */
+export function claimsPerMonth(claims: Claim[], now = new Date()): ClaimMonth[] {
+  const first = claims.reduce((min, c) => (c.dateReported < min ? c.dateReported : min), now.toISOString().slice(0, 10));
+  const since = (now.getFullYear() - Number(first.slice(0, 4))) * 12 + now.getMonth() - (Number(first.slice(5, 7)) - 1);
+  const months = Math.min(12, Math.max(6, since + 1));
+  return Array.from({ length: months }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (months - 1) + i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const inMonth = claims.filter((c) => c.dateReported.startsWith(key));
+    return {
+      month: d.toLocaleDateString("en-GB", { month: "short" }),
+      count: inMonth.length,
+      amount: Math.round(inMonth.reduce((s, c) => s + c.amount, 0) / 100000) / 10,
+    };
+  });
 }
 
-export async function listRecentActivity(): Promise<ActivityItem[]> {
-  return RECENT_ACTIVITY;
+export async function getClaimMonthly(): Promise<ClaimMonth[]> {
+  return claimsPerMonth(await listClaims());
+}
+
+/**
+ * Everything recorded on claims and renewals, newest first. Built from each
+ * record's own history until the backend has a shared activity feed.
+ */
+export async function listActivity(modules: { claims: boolean; renewals: boolean }): Promise<ActivityItem[]> {
+  const [claims, renewals] = await Promise.all([
+    modules.claims ? listClaims().catch(() => []) : Promise.resolve([]),
+    modules.renewals ? listRenewals() : Promise.resolve([]),
+  ]);
+  const items: ActivityItem[] = [
+    ...claims.flatMap((c) =>
+      c.history.map((e) => ({
+        at: e.at,
+        who: e.by,
+        what: `${e.text} · ${c.id}`,
+        module: "Claims" as const,
+        href: `/claims?claim=${encodeURIComponent(c.id)}`,
+      })),
+    ),
+    ...renewals.flatMap((r) =>
+      r.completed.map((m) => ({
+        at: m.completedAt,
+        who: m.completedBy,
+        what: `${RENEWAL_MILESTONES.find((x) => x.code === m.code)?.name ?? m.code} done · ${r.id}`,
+        module: "Renewals" as const,
+        href: `/renewals?case=${encodeURIComponent(r.id)}`,
+      })),
+    ),
+  ];
+  return items.sort((a, b) => b.at.localeCompare(a.at));
 }
 
 /* ------------------------------- Authentication ------------------------------ */

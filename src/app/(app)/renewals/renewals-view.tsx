@@ -2,29 +2,26 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, CalendarClock, CheckCircle2, Coins } from "lucide-react";
-import { toast } from "sonner";
-import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { PageHeader, SlideOver } from "@/components/gral/shell";
+import Link from "next/link";
+import { AlertTriangle, ArrowLeft } from "lucide-react";
+import { PageHeader } from "@/components/gral/shell";
 import { FilterMenu } from "@/components/gral/filter-menu";
 import { RenewalCasePanel, RenewalHealthChip } from "@/components/gral/renewal-case";
 import {
   CardHeader,
-  ChartCard,
   Chip,
   DistributionRow,
   FloatCard,
-  NavyButton,
   OutlineButton,
   QuickAction,
   QuickActionRow,
-  SegmentedBar,
   SegmentedTabs,
+  StageBar,
   StatTile,
 } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
-import { getRenewalMonthly, listRenewals } from "@/lib/api";
+import { listRenewals } from "@/lib/api";
 import {
   RENEWAL_MILESTONES,
   currentMilestone,
@@ -33,7 +30,7 @@ import {
   formatDate,
   renewalHealth,
 } from "@/lib/renewals";
-import type { RenewalCase, RenewalMonth } from "@/lib/types";
+import type { RenewalCase } from "@/lib/types";
 
 const TABS = ["Overdue", "Next 30 days", "Next 60 days", "All"] as const;
 const ALL = "__all__";
@@ -47,11 +44,9 @@ export function RenewalsView() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("All");
   const [allRenewals, setRenewals] = useState<RenewalCase[]>([]);
   const [insurer, setInsurer] = useState(ALL);
-  const [monthly, setMonthly] = useState<RenewalMonth[]>([]);
 
   useEffect(() => {
     listRenewals().then(setRenewals);
-    getRenewalMonthly().then(setMonthly);
   }, []);
 
   // The insurer filter applies to the whole page, so the counts match the list.
@@ -87,15 +82,16 @@ export function RenewalsView() {
   const dueIn30 = renewals.filter((r) => daysToExpiry(r) >= 0 && daysToExpiry(r) <= 30).length;
   const onTrack = renewals.filter((r) => renewalHealth(r) === "on-track").length;
   const totalPremium = renewals.reduce((s, r) => s + r.premium, 0);
-  const awaitingAcceptance = renewals.filter((r) => currentMilestone(r)?.code === "ACCEPTANCE" && !r.acceptance).length;
 
+  // Open renewals by the milestone they are on; finished ones are left out.
+  const active = renewals.filter((r) => currentMilestone(r));
   const stage = (from: number, to: number) =>
-    renewals.filter((r) => r.completed.length + 1 >= from && r.completed.length + 1 <= to).length || 0.4;
-  const stageSegments = [
-    { label: "1–3 Preparation", value: stage(1, 3) },
-    { label: "4–6 Quotes & approval", value: stage(4, 6) },
-    { label: "7–8 Placement", value: stage(7, 8) },
-    { label: "9–10 Delivery", value: stage(9, 10) },
+    active.filter((r) => r.completed.length + 1 >= from && r.completed.length + 1 <= to).length;
+  const stageCounts = [
+    { label: "Preparation", count: stage(1, 3) },
+    { label: "Quotes & approval", count: stage(4, 6) },
+    { label: "Placement", count: stage(7, 8) },
+    { label: "Delivery", count: stage(9, 10) },
   ];
 
   const byInsurer = Object.entries(
@@ -104,6 +100,24 @@ export function RenewalsView() {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3);
 
+  // A renewal is a long process, so it opens as its own full page.
+  if (open) {
+    return (
+      <>
+        <Link
+          href={pathname}
+          scroll={false}
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="size-4" /> Renewals
+        </Link>
+        <FloatCard className="mt-4 overflow-hidden">
+          <RenewalCasePanel key={open.id} renewal={open} onChanged={replaceCase} />
+        </FloatCard>
+      </>
+    );
+  }
+
   return (
     <>
       <PageHeader
@@ -111,18 +125,11 @@ export function RenewalsView() {
         extraPills={<FilterMenu label="Insurer" value={insurer} options={insurerOptions} onChange={setInsurer} />}
       />
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_340px]">
-        <StatTile icon={CalendarClock} label="Due in 30 Days" value={String(dueIn30)} delta="4.0%" />
-        <StatTile icon={AlertTriangle} label="Overdue" value={String(overdue)} delta="1.0%" tone="down" delay={60} />
-        <StatTile icon={CheckCircle2} label="On Track" value={String(onTrack)} delta="5.5%" delay={120} />
-        <StatTile
-          icon={Coins}
-          label="Premium Up for Renewal"
-          value={`RWF ${(totalPremium / 1000000).toFixed(1)}m`}
-          delta="7.4%"
-          delay={180}
-        />
-        <div className="hidden xl:block" />
+      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatTile label="Due in 30 Days" value={String(dueIn30)} />
+        <StatTile label="Overdue" value={String(overdue)} delay={60} />
+        <StatTile label="On Track" value={String(onTrack)} delay={120} />
+        <StatTile label="Premium Up for Renewal (RWF)" value={`${(totalPremium / 1000000).toFixed(1)}M`} delay={180} />
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
@@ -149,17 +156,6 @@ export function RenewalsView() {
                 </OutlineButton>
               }
             />
-            <QuickActionRow
-              icon={CheckCircle2}
-              tone="success"
-              tinted
-              text={`${awaitingAcceptance} ${awaitingAcceptance === 1 ? "quote" : "quotes"} awaiting client decision`}
-              action={
-                <NavyButton onClick={() => toast.success(`Reminder sent to ${awaitingAcceptance} client(s).`)}>
-                  Send Reminder
-                </NavyButton>
-              }
-            />
           </QuickAction>
 
           <FloatCard className="p-5" delay={220}>
@@ -168,49 +164,15 @@ export function RenewalsView() {
           </FloatCard>
 
           <FloatCard className="p-5" delay={280}>
-            <h2 className="text-base font-semibold tracking-tight">Policies by Milestone Stage</h2>
+            <h2 className="text-base font-semibold tracking-tight">Renewals by Stage</h2>
             <div className="mt-4">
-              <SegmentedBar segments={stageSegments} />
+              <StageBar stages={stageCounts} />
             </div>
-            <p className="mt-3 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              GRAL renewal process, Day −120 to delivery
-            </p>
           </FloatCard>
 
-          <ChartCard
-            delay={340}
-            title="Premium Up for Renewal per Month"
-            legend={[
-              { label: "Premium (RWF m)", tone: "sky" },
-              { label: "Policies", tone: "primary" },
-            ]}
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={monthly} margin={{ top: 4, right: 8, left: -14, bottom: 0 }}>
-                <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" vertical={false} />
-                <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
-                <YAxis yAxisId="left" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
-                <YAxis
-                  yAxisId="right"
-                  orientation="right"
-                  tick={{ fontSize: 10, fill: "var(--subtle)" }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", fontSize: 11 }} />
-                <Bar yAxisId="left" dataKey="premium" name="Premium (RWF m)" fill="var(--sky)" radius={[6, 6, 0, 0]} barSize={14} />
-                <Line yAxisId="right" type="monotone" dataKey="policies" name="Policies" stroke="var(--primary)" strokeWidth={2} dot={false} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </ChartCard>
         </div>
       </div>
 
-      <SlideOver open={!!open} onClose={() => setOpen(null)}>
-        {open ? (
-          <RenewalCasePanel key={open.id} renewal={open} onClose={() => setOpen(null)} onChanged={replaceCase} />
-        ) : null}
-      </SlideOver>
     </>
   );
 }

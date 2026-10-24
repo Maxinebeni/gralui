@@ -1,15 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, ClipboardList, Gavel, Plus, Timer } from "lucide-react";
+import { AlertTriangle, Gavel, Plus } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader } from "@/components/gral/shell";
 import { FilterMenu } from "@/components/gral/filter-menu";
 import { DATE_RANGE_OPTIONS, withinRange, type DateRange } from "@/lib/date-range";
 import {
   CLAIM_TABS,
-  ClaimSlideOver,
+  ClaimPage,
+  HeadGap,
+  HeadRow,
   Td,
   Th,
   byUrgency,
@@ -29,11 +31,11 @@ import {
   OutlineButton,
   QuickAction,
   QuickActionRow,
-  SegmentedBar,
   SegmentedTabs,
+  StageBar,
   StatTile,
 } from "@/components/gral/ui";
-import { getClaimMonthly } from "@/lib/api";
+import { claimsPerMonth } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import {
   CLAIM_STEP_DEFS,
@@ -49,7 +51,7 @@ import {
 } from "@/lib/claims";
 import { claimPermissions } from "@/lib/permissions";
 import { todayIso } from "@/lib/renewals";
-import type { Claim, ClaimMonth } from "@/lib/types";
+import type { Claim } from "@/lib/types";
 
 const QUEUE_ROWS = 5;
 
@@ -65,17 +67,13 @@ export function ClaimsView() {
   const { claims: allClaims, loaded, reload } = useClaims();
   // Until the claims arrive, the tiles show "…" instead of a misleading 0.
   const shown = (n: number | string) => (loaded ? String(n) : "…");
-  const { open, setOpen } = useOpenClaim(allClaims);
+  const { open, openId, backHref, setOpen } = useOpenClaim(allClaims);
   // Date reported filter; applies to the tiles, the queue and Needs Action.
   const [range, setRange] = useState<DateRange>("all");
   const claims = useMemo(() => allClaims.filter((c) => withinRange(c.dateReported, range)), [allClaims, range]);
   const [tab, setTab] = useState<(typeof CLAIM_TABS)[number]>("Breached");
   const [newOpen, setNewOpen] = useState(false);
-  const [monthly, setMonthly] = useState<ClaimMonth[]>([]);
-
-  useEffect(() => {
-    getClaimMonthly().then(setMonthly);
-  }, []);
+  const monthly = useMemo(() => claimsPerMonth(allClaims), [allClaims]);
 
   const openClaims = claims.filter((c) => !isClosed(c));
   const rows = useMemo(() => filterClaims(claims, tab).sort(byUrgency), [claims, tab]);
@@ -94,10 +92,16 @@ export function ClaimsView() {
     : "0";
   const handlers = [...new Set(allClaims.map((c) => c.handler))].sort();
 
-  const stepSegments = CLAIM_STEP_DEFS.map((s) => ({
+  const stepCounts = CLAIM_STEP_DEFS.map((s) => ({
     label: s.name,
-    value: openClaims.filter((c) => c.step === s.code).length || 0.4,
+    count: openClaims.filter((c) => c.step === s.code).length,
   }));
+
+  // A claim is a long process, so it opens as its own full page.
+  if (openId) {
+    if (open) return <ClaimPage claim={open} backHref={backHref} backLabel="Claims Queue" onChanged={reload} />;
+    return <p className="text-sm text-muted-foreground">{loaded ? "This claim could not be found." : "Loading claim…"}</p>;
+  }
 
   return (
     <>
@@ -120,12 +124,11 @@ export function ClaimsView() {
         }
       />
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_340px]">
-        <StatTile icon={ClipboardList} label="Total Open Claims" value={shown(openClaims.length)} />
-        <StatTile icon={AlertTriangle} label="SLA Breached" value={shown(breached)} tone="down" delay={60} />
-        <StatTile icon={CheckCircle2} label="Awaiting Sign-off" value={shown(awaitingSignOff)} delay={120} />
-        <StatTile icon={Timer} label="Avg Working Days Open" value={shown(avgDays)} delay={180} />
-        <div className="hidden xl:block" />
+      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatTile label="Open Claims" value={shown(openClaims.length)} />
+        <StatTile label="SLA Breached" value={shown(breached)} delay={60} />
+        <StatTile label="Awaiting Sign-off" value={shown(awaitingSignOff)} delay={120} />
+        <StatTile label="Avg Working Days Open" value={shown(avgDays)} delay={180} />
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
@@ -135,7 +138,7 @@ export function ClaimsView() {
               title="Claims Queue"
               right={<SegmentedTabs tabs={CLAIM_TABS} value={tab} onChange={setTab} />}
             />
-            <div className="mt-4">
+            <div className="mt-6">
               <ClaimsTable
                 claims={rows.slice(0, QUEUE_ROWS)}
                 onView={setOpen}
@@ -153,48 +156,71 @@ export function ClaimsView() {
           </FloatCard>
 
           <FloatCard className="overflow-hidden" delay={200}>
-            <CardHeader title="Needs Action" right={<Chip tone="neutral">{blocked.length} blocked</Chip>} />
-            <div className="mt-4 overflow-x-auto px-2 pb-4">
-              <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left">
-                <thead>
-                  <tr className="bg-pale text-[11px] text-muted-foreground">
-                    <Th className="rounded-l-xl">Claim</Th>
-                    <Th>Step</Th>
-                    <Th>Blocker</Th>
-                    <Th>Who acts</Th>
-                    <Th>Working days waiting</Th>
-                    <Th className="rounded-r-xl">Next Action</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {blocked.map((c) => (
-                    <tr key={c.id}>
-                      <Td>
-                        <span className="flex items-center gap-2 text-xs font-medium whitespace-nowrap">
-                          <span className="size-1.5 rounded-full bg-sky" />
-                          {c.id}
-                        </span>
-                      </Td>
-                      <Td className="text-xs whitespace-nowrap">{stageLabel(c)}</Td>
-                      <Td className="max-w-[220px] text-xs">{claimBlocker(c)}</Td>
-                      <Td className="text-xs whitespace-nowrap">{actionOwner(c)}</Td>
-                      <Td className="text-xs">{workingDaysBetween(isDisputed(c) ? c.dispute!.raisedAt : c.stepStartedAt, todayIso())} d</Td>
-                      <Td>
-                        <NavyButton onClick={() => setOpen(c)}>Open</NavyButton>
-                      </Td>
-                    </tr>
-                  ))}
-                  {blocked.length === 0 ? (
-                    <tr>
-                      <Td className="text-xs text-muted-foreground" colSpan={6}>
-                        {loaded ? "Nothing is blocked right now." : "Loading claims…"}
-                      </Td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
+            <CardHeader title="Needs Action" right={blocked.length ? <Chip tone="warning">{blocked.length} blocked</Chip> : null} />
+            {blocked.length === 0 ? (
+              <p className="px-4 pt-3 pb-5 text-xs text-muted-foreground sm:px-5">{loaded ? "Nothing is blocked." : "Loading claims…"}</p>
+            ) : (
+              <div className="mt-6 overflow-x-auto px-3 pb-4 sm:px-4">
+                <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left">
+                  <thead>
+                    <HeadRow>
+                      <Th className="rounded-l-xl">Claim</Th>
+                      <Th>Step</Th>
+                      <Th>Blocker</Th>
+                      <Th>Who acts</Th>
+                      <Th>Waiting</Th>
+                      <Th className="rounded-r-xl" />
+                    </HeadRow>
+                  </thead>
+                  <tbody>
+                    <HeadGap colSpan={6} />
+                    {blocked.map((c) => (
+                      <tr key={c.id}>
+                        <Td className="text-xs font-medium whitespace-nowrap">{c.id}</Td>
+                        <Td className="text-xs whitespace-nowrap">{stageLabel(c)}</Td>
+                        <Td className="max-w-[220px] text-xs">{claimBlocker(c)}</Td>
+                        <Td className="text-xs whitespace-nowrap">{actionOwner(c)}</Td>
+                        <Td className="text-xs whitespace-nowrap">
+                          {workingDaysBetween(isDisputed(c) ? c.dispute!.raisedAt : c.stepStartedAt, todayIso())} working days
+                        </Td>
+                        <Td className="text-right">
+                          <NavyButton onClick={() => setOpen(c)}>Open</NavyButton>
+                        </Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </FloatCard>
+
+          <ChartCard
+            delay={260}
+            title="Claims per Month"
+            legend={[
+              { label: "Amount (RWF m)", tone: "sky" },
+              { label: "Number of claims", tone: "primary" },
+            ]}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={monthly} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
+                <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" vertical={false} />
+                <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
+                <YAxis yAxisId="left" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  allowDecimals={false}
+                  tick={{ fontSize: 10, fill: "var(--subtle)" }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", fontSize: 11 }} />
+                <Line yAxisId="left" type="monotone" dataKey="amount" stroke="var(--sky)" strokeWidth={2} dot={false} name="Amount (RWF m)" />
+                <Line yAxisId="right" type="monotone" dataKey="count" stroke="var(--primary)" strokeWidth={2} dot={false} name="Number of claims" />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartCard>
         </div>
 
         <div className="min-w-0 space-y-4">
@@ -225,45 +251,14 @@ export function ClaimsView() {
           </FloatCard>
 
           <FloatCard className="p-5" delay={280}>
-            <h2 className="text-base font-semibold tracking-tight">Claims by Step</h2>
+            <h2 className="text-base font-semibold tracking-tight">Open Claims by Step</h2>
             <div className="mt-4">
-              <SegmentedBar segments={stepSegments} />
+              <StageBar stages={stepCounts} />
             </div>
-            <p className="mt-3 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              GRAL 6-step claims process, plus Claims Committee disputes
-            </p>
           </FloatCard>
-
-          <ChartCard
-            delay={340}
-            title="Claims Count & Amount per Month"
-            legend={[
-              { label: "Claim amount (RWF m)", tone: "sky" },
-              { label: "Count of claims", tone: "primary" },
-            ]}
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={monthly} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
-                <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" vertical={false} />
-                <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
-                <YAxis yAxisId="left" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
-                <YAxis
-                  yAxisId="right"
-                  orientation="right"
-                  tick={{ fontSize: 10, fill: "var(--subtle)" }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", fontSize: 11 }} />
-                <Line yAxisId="left" type="monotone" dataKey="amount" stroke="var(--sky)" strokeWidth={2} dot={false} name="Claim amount (RWF m)" />
-                <Line yAxisId="right" type="monotone" dataKey="count" stroke="var(--primary)" strokeWidth={2} dot={false} name="Count of claims" />
-              </LineChart>
-            </ResponsiveContainer>
-          </ChartCard>
         </div>
       </div>
 
-      <ClaimSlideOver claim={open} onClose={() => setOpen(null)} onChanged={reload} />
       <NewClaimSlideOver
         open={newOpen}
         onClose={() => setNewOpen(false)}

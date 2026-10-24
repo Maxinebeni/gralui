@@ -1,63 +1,58 @@
 "use client";
 
-// Onboarding step 1: register a lead (SOP 3.2). The KYC checklist for the
-// client type is created with it; the client file itself is opened at step 11.
+// Onboarding step 1: register a lead (SOP 3.2), with the backend's fields. The
+// CRM Manager can assign the Accounts Executive straight away; otherwise it is
+// done from the lead. The Technical Department is told by the system.
 
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { toast } from "sonner";
-import { createLead, listManagers } from "@/lib/api";
+import { onboardingOptions, registerLead, type ChoiceOption } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
-import type { ClientType, OnboardingCase } from "@/lib/types";
-import { CLIENT_FORM_TYPES, Field, Section, describedBy, inputClass } from "./client-form";
+import { LEAD_SOURCES } from "@/lib/onboarding";
+import { onboardingPermissions } from "@/lib/permissions";
+import { todayIso } from "@/lib/renewals";
+import type { Lead, LeadType } from "@/lib/types";
+import { Field, Section, describedBy, inputClass } from "./client-form";
 import { NavyButton, OutlineButton } from "./ui";
-
-const REFERRAL_SOURCES = [
-  "Referral from an existing client",
-  "Referral from a partner or insurer",
-  "Direct approach",
-  "Website enquiry",
-  "Marketing campaign",
-  "Tender invitation",
-  "Other",
-];
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 type Values = {
   name: string;
-  type: ClientType | "";
-  sector: string;
-  address: string;
+  type: LeadType;
+  industry: string;
+  source: string;
+  sourceReference: string;
   contactName: string;
-  contactTitle: string;
-  contactEmail: string;
-  contactPhone: string;
-  referralSource: string;
-  accountExecutive: string;
+  email: string;
+  phone: string;
+  receivedAt: string;
+  ownerId: string;
 };
 
-export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreated: (c: OnboardingCase) => void }) {
+export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreated: (lead: Lead) => void }) {
   const { user } = useCurrentUser();
-  const [managers, setManagers] = useState<string[]>([]);
+  const { canAssignLead } = onboardingPermissions(user);
+  const [executives, setExecutives] = useState<ChoiceOption[]>([]);
   const [v, setV] = useState<Values>({
     name: "",
-    type: "",
-    sector: "",
-    address: "",
+    type: "CORPORATE",
+    industry: "",
+    source: "",
+    sourceReference: "",
     contactName: "",
-    contactTitle: "",
-    contactEmail: "",
-    contactPhone: "",
-    referralSource: "",
-    accountExecutive: "",
+    email: "",
+    phone: "",
+    receivedAt: todayIso(),
+    ownerId: "",
   });
   const [errors, setErrors] = useState<Partial<Record<keyof Values, string>>>({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    listManagers().then(setManagers);
-  }, []);
+    if (canAssignLead) onboardingOptions().then((o) => setExecutives(o.accountExecutives));
+  }, [canAssignLead]);
 
   const set = <K extends keyof Values>(k: K, value: Values[K]) => {
     setV((x) => ({ ...x, [k]: value }));
@@ -67,37 +62,34 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     const found: Partial<Record<keyof Values, string>> = {};
-    if (v.name.trim().length < 2) found.name = "Enter the company name.";
-    if (!v.type) found.type = "Choose the client type. It decides the KYC checklist.";
-    if (!v.sector.trim()) found.sector = "Enter the industry, e.g. Hospitality.";
+    if (v.name.trim().length < 2) found.name = v.type === "INDIVIDUAL" ? "Enter the person's full name." : "Enter the company name.";
+    if (!v.industry.trim()) found.industry = "Enter the industry, e.g. Hospitality.";
+    if (!v.source) found.source = "Choose where the lead came from.";
     if (!v.contactName.trim()) found.contactName = "Enter the contact person's name.";
-    if (!EMAIL_PATTERN.test(v.contactEmail.trim()) && !v.contactPhone.trim()) {
-      found.contactEmail = "Enter an email or a phone number so the Accounts Executive can follow up.";
-    }
-    if (!v.referralSource) found.referralSource = "Choose where the lead came from.";
-    if (!v.accountExecutive) found.accountExecutive = "Choose the Accounts Executive (the CRM Manager assigns one).";
+    if (v.email.trim() && !EMAIL_PATTERN.test(v.email.trim())) found.email = "Enter a valid email, e.g. name@company.rw.";
+    if (!v.email.trim() && !v.phone.trim()) found.email = "Enter an email or a phone number so the Accounts Executive can follow up.";
+    if (!v.receivedAt || v.receivedAt > todayIso()) found.receivedAt = "Enter the date the enquiry came in (not in the future).";
     setErrors(found);
     if (Object.keys(found).length) return toast.error("Please fix the highlighted fields.");
     setSaving(true);
     try {
-      const created = await createLead(
-        {
-          name: v.name,
-          type: v.type as ClientType,
-          sector: v.sector.trim(),
-          address: v.address.trim(),
-          contact: {
-            name: v.contactName.trim(),
-            title: v.contactTitle.trim(),
-            email: v.contactEmail.trim().toLowerCase(),
-            phone: v.contactPhone.trim(),
-          },
-          referralSource: v.referralSource,
-          accountExecutive: v.accountExecutive,
-        },
-        user.name,
+      const created = await registerLead({
+        name: v.name,
+        type: v.type,
+        industry: v.industry,
+        source: v.source,
+        sourceReference: v.sourceReference,
+        contactName: v.contactName,
+        email: v.email,
+        phone: v.phone,
+        receivedAt: v.receivedAt,
+        ownerId: v.ownerId || undefined,
+      });
+      toast.success(
+        created.ownerId
+          ? `${created.name} registered. The first response is due within 24 hours.`
+          : `${created.name} registered. The CRM Manager assigns the Accounts Executive next.`,
       );
-      toast.success(`Lead ${created.id} registered. ${v.accountExecutive} meets the client within 3 working days.`);
       onCreated(created);
       onClose();
     } catch (err) {
@@ -125,24 +117,20 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
 
       <div className="flex-1 space-y-6 px-6 py-5">
         <Section title="Prospect">
-          <Field id="leadName" label="Company name" error={errors.name} wide>
-            <input id="leadName" value={v.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. Kivu Lakeside Hotels Ltd" className={inputClass(errors.name)} {...describedBy("leadName", errors.name)} />
-          </Field>
-          <Field id="leadType" label="Client type" error={errors.type}>
-            <select id="leadType" value={v.type} onChange={(e) => set("type", e.target.value as ClientType | "")} className={inputClass(errors.type)} {...describedBy("leadType", errors.type)}>
-              <option value="">Select a type</option>
-              {CLIENT_FORM_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
+          <Field id="leadType" label="Company or individual">
+            <select id="leadType" value={v.type} onChange={(e) => set("type", e.target.value as LeadType)} className={inputClass()}>
+              <option value="CORPORATE">Company or organisation</option>
+              <option value="INDIVIDUAL">Individual</option>
             </select>
           </Field>
-          <Field id="leadSector" label="Industry" error={errors.sector}>
-            <input id="leadSector" value={v.sector} onChange={(e) => set("sector", e.target.value)} placeholder="e.g. Hospitality" className={inputClass(errors.sector)} {...describedBy("leadSector", errors.sector)} />
+          <Field id="leadName" label={v.type === "INDIVIDUAL" ? "Full name" : "Company name"} error={errors.name}>
+            <input id="leadName" value={v.name} onChange={(e) => set("name", e.target.value)} placeholder={v.type === "INDIVIDUAL" ? "e.g. Aline Mukeshimana" : "e.g. Kivu Lakeside Hotels Ltd"} className={inputClass(errors.name)} {...describedBy("leadName", errors.name)} />
           </Field>
-          <Field id="leadAddress" label="Address (optional)" wide>
-            <input id="leadAddress" value={v.address} onChange={(e) => set("address", e.target.value)} placeholder="e.g. Rubavu, Lake Kivu shore" className={inputClass()} />
+          <Field id="leadIndustry" label="Industry" error={errors.industry}>
+            <input id="leadIndustry" value={v.industry} onChange={(e) => set("industry", e.target.value)} placeholder="e.g. Hospitality" className={inputClass(errors.industry)} {...describedBy("leadIndustry", errors.industry)} />
+          </Field>
+          <Field id="leadReceived" label="Enquiry received on" error={errors.receivedAt}>
+            <input id="leadReceived" type="date" max={todayIso()} value={v.receivedAt} onChange={(e) => set("receivedAt", e.target.value)} className={inputClass(errors.receivedAt)} {...describedBy("leadReceived", errors.receivedAt)} />
           </Field>
         </Section>
 
@@ -150,38 +138,40 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
           <Field id="leadContact" label="Full name" error={errors.contactName}>
             <input id="leadContact" value={v.contactName} onChange={(e) => set("contactName", e.target.value)} className={inputClass(errors.contactName)} {...describedBy("leadContact", errors.contactName)} />
           </Field>
-          <Field id="leadTitle" label="Job title (optional)">
-            <input id="leadTitle" value={v.contactTitle} onChange={(e) => set("contactTitle", e.target.value)} className={inputClass()} />
-          </Field>
-          <Field id="leadEmail" label="Email" error={errors.contactEmail}>
-            <input id="leadEmail" type="email" value={v.contactEmail} onChange={(e) => set("contactEmail", e.target.value)} placeholder="name@company.rw" className={inputClass(errors.contactEmail)} {...describedBy("leadEmail", errors.contactEmail)} />
+          <Field id="leadEmail" label="Email" error={errors.email}>
+            <input id="leadEmail" type="email" value={v.email} onChange={(e) => set("email", e.target.value)} placeholder="name@company.rw" className={inputClass(errors.email)} {...describedBy("leadEmail", errors.email)} />
           </Field>
           <Field id="leadPhone" label="Phone">
-            <input id="leadPhone" type="tel" value={v.contactPhone} onChange={(e) => set("contactPhone", e.target.value)} placeholder="+250 788 123 456" className={inputClass()} />
+            <input id="leadPhone" type="tel" value={v.phone} onChange={(e) => set("phone", e.target.value)} placeholder="+250 788 123 456" className={inputClass()} />
           </Field>
         </Section>
 
         <Section title="Source and owner">
-          <Field id="leadSource" label="Where the lead came from" error={errors.referralSource}>
-            <select id="leadSource" value={v.referralSource} onChange={(e) => set("referralSource", e.target.value)} className={inputClass(errors.referralSource)} {...describedBy("leadSource", errors.referralSource)}>
+          <Field id="leadSource" label="Where the lead came from" error={errors.source}>
+            <select id="leadSource" value={v.source} onChange={(e) => set("source", e.target.value)} className={inputClass(errors.source)} {...describedBy("leadSource", errors.source)}>
               <option value="">Select a source</option>
-              {REFERRAL_SOURCES.map((s) => (
+              {LEAD_SOURCES.map((s) => (
                 <option key={s} value={s}>
                   {s}
                 </option>
               ))}
             </select>
           </Field>
-          <Field id="leadAe" label="Accounts Executive" error={errors.accountExecutive}>
-            <select id="leadAe" value={v.accountExecutive} onChange={(e) => set("accountExecutive", e.target.value)} className={inputClass(errors.accountExecutive)} {...describedBy("leadAe", errors.accountExecutive)}>
-              <option value="">Select a person</option>
-              {managers.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
+          <Field id="leadSourceRef" label="Referred by (optional)">
+            <input id="leadSourceRef" value={v.sourceReference} onChange={(e) => set("sourceReference", e.target.value)} placeholder="e.g. Kigali Steel Industries" className={inputClass()} />
           </Field>
+          {canAssignLead ? (
+            <Field id="leadOwner" label="Accounts Executive (optional now)" wide>
+              <select id="leadOwner" value={v.ownerId} onChange={(e) => set("ownerId", e.target.value)} className={inputClass()}>
+                <option value="">Assign later from the lead</option>
+                {executives.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ) : null}
         </Section>
       </div>
 

@@ -26,11 +26,8 @@ import { useCurrentUser } from "@/lib/auth-context";
 import { claimPermissions } from "@/lib/permissions";
 import {
   CLAIM_STEP_DEFS,
-  COMMITTEE_DAYS,
-  NO_RESPONSE_ESCALATION_DAYS,
   claimBlocker,
   claimSignOffChain,
-  daysWithoutInsurerResponse,
   dueLabel,
   isClosed,
   isDisputed,
@@ -61,7 +58,8 @@ export function ClaimDetailPanel({
   onChanged,
 }: {
   claim: Claim;
-  onClose: () => void;
+  /** Shows a close button. Left out on the full claim page, which has a back link. */
+  onClose?: () => void;
   onChanged: () => void;
 }) {
   const [tab, setTab] = useState<Tab>("Documents");
@@ -82,7 +80,7 @@ export function ClaimDetailPanel({
 
   return (
     <div>
-      <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-6 sm:py-5">
+      <div className="flex items-start justify-between gap-3 border-b border-border px-5 pt-7 pb-6 sm:px-8">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <PriorityPill priority={claim.priority} />
@@ -94,39 +92,40 @@ export function ClaimDetailPanel({
               </Chip>
             ) : null}
           </div>
-          <p className="mt-1.5 text-sm text-foreground">{claim.client}</p>
-          <p className="text-xs break-words text-muted-foreground">
+          <p className="mt-2 text-sm text-foreground">{claim.client}</p>
+          <p className="mt-1.5 text-xs break-words text-muted-foreground">
             {claim.classOfInsurance} · {claim.insurer} · {formatRwf(claim.amount)}
           </p>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-1.5 text-xs text-muted-foreground">
             Loss {formatDate(claim.dateOfLoss)} · Reported {formatDate(claim.dateReported)}
             {claim.policyId ? ` · ${claim.policyId}` : " · Policy not linked"}
             {claim.submission?.insurerClaimNo ? ` · Insurer ref ${claim.submission.insurerClaimNo}` : ""}
           </p>
-          <div className="mt-2">
+          <div className="mt-3">
             <Person name={claim.handler} />
           </div>
         </div>
-        <button
-          type="button"
-          aria-label="Close claim"
-          onClick={onClose}
-          className="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground hover:text-foreground"
-        >
-          <X className="size-4" />
-        </button>
+        {onClose ? (
+          <button
+            type="button"
+            aria-label="Close claim"
+            onClick={onClose}
+            className="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground hover:text-foreground"
+          >
+            <X className="size-4" />
+          </button>
+        ) : null}
       </div>
 
-      <div className="px-4 pt-5 sm:px-6">
-        <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Claim progress</h3>
+      <div className="px-5 pt-6 sm:px-8">
         <Stepper claim={claim} />
       </div>
 
-      <div className="px-4 pt-4 sm:px-6">
+      <div className="px-5 pt-5 sm:px-8">
         <CurrentStep claim={claim} perms={perms} role={user.role} userName={user.name} run={run} />
       </div>
 
-      <div className="px-4 py-5 sm:px-6">
+      <div className="px-5 py-7 sm:px-8">
         <SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />
         {tab === "Documents" ? (
           perms.seesDocumentDetail ? (
@@ -150,12 +149,7 @@ export function ClaimDetailPanel({
 
         {perms.canSeeFraudFlag && !isClosed(claim) ? (
           <div className="mt-6 flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2.5">
-            <div className="min-w-0">
-              <p className="text-xs font-medium">Fraud flag</p>
-              <p className="text-[11px] text-muted-foreground">
-                Only the Technical Director, Risk &amp; Compliance Manager and MD can see this.
-              </p>
-            </div>
+            <p className="text-xs font-medium">Fraud flag</p>
             <OutlineButton
               onClick={() =>
                 run(
@@ -267,7 +261,6 @@ function CurrentStep({
       ) : null}
       {claim.step === "REGISTER" ? (
         <>
-          <p className="text-muted-foreground">Check the claim details and confirm registration within 24 hours.</p>
           {!readOnly ? (
             <NavyButton onClick={() => run(() => confirmClaimRegistration(claim.id, userName), "Registration confirmed.")}>
               <Check className="size-3.5" /> Confirm registration
@@ -277,11 +270,6 @@ function CurrentStep({
       ) : null}
       {claim.step === "DOCUMENTS" ? (
         <>
-          <p className="text-muted-foreground">
-            {missingDocuments(claim).length
-              ? "Collect the documents listed below, then send the claim to the insurer."
-              : "All required documents are in."}
-          </p>
           {!readOnly ? (
             <NavyButton
               disabled={missingDocuments(claim).length > 0}
@@ -305,9 +293,7 @@ function CurrentStep({
         />
       ) : null}
       {readOnly ? (
-        <p className="text-[11px] text-subtle">
-          View only. Claim updates are limited to the claims team, Technical Director, DMD and MD.
-        </p>
+        <p className="text-[11px] text-subtle">View only</p>
       ) : null}
     </Box>
   );
@@ -319,7 +305,6 @@ function SubmitForm({ claim, userName, run }: { claim: Claim; userName: string; 
   const [saving, setSaving] = useState(false);
   return (
     <div className="space-y-2">
-      <p className="text-muted-foreground">Send the formal claim intimation letter to {claim.insurer}.</p>
       <input value={ref} onChange={(e) => setRef(e.target.value)} placeholder="Insurer claim number (if given)" aria-label="Insurer claim number" className={INPUT} />
       <input
         value={evidence}
@@ -359,7 +344,6 @@ function FollowUpStep({ claim, readOnly, userName, run }: { claim: Claim; readOn
   const [saving, setSaving] = useState(false);
   // The settlement figures to check before recording the offer.
   const [review, setReview] = useState<string[] | null>(null);
-  const silent = daysWithoutInsurerResponse(claim);
   const appealed = claim.dispute?.decision === "APPEAL";
 
   async function save(fn: () => Promise<boolean>) {
@@ -376,20 +360,7 @@ function FollowUpStep({ claim, readOnly, userName, run }: { claim: Claim; readOn
 
   return (
     <div className="space-y-2">
-      <p className="text-muted-foreground">
-        Follow up with {claim.insurer} at least every 10 working days. Next follow-up due {dueLabel(claim)}.
-        {silent ? ` No insurer response for ${silent} working days.` : ""}
-      </p>
-      {needsEscalation(claim) ? (
-        <p className="font-medium text-danger">
-          Escalate: no response for {NO_RESPONSE_ESCALATION_DAYS}+ working days. Raise it with the Technical Director.
-        </p>
-      ) : null}
-      {appealed ? (
-        <p className="text-muted-foreground">
-          Appealing after the insurer&apos;s rejection (Claims Committee, {formatDate(claim.dispute!.decidedAt!)}).
-        </p>
-      ) : null}
+      {appealed ? <p className="text-muted-foreground">Appealed {formatDate(claim.dispute!.decidedAt!)}</p> : null}
       {!readOnly ? (
         <>
           <SegmentedTabs tabs={FOLLOW_UP_ACTIONS} value={action} onChange={setAction} />
@@ -486,7 +457,7 @@ function SettlementStep({
   return (
     <div className="space-y-2">
       <p className="text-muted-foreground">
-        Offer of {formatRwf(settlement.amount)} received {formatDate(settlement.advisedAt)}. Sign-off: {chain.join(" + ")}.
+        Offer {formatRwf(settlement.amount)} · {formatDate(settlement.advisedAt)}
       </p>
       {chain.map((s) => {
         const signed = settlement.signedBy.includes(s);
@@ -527,13 +498,9 @@ function DisputeStep({ claim, canDecide, userName, run }: { claim: Claim; canDec
   const d = claim.dispute!;
   return (
     <Box tone="warning" title="Disputed · Claims Committee" right={<span className="text-[11px] text-muted-foreground">Decide by {dueLabel(claim)}</span>}>
-      <p className="flex items-start gap-1.5">
-        
-        <span>
-          {claim.insurer} rejected the claim on {formatDate(d.raisedAt)}: {d.reason}
-        </span>
+      <p>
+        {claim.insurer} rejected the claim on {formatDate(d.raisedAt)}: {d.reason}
       </p>
-      <p className="text-muted-foreground">The DMD chairs the committee, which decides within {COMMITTEE_DAYS} working days.</p>
       {canDecide ? (
         <div className="space-y-2">
           <div className="grid gap-2 sm:grid-cols-2">

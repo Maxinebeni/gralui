@@ -27,7 +27,7 @@ export type NavItem = {
  * table, dev branch). Add "CLAIM" and "RENEWAL" when the backend adds
  * CLAIM_READ and RENEWAL_READ — then those menus follow the backend too.
  */
-const BACKEND_MODULES = ["CLIENT", "USER", "ROLE", "SESSION"];
+const BACKEND_MODULES = ["CLIENT", "USER", "ROLE", "SESSION", "LEAD", "KYC"];
 
 const CLAIM_ROLES: readonly Role[] = [
   "MD",
@@ -83,7 +83,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "All Claims", href: "/claims/all", permission: "CLAIM_READ", roles: CLAIM_ROLES, parent: "/claims", businessOnly: true },
   { label: "Clients", href: "/clients", permission: "CLIENT_READ", roles: ROLES, businessOnly: true },
   { label: "All Clients", href: "/clients/all", permission: "CLIENT_READ", roles: ROLES, parent: "/clients", businessOnly: true },
-  { label: "Leads", href: "/clients/leads", permission: "CLIENT_READ", roles: ONBOARDING_ROLES, parent: "/clients", businessOnly: true },
+  { label: "Leads", href: "/clients/leads", permission: "LEAD_READ", roles: ONBOARDING_ROLES, parent: "/clients", businessOnly: true },
   { label: "Renewals", href: "/renewals", permission: "RENEWAL_READ", roles: RENEWAL_ROLES, businessOnly: true },
   // Admin pages sit in the name (account) menu, not the top bar. Real backend
   // permissions; in demo mode only the MD sees them.
@@ -282,35 +282,77 @@ export function homePathFor(user: SessionUser) {
 }
 
 /**
- * Onboarding. PROVISIONAL until the backend has onboarding permissions. Each
- * step has an owner in the SOP; these roles can record steps, and oversight
- * roles can only view. The KYC Approval Form and internal approval are
- * decided in Approvals, by the Risk & Compliance Manager and the TD / MD.
+ * Onboarding, from the backend's permission matrix (V20261021233942). On the
+ * backend each lead, policy track and KYC action has its own permission, and
+ * the track's availableActions already reflect them; these flags decide which
+ * lead and KYC buttons to show. Demo mode gives the same roles the same rights.
  */
+const ONBOARDING_DEMO_GRANTS: Record<string, readonly Role[]> = {
+  LEAD_CREATE: ["Commercial Director"],
+  LEAD_ASSIGN: ["CRM Manager", "MD"],
+  LEAD_CONFIRM: ["Commercial Director"],
+  LEAD_ASSESS: ["Accounts Executive", "CRM Manager"],
+  LEAD_CLOSE: ["CRM Manager", "Commercial Director", "MD"],
+  ONBOARDING_START: ["Accounts Executive", "CRM Manager"],
+  KYC_READ: ["Accounts Executive", "CRM Manager", "Risk & Compliance Manager", "MD"],
+  KYC_PREPARE: ["Accounts Executive", "CRM Manager"],
+  KYC_SCREEN: ["Risk & Compliance Manager"],
+  KYC_DECIDE: ["Risk & Compliance Manager"],
+  KYC_POLICY_UPDATE: ["Risk & Compliance Manager"],
+  ONBOARDING_ASSIGN: ["CRM Manager", "MD"],
+  ONBOARDING_SURVEY: ["Technical Director"],
+  ONBOARDING_PROGRAM: ["Technical Director"],
+  ONBOARDING_RFQ: ["GI Underwriting Manager"],
+  ONBOARDING_QUOTE: ["GI Underwriting Manager"],
+  ONBOARDING_RECOMMEND: ["GI Underwriting Manager"],
+  ONBOARDING_PRESENT: ["Accounts Executive"],
+  ONBOARDING_ACCEPT: ["Accounts Executive"],
+  ONBOARDING_PLACE: ["GI Underwriting Manager"],
+  ONBOARDING_SCHEDULE: ["GI Underwriting Manager"],
+  ONBOARDING_VERIFY_TECHNICAL: ["Technical Director"],
+  ONBOARDING_VERIFY: ["GI Underwriting Manager"],
+  ONBOARDING_CONVERT: ["GI Underwriting Manager"],
+  ONBOARDING_WELCOME: ["Accounts Executive"],
+  ONBOARDING_CLOSE: ["CRM Manager", "MD"],
+  ONBOARDING_BOARD_EVIDENCE: ["MD"],
+};
+
+/** Demo mode: the permission a policy track action needs, as the backend's OnboardingViews maps it. */
+export function demoCanRunTrackAction(role: Role, action: string) {
+  const permission =
+    {
+      LICENSE: "ONBOARDING_RFQ",
+      QUALIFY_KYC: "ONBOARDING_START",
+      SURVEY_NOT_APPLICABLE: "ONBOARDING_SURVEY",
+      REQUEST_APPROVAL: "ONBOARDING_RECOMMEND",
+      REVISE: "ONBOARDING_RECOMMEND",
+      CONFIRM_PLACEMENT: "ONBOARDING_PLACE",
+      PROPERTY_ASSETS: "ONBOARDING_PLACE",
+      TECHNICAL_VERIFICATION: "ONBOARDING_VERIFY_TECHNICAL",
+      RECORD_BOARD_EVIDENCE: "ONBOARDING_BOARD_EVIDENCE",
+      ASSIGN: "ONBOARDING_ASSIGN",
+      ON_HOLD: "ONBOARDING_CLOSE",
+      RESUME: "ONBOARDING_CLOSE",
+      CLOSE: "ONBOARDING_CLOSE",
+    }[action] ?? `ONBOARDING_${action}`;
+  return (ONBOARDING_DEMO_GRANTS[permission] ?? []).includes(role);
+}
+
 export function onboardingPermissions(user: SessionUser) {
-  if (usesBackendPermissions(user)) {
-    // The backend gives each onboarding action its own permission. Any write
-    // permission on leads, onboarding or KYC lets the user work on a lead;
-    // the server still checks each action.
-    const writes = (user.permissions ?? []).filter(
-      (p) => /^(LEAD|ONBOARDING|KYC)_/.test(p) && !p.endsWith("_READ"),
-    );
-    return { canUpdate: writes.length > 0, canRegisterLead: hasPermission(user, "LEAD_CREATE") };
-  }
-  const role = user.role;
+  const can = (code: string) =>
+    usesBackendPermissions(user) ? hasPermission(user, code) : (ONBOARDING_DEMO_GRANTS[code] ?? []).includes(user.role);
   return {
-    canUpdate: [
-      "MD",
-      "DMD",
-      "Commercial Director",
-      "CRM Manager",
-      "Accounts Executive",
-      "Client Relation Records Officer",
-      "Technical Director",
-      "GI Underwriting Manager",
-      "Risk & Compliance Manager",
-    ].includes(role),
-    /** Lead registration: the Commercial Director (or Sales & Marketing) and the CRM Manager, who assigns the AE. */
-    canRegisterLead: ["MD", "DMD", "Commercial Director", "CRM Manager"].includes(role),
+    canRegisterLead: can("LEAD_CREATE"),
+    canAssignLead: can("LEAD_ASSIGN"),
+    canConfirmLead: can("LEAD_CONFIRM"),
+    /** First response, needs assessment, and opening or linking the prospect client. */
+    canAssessLead: can("LEAD_ASSESS"),
+    canCloseLead: can("LEAD_CLOSE"),
+    canStartTrack: can("ONBOARDING_START"),
+    canReadKyc: can("KYC_READ"),
+    canPrepareKyc: can("KYC_PREPARE"),
+    canScreenKyc: can("KYC_SCREEN"),
+    canDecideKyc: can("KYC_DECIDE"),
+    canEditKycChecklists: can("KYC_POLICY_UPDATE"),
   };
 }

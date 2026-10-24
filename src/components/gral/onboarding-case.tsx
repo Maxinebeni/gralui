@@ -1,181 +1,203 @@
 "use client";
 
-// One lead's onboarding (SOP section 3) as a full page: a tracker of the 11
-// steps across the top, the chosen step in detail below, and the prospect's
-// details and history on the side.
+// One lead's onboarding (SOP section 3) as a full page: the 11-step tracker,
+// the chosen step in detail, and the prospect and history on the side.
+// Steps 1 and 2 are the backend's lead; steps 3 to 11 are one policy track.
+// When a lead has several policies, tabs above the tracker switch between them.
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, ArrowRight, Check, FileText, Paperclip } from "lucide-react";
-import { toast } from "sonner";
-import { cn } from "@/lib/utils";
-import { formatRwf } from "@/lib/format";
-import {
-  addOnboardingQuote,
-  completeOnboardingStep,
-  completeQuotation,
-  completeWelcome,
-  getApproval,
-  receiveKycDocument,
-  recommendOnboardingQuote,
-  recordKycScreening,
-  recordPlacement,
-  requestNewBusinessApproval,
-  setKycExpiry,
-  submitKycForApproval,
-  uploadDocument,
-} from "@/lib/api";
-import { statusLabel } from "@/lib/approvals";
+import { ArrowLeft, ArrowRight, Check, ExternalLink, Plus } from "lucide-react";
+import { confirmLead, onboardingOptions, runTrackAction, type LeadDetail, type TrackDetail } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import {
-  ONBOARDING_PHASES,
-  ONBOARDING_STEPS,
-  ONBOARDING_TARGET_DAYS,
-  currentStep,
-  isComplete,
-  kycSubmitBlocker,
-  onboardingAge,
-  onboardingHealth,
-  phaseOf,
-  stepDue,
-  stepOf,
-  type OnboardingStepDef,
+  JOURNEY_PHASES,
+  JOURNEY_STEPS,
+  KYC_STATUS_LABEL,
+  blockerText,
+  journeyDue,
+  journeyHealth,
+  journeyStep,
+  leadReady,
+  leadRef,
 } from "@/lib/onboarding";
 import { onboardingPermissions } from "@/lib/permissions";
-import { INSURER_GROUPS, PRODUCT_GROUPS, type OptionGroup } from "@/lib/reference-data";
-import { formatDate, todayIso } from "@/lib/renewals";
-import type { ApprovalRequest, OnboardingCase, OnboardingStepCode } from "@/lib/types";
+import { todayIso } from "@/lib/renewals";
+import type { Lead, PolicyTrack } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "./shell";
-import { AmountInput } from "./amount-input";
-import { FilePickButton } from "./documents";
-import { Chip, Dot, FloatCard, NavyButton, OutlineButton, Person } from "./ui";
-
-const INPUT =
-  "w-full rounded-xl border border-input bg-card px-3 py-2 text-xs outline-none focus:border-sky focus:ring-2 focus:ring-sky/30";
-
-type Run = (action: () => Promise<OnboardingCase>, success: string) => Promise<boolean>;
+import { AssessmentForm, AssignForm, ClientForm, CloseLead, ResponseForm, StartTrackForm } from "./lead-forms";
+import { ActionForm, Blockers, HealthChip, HistoryList, ProofList, dateOf } from "./onboarding-ui";
+import { ActionPanel, OtherActions, STAGE_ACTIONS, StageRecord, type TrackOptions, type TrackRun } from "./track-forms";
+import { Chip, FloatCard, OutlineButton, Person } from "./ui";
 
 type StepState = "done" | "current" | "late" | "upcoming";
 
-function stateOf(c: OnboardingCase, step: OnboardingStepDef): StepState {
-  if (c.completed.some((r) => r.code === step.code)) return "done";
-  if (currentStep(c)?.code !== step.code) return "upcoming";
-  return stepDue(c, step) < todayIso() ? "late" : "current";
-}
+const RESPONSE_LABELS: Record<string, string> = {
+  LEAD_RESPONSE: "First response",
+  PRE_MEETING_REQUEST: "Pre-meeting request",
+  MEETING_SUMMARY: "Meeting summary",
+  MEETING_CONFIRMATION: "Client's confirmation",
+};
 
-export function OnboardingHealthChip({ value }: { value: OnboardingCase }) {
-  const health = onboardingHealth(value);
-  if (health === "complete") return <Chip tone="success">Onboarded</Chip>;
-  if (health === "overdue") return <Chip tone="danger">Step overdue</Chip>;
-  if (health === "due-soon") return <Chip tone="warning">Due soon</Chip>;
-  return <Chip tone="sky">On track</Chip>;
-}
-
-export function OnboardingCaseView({ value: c, onChanged }: { value: OnboardingCase; onChanged: () => void }) {
+export function OnboardingCaseView({
+  detail,
+  track,
+  onSelectTrack,
+  onChanged,
+}: {
+  detail: LeadDetail;
+  /** The policy track shown in steps 3 to 11, with its history. */
+  track: TrackDetail | null;
+  onSelectTrack: (id: string) => void;
+  onChanged: () => void;
+}) {
   const { user } = useCurrentUser();
-  const { canUpdate } = onboardingPermissions(user);
-  const current = currentStep(c);
-  // The step shown in detail: the current one unless another is picked.
-  const [selected, setSelected] = useState<OnboardingStepCode>(current?.code ?? "WELCOME");
+  const perms = onboardingPermissions(user);
+  const { lead: l, tracks } = detail;
+  const t = track?.track;
+  const current = journeyStep(l, t);
+  const [selected, setSelected] = useState(current ?? 11);
+  const [adding, setAdding] = useState(false);
+  const [options, setOptions] = useState<TrackOptions>({ products: [], insurers: [], accountExecutives: [] });
+  useEffect(() => setSelected(current ?? 11), [current, t?.id]);
   useEffect(() => {
-    setSelected(current?.code ?? "WELCOME");
-  }, [current?.code]);
+    onboardingOptions().then(setOptions);
+  }, []);
 
-  async function run(action: () => Promise<OnboardingCase>, success: string) {
-    try {
-      await action();
-      toast.success(success);
-      onChanged();
-      return true;
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Something went wrong.");
-      return false;
-    }
-  }
-
-  const step = stepOf(selected);
+  const insurerName = (id: string) => options.insurers.find((i) => i.id === id)?.name ?? id;
+  const run: TrackRun = async (input) => {
+    if (!t) return;
+    await runTrackAction(t, input);
+    onChanged();
+  };
+  const stateOf = (n: number): StepState => {
+    if (current === null || n < current) return "done";
+    if (n > current) return "upcoming";
+    return journeyHealth(l, t) === "overdue" ? "late" : "current";
+  };
+  const due = journeyDue(l, t);
+  const history = [...detail.history, ...(track?.history ?? [])].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+  const canAddTrack = perms.canStartTrack && leadReady(l) && l.status !== "CLOSED_LOST" && l.status !== "CANCELLED";
 
   return (
     <>
       <Link href="/clients/leads" className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary">
-        <ArrowLeft className="size-3.5" />Leads
+        <ArrowLeft className="size-3.5" /> Leads
       </Link>
-      <PageHeader title={c.prospect.name} subtitle={`${c.id} · ${c.prospect.type} · ${c.prospect.sector}`} />
+      <PageHeader title={l.name} subtitle={`${leadRef(l.id)} · ${l.type === "INDIVIDUAL" ? "Individual" : "Company"} · ${l.industry}`} />
 
       <FloatCard className="mt-5 p-4 sm:p-5" delay={60}>
-        <div>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <OnboardingHealthChip value={c} />
-              <span className="text-xs text-muted-foreground">
-                {current ? (
-                  <>
-                    <span className="font-medium text-foreground">{current.name}</span> · due {formatDate(stepDue(c, current))}
-                  </>
-                ) : (
-                  "Complete"
+        {tracks.length > 1 || (t && canAddTrack) ? (
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            {tracks.map((x) => (
+              <button
+                key={x.id}
+                type="button"
+                onClick={() => onSelectTrack(x.id)}
+                className={cn(
+                  "rounded-full border px-3 py-1 text-xs",
+                  x.id === t?.id ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card hover:bg-secondary",
                 )}
-              </span>
-            </div>
+              >
+                {x.productName}
+              </button>
+            ))}
+            {t && canAddTrack && !adding ? (
+              <OutlineButton onClick={() => setAdding(true)}>
+                <Plus className="size-3.5" /> Policy
+              </OutlineButton>
+            ) : null}
           </div>
+        ) : null}
+        {adding ? (
+          <div className="mb-4">
+            <StartTrackForm
+              lead={l}
+              onDone={() => {
+                setAdding(false);
+                onChanged();
+              }}
+              onCancel={() => setAdding(false)}
+            />
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <HealthChip health={journeyHealth(l, t)} />
+          <span className="text-xs text-muted-foreground">
+            {current ? (
+              <>
+                <span className="font-medium text-foreground">{JOURNEY_STEPS[current - 1]!.name}</span>
+                {due ? ` · due ${dateOf(due)}` : ""}
+              </>
+            ) : (
+              "Complete"
+            )}
+          </span>
         </div>
 
-        <StepTracker value={c} selected={selected} onSelect={setSelected} />
+        <StepTracker stateOf={stateOf} selected={selected} onSelect={setSelected} />
       </FloatCard>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
-        <StepDetail value={c} step={step} canUpdate={canUpdate} userName={user.name} run={run} onSelect={setSelected} />
+        <StepDetail
+          n={selected}
+          state={stateOf(selected)}
+          lead={l}
+          track={t}
+          kyc={detail.kyc ?? t?.kyc ?? null}
+          due={selected === current ? due : undefined}
+          perms={perms}
+          options={options}
+          insurerName={insurerName}
+          run={run}
+          onChanged={onChanged}
+          onSelect={setSelected}
+        />
 
         <div className="min-w-0 space-y-4">
-          {isComplete(c) && c.clientId ? (
+          {current === null && t?.convertedAt ? (
             <FloatCard className="bg-success-soft/40 p-5" delay={140}>
               <p className="text-sm font-semibold">Onboarding complete</p>
-              <Link
-                href={`/clients?client=${encodeURIComponent(c.clientId)}`}
-                className="mt-2 inline-block text-xs font-medium text-primary underline underline-offset-2"
-              >
-                Open client file {c.clientId}
-              </Link>
+              {t.policyId ? (
+                <Link
+                  href={`/policies/${encodeURIComponent(t.policyId)}`}
+                  className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary underline underline-offset-2"
+                >
+                  Open the policy <ExternalLink className="size-3" />
+                </Link>
+              ) : null}
             </FloatCard>
           ) : null}
 
           <FloatCard className="p-5" delay={160}>
             <h2 className="text-base font-semibold tracking-tight">Prospect</h2>
             <dl className="mt-3 space-y-2.5 text-xs">
-              <Detail label="Accounts Executive" value={<Person name={c.accountExecutive} />} />
+              <Detail label="Accounts Executive" value={l.ownerName ? <Person name={l.ownerName} /> : <span className="text-subtle">Not assigned</span>} />
               <Detail
                 label="Contact"
                 value={
                   <>
-                    <span className="block">{[c.prospect.contact.name, c.prospect.contact.title].filter(Boolean).join(", ")}</span>
-                    {c.prospect.contact.email ? <span className="block text-muted-foreground">{c.prospect.contact.email}</span> : null}
-                    {c.prospect.contact.phone ? <span className="block text-muted-foreground">{c.prospect.contact.phone}</span> : null}
+                    <span className="block">{l.contactName}</span>
+                    {l.email ? <span className="block text-muted-foreground">{l.email}</span> : null}
+                    {l.phone ? <span className="block text-muted-foreground">{l.phone}</span> : null}
                   </>
                 }
               />
-              <Detail label="Client type" value={c.prospect.type} />
-              <Detail label="Industry" value={c.prospect.sector} />
-              {c.prospect.address ? <Detail label="Address" value={c.prospect.address} /> : null}
-              <Detail label="Source" value={c.prospect.referralSource} />
-              <Detail label="Registered" value={`${formatDate(c.createdAt)} by ${c.registeredBy}`} />
+              <Detail label="Industry" value={l.industry} />
+              <Detail label="Source" value={[l.source, l.sourceReference].filter(Boolean).join(": ")} />
+              <Detail label="Received" value={dateOf(l.receivedAt)} />
+              {l.clientName ? <Detail label="Client" value={l.clientName} /> : null}
             </dl>
           </FloatCard>
 
+          {t ? <OtherActions track={t} options={options} insurerName={insurerName} run={run} /> : null}
+          {perms.canCloseLead && l.status === "OPEN" ? <CloseLead lead={l} onChanged={onChanged} /> : null}
+
           <FloatCard className="p-5" delay={200}>
             <h2 className="text-base font-semibold tracking-tight">History</h2>
-            <ol className="mt-3 space-y-3">
-              {[...c.history].reverse().map((e, i) => (
-                <li key={`${e.at}-${i}`} className="flex gap-3">
-                  <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-sky" />
-                  <div>
-                    <p className="text-xs">{e.text}</p>
-                    <p className="text-[11px] text-subtle">
-                      {formatDate(e.at)} · {e.by}
-                    </p>
-                  </div>
-                </li>
-              ))}
-            </ol>
+            <HistoryList items={history} />
           </FloatCard>
         </div>
       </div>
@@ -183,7 +205,7 @@ export function OnboardingCaseView({ value: c, onChanged }: { value: OnboardingC
   );
 }
 
-function Detail({ label, value }: { label: string; value: ReactNode }) {
+function Detail({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="grid grid-cols-[110px_minmax(0,1fr)] gap-3">
       <dt className="text-muted-foreground">{label}</dt>
@@ -204,56 +226,45 @@ function StepDot({ n, state, selected }: { n: number; state: StepState; selected
         selected && "shadow-[0_0_0_4px_var(--color-pale)]",
       )}
     >
-      {state === "done" ? <Check className="size-4" /> : state === "late" ? <Dot tone="subtle" /> : n}
+      {state === "done" ? <Check className="size-4" /> : n}
     </span>
   );
 }
 
-/** The 11 steps grouped in four stages: across the page on wide screens, a list on phones. */
-function StepTracker({
-  value: c,
-  selected,
-  onSelect,
-}: {
-  value: OnboardingCase;
-  selected: OnboardingStepCode;
-  onSelect: (code: OnboardingStepCode) => void;
-}) {
+/** The 11 steps: across the page on wide screens, a list on phones. */
+function StepTracker({ stateOf, selected, onSelect }: { stateOf: (n: number) => StepState; selected: number; onSelect: (n: number) => void }) {
   return (
     <>
-      {/* Wide screens */}
       <div className="mt-6 hidden gap-3 md:flex">
-        {ONBOARDING_PHASES.map((phase) => (
+        {JOURNEY_PHASES.map((phase) => (
           <div key={phase.name} className="min-w-0" style={{ flex: phase.steps.length }}>
             <ol className="flex">
-              {phase.steps.map((code, i) => {
-                const step = stepOf(code);
-                const state = stateOf(c, step);
-                const isSelected = selected === code;
-                const isLast = step.n === ONBOARDING_STEPS.length;
+              {phase.steps.map((n, i) => {
+                const step = JOURNEY_STEPS[n - 1]!;
+                const state = stateOf(n);
+                const isSelected = selected === n;
                 return (
-                  <li key={code} className="relative min-w-0 flex-1">
-                    {!isLast ? (
+                  <li key={n} className="relative min-w-0 flex-1">
+                    {n < JOURNEY_STEPS.length ? (
                       <span
                         aria-hidden
                         className={cn(
                           "absolute top-[22px] left-1/2 h-0.5 w-full",
                           state === "done" ? "bg-primary" : "bg-border",
-                          // The line runs on into the next stage's column gap.
                           i === phase.steps.length - 1 && "w-[calc(100%+0.75rem)]",
                         )}
                       />
                     ) : null}
                     <button
                       type="button"
-                      onClick={() => onSelect(code)}
+                      onClick={() => onSelect(n)}
                       aria-current={isSelected ? "step" : undefined}
                       className={cn(
                         "flex w-full flex-col items-center rounded-xl px-1 pt-1.5 pb-2 text-center transition-colors",
                         isSelected ? "bg-pale" : "hover:bg-secondary/60",
                       )}
                     >
-                      <StepDot n={step.n} state={state} selected={isSelected} />
+                      <StepDot n={n} state={state} selected={isSelected} />
                       <span
                         className={cn(
                           "mt-2 line-clamp-2 text-[11px] leading-tight",
@@ -271,63 +282,67 @@ function StepTracker({
         ))}
       </div>
 
-      {/* Phones */}
       <div className="mt-5 space-y-1 md:hidden">
-        {ONBOARDING_PHASES.map((phase) => (
-          <div key={phase.name}>
-            <ol>
-              {phase.steps.map((code) => {
-                const step = stepOf(code);
-                const state = stateOf(c, step);
-                const isSelected = selected === code;
-                return (
-                  <li key={code}>
-                    <button
-                      type="button"
-                      onClick={() => onSelect(code)}
-                      aria-current={isSelected ? "step" : undefined}
-                      className={cn(
-                        "grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-xl px-2 py-1.5 text-left",
-                        isSelected && "bg-pale",
-                      )}
-                    >
-                      <StepDot n={step.n} state={state} selected={false} />
-                      <span className={cn("truncate text-xs", state === "upcoming" ? "text-muted-foreground" : "font-medium")}>
-                        {step.name}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ol>
-          </div>
-        ))}
+        {JOURNEY_STEPS.map((step) => {
+          const state = stateOf(step.n);
+          return (
+            <button
+              key={step.n}
+              type="button"
+              onClick={() => onSelect(step.n)}
+              aria-current={selected === step.n ? "step" : undefined}
+              className={cn("grid w-full grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-xl px-2 py-1.5 text-left", selected === step.n && "bg-pale")}
+            >
+              <StepDot n={step.n} state={state} selected={false} />
+              <span className={cn("truncate text-xs", state === "upcoming" ? "text-muted-foreground" : "font-medium")}>{step.name}</span>
+            </button>
+          );
+        })}
       </div>
     </>
   );
 }
 
-/** The chosen step: what the SOP asks, then the action (current), the record (done) or what it waits for (upcoming). */
+type Perms = ReturnType<typeof onboardingPermissions>;
+
 function StepDetail({
-  value: c,
-  step,
-  canUpdate,
-  userName,
+  n,
+  state,
+  lead: l,
+  track: t,
+  kyc,
+  due,
+  perms,
+  options,
+  insurerName,
   run,
+  onChanged,
   onSelect,
 }: {
-  value: OnboardingCase;
-  step: OnboardingStepDef;
-  canUpdate: boolean;
-  userName: string;
-  run: Run;
-  onSelect: (code: OnboardingStepCode) => void;
+  n: number;
+  state: StepState;
+  lead: Lead;
+  track?: PolicyTrack;
+  kyc: LeadDetail["kyc"];
+  due?: string;
+  perms: Perms;
+  options: TrackOptions;
+  insurerName: (id: string) => string;
+  run: TrackRun;
+  onChanged: () => void;
+  onSelect: (n: number) => void;
 }) {
-  const state = stateOf(c, step);
-  const record = c.completed.find((r) => r.code === step.code);
-  const due = stepDue(c, step);
-  const prev = ONBOARDING_STEPS[step.n - 2];
-  const next = ONBOARDING_STEPS[step.n];
+  const step = JOURNEY_STEPS[n - 1]!;
+  const prev = JOURNEY_STEPS[n - 2];
+  const next = JOURNEY_STEPS[n];
+  const active = state === "current" || state === "late";
+  const open = l.status === "OPEN" || l.status === "CONVERTED";
+  const onTrack = !!t && n >= 3 && t.stage === n && t.status === "OPEN";
+  const actions = active && onTrack ? (STAGE_ACTIONS[n] ?? []).filter((a) => t!.availableActions.includes(a)) : [];
+  const ownerName = step.owner.replace(
+    "Underwriting Manager",
+    t?.underwritingRole === "MEDICAL_UNDERWRITING_MANAGER" ? "Medical Underwriting Manager" : "GI Underwriting Manager",
+  );
 
   return (
     <FloatCard className="overflow-hidden" delay={120}>
@@ -337,42 +352,101 @@ function StepDetail({
           state === "late" ? "border-danger/30 bg-danger-soft/40" : state === "current" ? "border-sky/30 bg-pale" : "border-border",
         )}
       >
-        <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-          Step {step.n} of {ONBOARDING_STEPS.length} · {phaseOf(step.code)}
-        </p>
+        <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Step {n} of 11</p>
         <div className="mt-1 flex flex-wrap items-center gap-2">
           <h2 className="text-xl font-semibold tracking-tight">{step.name}</h2>
-          {state === "done" ? <Chip tone="success">Done</Chip> : null}
-          {state === "current" ? <Chip tone="sky">In progress</Chip> : null}
-          {state === "late" ? <Chip tone="danger">Overdue</Chip> : null}
-          {state === "upcoming" ? <Chip>Not started</Chip> : null}
+          {state === "done" ? (
+            <Chip tone="success">Done</Chip>
+          ) : state === "current" ? (
+            <Chip tone="sky">In progress</Chip>
+          ) : state === "late" ? (
+            <Chip tone="danger">Overdue</Chip>
+          ) : (
+            <Chip>Not started</Chip>
+          )}
         </div>
         <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-3">
-          <Fact label="Owner" value={step.owner} />
-          <Fact label="SOP deadline" value={step.deadlineLabel} />
-          {record ? (
-            <Fact label="Completed" value={`${formatDate(record.completedAt)} by ${record.completedBy}`} />
-          ) : state === "upcoming" ? (
-            <Fact label="Starts" value={`After step ${prev?.n}: ${prev?.name}`} />
-          ) : (
-            <Fact label="Due" value={formatDate(due)} danger={state === "late"} />
-          )}
+          <Fact label="Owner" value={ownerName} />
+          <Fact label="SOP deadline" value={step.deadline} />
+          {due ? <Fact label="Due" value={dateOf(due)} danger={state === "late"} /> : null}
         </dl>
       </div>
 
       <div className="space-y-4 px-4 py-5 sm:px-6">
-        {state === "current" || state === "late" ? (
-          <div className="space-y-3">
-            <StepAction value={c} step={step} canUpdate={canUpdate} userName={userName} run={run} />
+        {n === 1 && l.ownerName ? (
+          <p className="text-sm">
+            {l.ownerName} assigned{l.confirmed ? " · registration confirmed" : ""}
+          </p>
+        ) : null}
+        {n === 2 ? (
+          <div className="space-y-2 text-xs">
+            {l.respondedAt ? <p>First response on {dateOf(l.respondedAt)}</p> : null}
+            {l.assessment ? (
+              <>
+                <p>
+                  <span className="text-muted-foreground">Needs: </span>
+                  {l.assessment.needs}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Assets: </span>
+                  {l.assessment.assets}
+                  {l.assessment.employeeCount ? ` · ${l.assessment.employeeCount} staff` : ""}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Existing cover: </span>
+                  {l.assessment.existingCover}
+                </p>
+              </>
+            ) : null}
+            <ProofList items={[...(l.responseEvidence ? [l.responseEvidence] : []), ...(l.assessment?.evidence ?? [])]} labels={RESPONSE_LABELS} />
+            {l.clientName ? <p>Client: {l.clientName}</p> : null}
           </div>
         ) : null}
+        {n === 3 ? <KycBlock lead={l} kyc={kyc} canRead={perms.canReadKyc} /> : null}
+        {n >= 4 && t && n <= t.stage ? <StageRecord track={t} n={n} insurerName={insurerName} /> : null}
 
-        {record ? <StepRecordView value={c} step={step} record={record} userName={userName} run={run} /> : null}
+        {active && open ? (
+          <div className="space-y-3">
+            {onTrack && t!.blockers.length ? <Blockers codes={t!.blockers} /> : null}
+            {n === 1 && !l.ownerId ? perms.canAssignLead ? <AssignForm lead={l} onDone={onChanged} /> : <Waiting who="CRM Manager" /> : null}
+            {n === 1 && l.ownerId && !l.confirmed ? (
+              perms.canConfirmLead ? (
+                <ActionForm
+                  submitLabel="Confirm the registration"
+                  success="Registration confirmed."
+                  onSubmit={async () => {
+                    await confirmLead(l);
+                    onChanged();
+                  }}
+                />
+              ) : (
+                <Waiting who="Commercial Director" />
+              )
+            ) : null}
+            {n === 2 && !l.respondedAt ? perms.canAssessLead ? <ResponseForm lead={l} onDone={onChanged} /> : <Waiting who="Accounts Executive" /> : null}
+            {n === 2 && l.respondedAt && !l.assessed ? perms.canAssessLead ? <AssessmentForm lead={l} onDone={onChanged} /> : <Waiting who="Accounts Executive" /> : null}
+            {n === 2 && l.assessed && !l.clientId ? perms.canAssessLead ? <ClientForm lead={l} onDone={onChanged} /> : <Waiting who="Accounts Executive" /> : null}
+            {n === 3 && !t ? perms.canStartTrack ? <StartTrackForm lead={l} onDone={onChanged} onCancel={() => undefined} /> : <Waiting who="Accounts Executive" /> : null}
+            {actions.map((a) => (
+              <ActionPanel key={a} action={a} track={t!} options={options} insurerName={insurerName} run={run} leadName={l.name} />
+            ))}
+            {onTrack && n === 7 && t!.availableActions.includes("QUOTE") && t!.invitations.some((i) => !i.response) ? (
+              <ActionPanel action="INSURER_RESPONSE" track={t!} options={options} insurerName={insurerName} run={run} leadName={l.name} collapsed />
+            ) : null}
+            {onTrack &&
+            (n === 6 || (n === 7 && t!.blockers.includes("SINGLE_SOURCE_APPROVAL_REQUIRED"))) &&
+            !t!.approvalRequests.SINGLE_SOURCE &&
+            (t!.availableActions.includes("RFQ") || t!.availableActions.includes("QUOTE")) ? (
+              <ActionPanel action="SINGLE_SOURCE" track={t!} options={options} insurerName={insurerName} run={run} leadName={l.name} collapsed />
+            ) : null}
+            {onTrack && !actions.length && !t!.blockers.length ? <Waiting who={ownerName} /> : null}
+          </div>
+        ) : null}
       </div>
 
       <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3 sm:px-6">
         {prev ? (
-          <OutlineButton onClick={() => onSelect(prev.code)}>
+          <OutlineButton onClick={() => onSelect(prev.n)}>
             <ArrowLeft className="size-3.5" /> <span className="hidden sm:inline">{prev.name}</span>
             <span className="sm:hidden">Previous</span>
           </OutlineButton>
@@ -380,7 +454,7 @@ function StepDetail({
           <span />
         )}
         {next ? (
-          <OutlineButton onClick={() => onSelect(next.code)}>
+          <OutlineButton onClick={() => onSelect(next.n)}>
             <span className="hidden sm:inline">{next.name}</span>
             <span className="sm:hidden">Next</span> <ArrowRight className="size-3.5" />
           </OutlineButton>
@@ -399,524 +473,40 @@ function Fact({ label, value, danger }: { label: string; value: string; danger?:
   );
 }
 
-/** What was recorded for a finished step, with that step's own details. */
-function StepRecordView({
-  value: c,
-  step,
-  record,
-  userName,
-  run,
-}: {
-  value: OnboardingCase;
-  step: OnboardingStepDef;
-  record: OnboardingCase["completed"][number];
-  userName: string;
-  run: Run;
-}) {
+function Waiting({ who }: { who: string }) {
+  return <p className="text-xs text-muted-foreground">Waiting for the {who}.</p>;
+}
+
+/** Step 3: the client's KYC, shared by all of the client's policies. */
+function KycBlock({ lead, kyc, canRead }: { lead: Lead; kyc: LeadDetail["kyc"]; canRead: boolean }) {
+  if (!lead.clientId) return null;
+  const status = kyc?.status ?? "NOT_STARTED";
+  const approved = kyc?.gateStatus === "READY";
+  const deadline = (kyc?.revisedDueAt ?? kyc?.dueAt)?.slice(0, 10);
+  const late = !approved && !!deadline && deadline < todayIso();
   return (
-    <div className="space-y-4">
-      <div className="rounded-xl bg-secondary/60 px-4 py-3">
-        <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Recorded</p>
-        <p className="mt-1 text-sm">{record.note || "No note."}</p>
-        {record.evidence ? (
-          <p className="mt-2 flex items-center gap-1.5 text-xs text-primary">
-            <FileText className="size-3.5" /> {record.evidence}
-          </p>
-        ) : null}
-        {step.code === "RISK_SURVEY" && c.riskGrade ? (
-          <p className="mt-2 text-xs">
-            Risk grade: <span className="font-medium">{c.riskGrade}</span>
-          </p>
-        ) : null}
+    <div className="space-y-2 rounded-xl bg-secondary/60 px-4 py-3 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">Client KYC</span>
+        <Chip tone={approved ? "success" : status === "REJECTED" || late ? "danger" : status === "NOT_STARTED" ? "neutral" : "warning"}>
+          {KYC_STATUS_LABEL[status] ?? status}
+        </Chip>
       </div>
-      {step.code === "KYC" ? <KycSection value={c} canUpdate={false} userName={userName} run={run} /> : null}
-      {step.code === "QUOTES" || step.code === "COMPARISON" ? (
-        <QuoteList value={c} canRecommend={false} userName={userName} run={run} />
-      ) : null}
-      {step.code === "APPROVAL" && c.approvalId ? (
-        <p className="text-xs">
-          Approved in{" "}
-          <Link href={`/approvals?request=${encodeURIComponent(c.approvalId)}`} className="text-primary underline underline-offset-2">
-            {c.approvalId}
-          </Link>
+      {kyc?.missingRequirements.length ? (
+        <p>
+          <span className="text-muted-foreground">Missing: </span>
+          {kyc.missingRequirements.join(", ")}
         </p>
       ) : null}
-      {step.code === "PLACEMENT" && c.placement ? (
-        <dl className="grid gap-3 text-xs sm:grid-cols-2">
-          <Fact label="Policy number" value={c.placement.policyNumber} />
-          <Fact label="Insurer" value={`${c.placement.insurer} · ${formatRwf(c.placement.premium)}`} />
-          <Fact label="Class of insurance" value={c.placement.classOfInsurance} />
-          <Fact label="Cover" value={`${formatDate(c.placement.start)} to ${formatDate(c.placement.expiry)}`} />
-        </dl>
-      ) : null}
-    </div>
-  );
-}
-
-function StepAction({
-  value: c,
-  step,
-  canUpdate,
-  userName,
-  run,
-}: {
-  value: OnboardingCase;
-  step: OnboardingStepDef;
-  canUpdate: boolean;
-  userName: string;
-  run: Run;
-}) {
-  switch (step.code) {
-    case "KYC":
-      return <KycSection value={c} canUpdate={canUpdate} userName={userName} run={run} />;
-    case "QUOTES":
-      return <QuotesSection value={c} canUpdate={canUpdate} userName={userName} run={run} />;
-    case "APPROVAL":
-      return <ApprovalSection value={c} canUpdate={canUpdate} userName={userName} run={run} />;
-    case "PLACEMENT":
-      return canUpdate ? <PlacementForm value={c} userName={userName} run={run} /> : null;
-    case "WELCOME":
-      return canUpdate ? <WelcomeForm value={c} userName={userName} run={run} /> : null;
-    default:
-      return canUpdate ? <GenericStepForm value={c} step={step} userName={userName} run={run} /> : null;
-  }
-}
-
-/** Attach a record: the file is kept with the case's documents and its name is recorded. */
-function AttachRecord({
-  caseId,
-  label,
-  fileName,
-  onFile,
-}: {
-  caseId: string;
-  label: string;
-  fileName: string;
-  onFile: (name: string) => void;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <FilePickButton
-        onFile={async (file) => {
-          try {
-            await uploadDocument({ type: "ONBOARDING", id: caseId }, file, { classification: "CORRESPONDENCE", purpose: "ONBOARDING_RECORD" });
-            onFile(file.name);
-          } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Could not attach the file.");
-          }
-        }}
-        destination={`${label.replace(/^Attach (the )?/, "")} · lead ${caseId}`}
-      >
-        <Paperclip className="size-3.5" /> {fileName ? "Replace file" : label}
-      </FilePickButton>
-      {fileName ? (
-        <span className="flex items-center gap-1 text-[11px] text-primary">
-          <FileText className="size-3" /> {fileName}
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
-function GenericStepForm({ value: c, step, userName, run }: { value: OnboardingCase; step: OnboardingStepDef; userName: string; run: Run }) {
-  const [note, setNote] = useState("");
-  const [evidence, setEvidence] = useState("");
-  const [grade, setGrade] = useState<"" | "Low" | "Medium" | "High">("");
-  const placeholders: Partial<Record<OnboardingStepDef["code"], string>> = {
-    MEETING: "e.g. 2 hotels, 140 staff; property and liability cover wanted",
-    RISK_SURVEY: "e.g. Sprinklers working, fire exits clear; generator room needs a second extinguisher",
-    DESIGN: "e.g. Property all risks, public liability and group medical",
-    COMPARISON: "e.g. Recommend Radiant: lowest premium with the full limit",
-    ACCEPTANCE: "e.g. Client accepted Radiant's quote by email on 16 Oct",
-  };
-
-  return (
-    <div className="space-y-2">
-      {step.code === "COMPARISON" ? <QuoteList value={c} canRecommend userName={userName} run={run} /> : null}
-      {step.code === "RISK_SURVEY" ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-muted-foreground">Risk grade</span>
-          {(["Low", "Medium", "High"] as const).map((g) => (
-            <button
-              key={g}
-              type="button"
-              onClick={() => setGrade(g)}
-              className={cn(
-                "rounded-full border px-3 py-1 text-xs",
-                grade === g ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card hover:bg-secondary",
-              )}
-            >
-              {g}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      <textarea
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-        rows={2}
-        placeholder={placeholders[step.code] ?? "What was done?"}
-        aria-label={`${step.name} note`}
-        className={INPUT}
-      />
-      {step.evidenceHint ? (
-        <>
-          <AttachRecord caseId={c.id} label="Attach the record" fileName={evidence} onFile={setEvidence} />
-        </>
-      ) : null}
-      <NavyButton
-        onClick={() =>
-          run(
-            () => completeOnboardingStep(c.id, { note, evidence, riskGrade: grade || undefined }, userName),
-            `${step.name} completed.`,
-          )
-        }
-      >
-        <Check className="size-3.5" />Mark {step.name.toLowerCase()} complete
-      </NavyButton>
-    </div>
-  );
-}
-
-/* KYC (step 3) */
-
-function useApproval(id?: string) {
-  const [request, setRequest] = useState<ApprovalRequest | null>(null);
-  useEffect(() => {
-    if (id) getApproval(id).then(setRequest);
-    else setRequest(null);
-  }, [id]);
-  return request;
-}
-
-function ApprovalStatus({ request, waitingFor }: { request: ApprovalRequest; waitingFor: string }) {
-  const comment = [...request.steps].reverse().find((s) => s.comment)?.comment;
-  return (
-    <div className={cn("rounded-xl px-3 py-2.5 text-xs", request.status === "PENDING" ? "bg-warning-soft/50" : "bg-danger-soft/40")}>
-      <p className="font-medium">
-        {request.status === "PENDING" ? `Waiting for ${waitingFor}` : statusLabel(request)} ·{" "}
-        <Link href={`/approvals?request=${encodeURIComponent(request.id)}`} className="text-primary underline underline-offset-2">
-          {request.id}
-        </Link>
-      </p>
-      {request.status === "RETURNED" || request.status === "REJECTED" ? (
-        <p className="mt-1 text-muted-foreground">
-          {comment ? `“${comment}” ` : ""}
-          {request.status === "RETURNED" ? "Fix what was asked, then send it again from the request." : ""}
-        </p>
-      ) : null}
-    </div>
-  );
-}
-
-function KycSection({ value: c, canUpdate, userName, run }: { value: OnboardingCase; canUpdate: boolean; userName: string; run: Run }) {
-  const request = useApproval(c.kyc.approvalId);
-  const waiting = request?.status === "PENDING";
-  const editable = canUpdate && !waiting;
-  const [result, setResult] = useState<"CLEAR" | "POSSIBLE_MATCH">("CLEAR");
-  const [note, setNote] = useState("");
-  const blocker = kycSubmitBlocker(c);
-
-  return (
-    <div className="space-y-3">
-      <div>
-        <p className="flex items-center gap-1.5 text-xs font-semibold">
-           KYC checklist · {c.prospect.type}
-        </p>
-        <div className="mt-2 space-y-1.5">
-          {c.kyc.items.map((item) => (
-            <div key={item.name} className="rounded-xl border border-border bg-card px-3 py-2">
-              <div className="flex items-center justify-between gap-3">
-                <span className="flex min-w-0 items-center gap-2 text-xs">
-                  {item.receivedAt ? <Check className="size-4 shrink-0 text-success" /> : <Dot tone="danger" />}
-                  <span className="min-w-0">
-                    {item.name}
-                    {!item.required ? <span className="text-subtle"> (optional)</span> : null}
-                  </span>
-                </span>
-                {item.receivedAt ? (
-                  <Chip tone="success">Received {formatDate(item.receivedAt)}</Chip>
-                ) : editable ? (
-                  <FilePickButton
-                    onFile={(file) => run(() => receiveKycDocument(c.id, item.name, file, userName), `${item.name} received.`)}
-                    destination={`${item.name} · KYC for ${c.prospect.name}`}
-                  >
-                    Upload
-                  </FilePickButton>
-                ) : (
-                  <Chip tone="danger">Missing</Chip>
-                )}
-              </div>
-              {item.receivedAt && item.hasExpiry ? (
-                <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-                  Expires
-                  {editable ? (
-                    <input
-                      type="date"
-                      min={todayIso()}
-                      value={item.expiry ?? ""}
-                      onChange={(e) => e.target.value && run(() => setKycExpiry(c.id, item.name, e.target.value, userName), "Expiry date saved.")}
-                      aria-label={`${item.name} expiry date`}
-                      className="rounded-lg border border-input bg-card px-2 py-1 text-[11px]"
-                    />
-                  ) : (
-                    <span>{item.expiry ? formatDate(item.expiry) : "not recorded"}</span>
-                  )}
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div>
-        <p className="text-xs font-semibold">Sanctions and watchlist screening</p>
-        {c.kyc.screening ? (
-          <p className="mt-1 text-xs text-muted-foreground">
-            <Chip tone={c.kyc.screening.result === "CLEAR" ? "success" : "warning"}>
-              {c.kyc.screening.result === "CLEAR" ? "Clear" : "Possible match"}
-            </Chip>{" "}
-            {c.kyc.screening.note} · {formatDate(c.kyc.screening.at)} by {c.kyc.screening.by}
-          </p>
-        ) : editable ? (
-          <div className="mt-2 space-y-2">
-            <div className="flex flex-wrap gap-2">
-              {(
-                [
-                  ["CLEAR", "Clear: no matches"],
-                  ["POSSIBLE_MATCH", "Possible match"],
-                ] as const
-              ).map(([v, label]) => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => setResult(v)}
-                  className={cn(
-                    "rounded-full border px-3 py-1 text-xs",
-                    result === v ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card hover:bg-secondary",
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <input
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Lists checked and result, e.g. UN and OFAC lists, no matches"
-              aria-label="Screening note"
-              className={INPUT}
-            />
-            {result === "POSSIBLE_MATCH" ? (
-              <p className="text-[11px] text-warning">
-                A possible match (for example a politically exposed person) needs enhanced due diligence before approval.
-              </p>
-            ) : null}
-            <OutlineButton onClick={() => run(() => recordKycScreening(c.id, { result, note }, userName), "Screening recorded.")}>
-              Record screening
-            </OutlineButton>
-          </div>
-        ) : (
-          <p className="mt-1 text-xs text-muted-foreground">Not done yet.</p>
-        )}
-      </div>
-
-      {request ? <ApprovalStatus request={request} waitingFor="the Risk & Compliance Manager" /> : null}
-      {canUpdate && !waiting && request?.status !== "RETURNED" ? (
-        <div className="space-y-1.5">
-          {blocker ? <p className="text-[11px] text-warning">{blocker}</p> : null}
-          <NavyButton disabled={!!blocker} onClick={() => run(() => submitKycForApproval(c.id, userName), "KYC sent to the Risk & Compliance Manager.")}>
-            Send for KYC approval
-          </NavyButton>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-/* Quotes (steps 6 and 7) */
-
-function QuoteList({ value: c, canRecommend, userName, run }: { value: OnboardingCase; canRecommend: boolean; userName: string; run: Run }) {
-  if (c.quotes.length === 0) {
-    return <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">No quotes yet.</p>;
-  }
-  return (
-    <div className="space-y-1.5">
-      {c.quotes.map((q) => (
-        <div
-          key={q.id}
-          className={cn(
-            "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border px-3 py-2",
-            q.recommended ? "border-sky/40 bg-card" : "border-border bg-card",
-          )}
+      {!approved && kyc?.gateStatus && kyc.gateStatus !== status ? <p className="text-muted-foreground">{blockerText(kyc.gateStatus)}</p> : null}
+      {canRead ? (
+        <Link
+          href={`/clients/kyc/${encodeURIComponent(kyc?.caseId ?? lead.clientId)}`}
+          className="inline-flex items-center gap-1 font-medium text-primary underline underline-offset-2"
         >
-          <div className="min-w-0">
-            <p className="text-xs font-medium">
-              {q.insurer} · {formatRwf(q.premium)}
-            </p>
-            <p className="text-[11px] text-muted-foreground">{q.terms}</p>
-          </div>
-          {q.recommended ? (
-            <Chip tone="sky">Recommended</Chip>
-          ) : canRecommend ? (
-            <OutlineButton onClick={() => run(() => recommendOnboardingQuote(c.id, q.id, userName), `${q.insurer} recommended.`)}>
-              Recommend
-            </OutlineButton>
-          ) : null}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function GroupedSelect({ value, onChange, groups, placeholder, label }: { value: string; onChange: (v: string) => void; groups: OptionGroup[]; placeholder: string; label: string }) {
-  return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={label} className={INPUT}>
-      <option value="">{placeholder}</option>
-      {groups.map((g) => (
-        <optgroup key={g.label} label={g.label}>
-          {g.options.map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </optgroup>
-      ))}
-    </select>
-  );
-}
-
-function QuotesSection({ value: c, canUpdate, userName, run }: { value: OnboardingCase; canUpdate: boolean; userName: string; run: Run }) {
-  const [insurer, setInsurer] = useState("");
-  const [premium, setPremium] = useState("");
-  const [terms, setTerms] = useState("");
-  const [reason, setReason] = useState("");
-
-  return (
-    <div className="space-y-3">
-      <QuoteList value={c} canRecommend={false} userName={userName} run={run} />
-      {canUpdate ? (
-        <>
-          <div className="space-y-2 rounded-xl border border-border bg-card p-3">
-            <p className="text-xs font-semibold">Record a quote</p>
-            <GroupedSelect value={insurer} onChange={setInsurer} groups={INSURER_GROUPS} placeholder="Select an insurer" label="Insurer" />
-            <AmountInput value={premium} onChange={setPremium} placeholder="Premium in RWF, e.g. 12,500,000" aria-label="Premium" className={INPUT} />
-            <input value={terms} onChange={(e) => setTerms(e.target.value)} placeholder="Main terms, e.g. Limit RWF 500m, deductible RWF 2m" aria-label="Terms" className={INPUT} />
-            <OutlineButton
-              onClick={async () => {
-                const ok = await run(
-                  () => addOnboardingQuote(c.id, { insurer, premium: Number(premium.replace(/[^\d]/g, "")), terms: terms.trim() || "Standard terms" }, userName),
-                  `Quote from ${insurer} recorded.`,
-                );
-                if (ok) {
-                  setInsurer("");
-                  setPremium("");
-                  setTerms("");
-                }
-              }}
-            >
-              Add quote
-            </OutlineButton>
-          </div>
-          {c.quotes.length > 0 && c.quotes.length < 3 ? (
-            <textarea
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={2}
-              placeholder="Fewer than 3 quotes: give the written reason (the MD must approve)"
-              aria-label="Reason for fewer than 3 quotes"
-              className={INPUT}
-            />
-          ) : null}
-          <NavyButton onClick={() => run(() => completeQuotation(c.id, { singleSourceReason: reason }, userName), "Quotation step completed.")}>
-            <Check className="size-3.5" />Quotes complete
-          </NavyButton>
-        </>
+          {kyc?.caseId ? "Open the KYC review" : "Start the KYC review"} <ExternalLink className="size-3" />
+        </Link>
       ) : null}
-    </div>
-  );
-}
-
-/* Internal approval (step 8) */
-
-function ApprovalSection({ value: c, canUpdate, userName, run }: { value: OnboardingCase; canUpdate: boolean; userName: string; run: Run }) {
-  const request = useApproval(c.approvalId);
-  const [rate, setRate] = useState("15");
-  const quote = c.quotes.find((q) => q.recommended);
-  const commission = quote ? Math.round(quote.premium * (Number(rate) / 100 || 0)) : 0;
-  const approver = commission < 1_000_000 ? "the Technical Director" : commission <= 10_000_000 ? "the MD" : "the MD, with the Board informed";
-
-  return (
-    <div className="space-y-2">
-      {quote ? (
-        <p className="text-xs">
-          Recommended: <span className="font-medium">{quote.insurer}</span>at {formatRwf(quote.premium)}
-        </p>
-      ) : null}
-      {request ? <ApprovalStatus request={request} waitingFor={request.steps.find((s) => s.status === "PENDING")?.role ?? "approval"} /> : null}
-      {canUpdate && (!request || request.status === "REJECTED") ? (
-        <div className="space-y-2">
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
-            Expected commission rate (%)
-            <input value={rate} onChange={(e) => setRate(e.target.value)} inputMode="decimal" aria-label="Commission rate" className="w-20 rounded-lg border border-input bg-card px-2 py-1 text-xs" />
-          </label>
-          <p className="text-[11px] text-muted-foreground">
-            Annual commission about {formatRwf(commission)}, so it goes to {approver}
-            {c.singleSourceReason ? " (and the MD, because fewer than 3 insurers quoted)" : ""}.
-          </p>
-          <NavyButton onClick={() => run(() => requestNewBusinessApproval(c.id, Number(rate) / 100, userName), "Approval requested.")}>
-            Request approval
-          </NavyButton>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-/* Placement and welcome (steps 10 and 11) */
-
-function PlacementForm({ value: c, userName, run }: { value: OnboardingCase; userName: string; run: Run }) {
-  const quote = c.quotes.find((q) => q.recommended);
-  const [policyNumber, setPolicyNumber] = useState("");
-  const [classOfInsurance, setClass] = useState("");
-  const [start, setStart] = useState(todayIso());
-  const [expiry, setExpiry] = useState("");
-  const [evidence, setEvidence] = useState("");
-  return (
-    <div className="space-y-2">
-      {quote ? (
-        <p className="text-xs">
-          Placing with <span className="font-medium">{quote.insurer}</span>at {formatRwf(quote.premium)}
-        </p>
-      ) : null}
-      <input value={policyNumber} onChange={(e) => setPolicyNumber(e.target.value)} placeholder="Policy number issued by the insurer" aria-label="Policy number" className={INPUT} />
-      <GroupedSelect value={classOfInsurance} onChange={setClass} groups={PRODUCT_GROUPS} placeholder="Class of insurance" label="Class of insurance" />
-      <div className="grid gap-2 sm:grid-cols-2">
-        <label className="text-[11px] text-muted-foreground">
-          Cover starts
-          <input type="date" value={start} onChange={(e) => setStart(e.target.value)} className={cn(INPUT, "mt-1")} />
-        </label>
-        <label className="text-[11px] text-muted-foreground">
-          Cover ends
-          <input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} className={cn(INPUT, "mt-1")} />
-        </label>
-      </div>
-      <AttachRecord caseId={c.id} label="Attach the verified policy schedule" fileName={evidence} onFile={setEvidence} />
-      <NavyButton onClick={() => run(() => recordPlacement(c.id, { policyNumber, classOfInsurance, start, expiry, evidence }, userName), "Placement recorded.")}>
-        <Check className="size-3.5" />Record placement
-      </NavyButton>
-    </div>
-  );
-}
-
-function WelcomeForm({ value: c, userName, run }: { value: OnboardingCase; userName: string; run: Run }) {
-  const [evidence, setEvidence] = useState("");
-  return (
-    <div className="space-y-2">
-      <AttachRecord caseId={c.id} label="Attach the welcome letter" fileName={evidence} onFile={setEvidence} />
-      <NavyButton onClick={() => run(() => completeWelcome(c.id, evidence, userName), "Client file opened. Onboarding complete.")}>
-        <Check className="size-3.5" />Send welcome and open client file
-      </NavyButton>
     </div>
   );
 }

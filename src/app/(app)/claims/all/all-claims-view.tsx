@@ -7,7 +7,7 @@ import { DATE_RANGE_OPTIONS, withinRange, type DateRange } from "@/lib/date-rang
 import {
   CLAIM_TABS,
   ClaimSearch,
-  ClaimSlideOver,
+  ClaimPage,
   ClaimsTable,
   byUrgency,
   filterClaims,
@@ -22,7 +22,7 @@ const TABS = ["All", ...CLAIM_TABS, "Closed"] as const;
 
 export function AllClaimsView() {
   const { claims, loaded, reload } = useClaims();
-  const { open, setOpen } = useOpenClaim(claims);
+  const { open, openId, backHref, setOpen } = useOpenClaim(claims);
   const [tab, setTab] = useState<ClaimTab>("All");
   const [query, setQuery] = useState("");
 
@@ -35,11 +35,15 @@ export function AllClaimsView() {
     [claims, tab, query, range],
   );
 
+  if (openId) {
+    if (open) return <ClaimPage claim={open} backHref={backHref} backLabel="All Claims" onChanged={reload} />;
+    return <p className="text-sm text-muted-foreground">{loaded ? "This claim could not be found." : "Loading claim…"}</p>;
+  }
+
   return (
     <>
       <PageHeader
         title="All Claims"
-        subtitle={`${rows.length} ${rows.length === 1 ? "claim" : "claims"}`}
         extraPills={
           <FilterMenu
             label="Reported"
@@ -51,7 +55,7 @@ export function AllClaimsView() {
       />
       <FloatCard className="mt-5 overflow-hidden">
         <CardHeader
-          title="Claims List"
+          title={`${rows.length} ${rows.length === 1 ? "claim" : "claims"}`}
           right={
             <div className="flex flex-wrap items-center gap-2">
               <ClaimSearch value={query} onChange={setQuery} />
@@ -59,7 +63,7 @@ export function AllClaimsView() {
             </div>
           }
         />
-        <div className="mt-4">
+        <div className="mt-6">
           <ClaimsTable
             claims={rows}
             onView={setOpen}
@@ -68,7 +72,6 @@ export function AllClaimsView() {
         </div>
       </FloatCard>
 
-      <ClaimSlideOver claim={open} onClose={() => setOpen(null)} onChanged={reload} />
     </>
   );
 }

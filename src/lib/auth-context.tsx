@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { MOCK_AUTH, getCurrentUser, signIn as apiSignIn, signOut as apiSignOut } from "./api";
+import { MOCK_AUTH, getCurrentUser, setDemoRole, signIn as apiSignIn, signOut as apiSignOut } from "./api";
 import { ROLES, type Role, type SessionUser } from "./types";
 
 // The backend keeps the login in a SESSION cookie. On load we ask the backend
@@ -75,6 +75,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, []);
+
+  // Demo mode: policy track actions follow the sample role, as they would follow
+  // permissions on the backend. Set during render so pages that load data in
+  // their own effects (which run before this provider's) already see it.
+  if (MOCK_AUTH) setDemoRole(user?.role ?? null);
 
   const value = useMemo<AuthState>(
     () => ({

@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { toast } from "sonner";
-import { SlideOver } from "@/components/gral/shell";
+import { CenteredModal } from "@/components/gral/shell";
 import { NavyButton, OutlineButton } from "@/components/gral/ui";
 import { createClaim, listClientChoices, listClientPolicies } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
@@ -71,9 +71,9 @@ export function NewClaimSlideOver({
   onCreated: (claim: Claim) => void;
 }) {
   return (
-    <SlideOver open={open} onClose={onClose} wide>
+    <CenteredModal open={open} onClose={onClose}>
       {open ? <NewClaimForm handlers={handlers} onClose={onClose} onCreated={onCreated} /> : null}
-    </SlideOver>
+    </CenteredModal>
   );
 }
 
@@ -214,14 +214,8 @@ function NewClaimForm({
 
   return (
     <form onSubmit={handleSubmit} noValidate className="flex min-h-full flex-col">
-      <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
-        <div>
-          <h2 className="text-lg font-semibold tracking-tight">New Claim</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Step 1 of the claims process: register within 24 hours of the client reporting the loss. The claim
-            number is created automatically. The policy can be linked later if it is not known yet.
-          </p>
-        </div>
+      <div className="flex items-center justify-between gap-4 border-b border-border px-6 py-5 sm:px-8">
+        <h2 className="text-lg font-semibold tracking-tight">New Claim</h2>
         <button
           type="button"
           aria-label="Close"
@@ -232,7 +226,7 @@ function NewClaimForm({
         </button>
       </div>
 
-      <div className="flex-1 space-y-6 px-6 py-5">
+      <div className="flex-1 space-y-7 px-6 py-6 sm:px-8">
         <Section title="Client and policy">
           <Field id="clientId" label="Client" error={errors.clientId} wide>
             <select
@@ -336,8 +330,7 @@ function NewClaimForm({
               id="amount"
               value={values.amount}
               onChange={(v) => set("amount", v)}
-              placeholder="e.g. 4,200,000"
-              className={inputClass(errors.amount)}
+                            className={inputClass(errors.amount)}
               {...describedBy("amount", errors.amount)}
             />
           </Field>
@@ -361,8 +354,7 @@ function NewClaimForm({
               rows={3}
               value={values.description}
               onChange={(e) => set("description", e.target.value)}
-              placeholder="e.g. Fire in the rolling mill damaged the main conveyor and control panel."
-              className={inputClass(errors.description)}
+                            className={inputClass(errors.description)}
               {...describedBy("description", errors.description)}
             />
           </Field>
@@ -388,7 +380,7 @@ function NewClaimForm({
         </Section>
       </div>
 
-      <div className="sticky bottom-0 flex justify-end gap-2 border-t border-border bg-card px-6 py-4">
+      <div className="sticky bottom-0 flex justify-end gap-2 border-t border-border bg-card px-6 py-4 sm:px-8">
         <OutlineButton onClick={onClose} className="px-4 py-2 text-sm">
           Cancel
         </OutlineButton>

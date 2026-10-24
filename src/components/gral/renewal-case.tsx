@@ -53,7 +53,8 @@ export function RenewalCasePanel({
   onChanged,
 }: {
   renewal: RenewalCase;
-  onClose: () => void;
+  /** Shows a close button. Left out on the full renewal page, which has a back link. */
+  onClose?: () => void;
   onChanged: (updated: RenewalCase) => void;
 }) {
   const [tab, setTab] = useState<Tab>("Milestones");
@@ -74,41 +75,41 @@ export function RenewalCasePanel({
 
   return (
     <div>
-      <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-6 sm:py-5">
+      <div className="flex items-start justify-between gap-3 border-b border-border px-5 pt-7 pb-6 sm:px-8">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-lg font-semibold tracking-tight">{renewal.client}</span>
+            <span className="text-xl font-semibold tracking-tight">{renewal.client}</span>
             <RenewalHealthChip renewal={renewal} />
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-2.5 text-xs text-muted-foreground">
             {renewal.id} · {renewal.policyId} · {renewal.classOfInsurance} · {renewal.insurer}
           </p>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-2 text-xs text-muted-foreground">
             {formatRwf(renewal.premium)} · Expires {formatDate(renewal.expiryDate)} ·{" "}
             <span className={cn(days < 0 && "font-medium text-danger")}>
               {days < 0 ? `expired ${Math.abs(days)} days ago` : `${days} days to go`}
             </span>
           </p>
-          <div className="mt-2">
+          <div className="mt-4">
             <Person name={renewal.owner} />
           </div>
         </div>
-        <button
-          type="button"
-          aria-label="Close renewal case"
-          onClick={onClose}
-          className="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground hover:text-foreground"
-        >
-          <X className="size-4" />
-        </button>
+        {onClose ? (
+          <button
+            type="button"
+            aria-label="Close renewal case"
+            onClick={onClose}
+            className="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground hover:text-foreground"
+          >
+            <X className="size-4" />
+          </button>
+        ) : null}
       </div>
 
-      <div className="px-4 py-5 sm:px-6">
+      <div className="px-5 py-6 sm:px-8">
         <SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />
         {!canUpdateRenewals ? (
-          <p className="mt-3 text-[11px] text-subtle">
-            View only. Renewal updates are limited to the Commercial Director, DMD and MD.
-          </p>
+          <p className="mt-3 text-[11px] text-subtle">View only</p>
         ) : null}
 
         {tab === "Milestones" ? (

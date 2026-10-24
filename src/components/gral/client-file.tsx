@@ -10,7 +10,7 @@ import { listClientClaims, listClientPolicies } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { canAccessPath, clientEditPermissions, clientPermissions, documentPermissions } from "@/lib/permissions";
 import type { Client, ClientClaim, Policy } from "@/lib/types";
-import { Chip, Dot, NavyButton, NotRecorded, OutlineButton, Person, Recorded, SegmentedTabs, TextLink } from "./ui";
+import { Chip, Dot, NavyButton, NotRecorded, OutlineButton, Recorded, SegmentedTabs, TextLink } from "./ui";
 import { PolicyForm } from "./policy-form";
 import { DocumentPanel } from "./documents";
 
@@ -87,83 +87,89 @@ export function ClientFile({
 
   return (
     <div>
-      <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-6 sm:py-5">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-lg font-semibold tracking-tight">{client.name}</span>
-            {client.nonCompliant ? <Chip tone="danger">Non-Compliant</Chip> : <Chip tone="success">Compliant</Chip>}
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {client.id} · {client.type} · <Recorded value={client.sector} /> · {client.activePolicies} active{" "}
-            {client.activePolicies === 1 ? "policy" : "policies"}
-          </p>
-          <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <MapPin className="size-3.5 shrink-0" /> <Recorded value={client.address} />
-          </p>
-          {client.contact ? (
-            <div className="mt-2 rounded-xl bg-pale px-3 py-2 text-xs">
-              <p className="font-medium">
-                <Recorded value={client.contact.name} />{" "}
-                <span className="font-normal text-muted-foreground">
-                  · <Recorded value={client.contact.title} />
-                </span>
-              </p>
-              <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
-                {client.contact.email ? (
-                  <a
-                    href={`mailto:${client.contact.email}`}
-                    className="flex items-center gap-1 text-primary underline underline-offset-2 hover:opacity-70"
-                  >
-                    <Mail className="size-3.5" /> {client.contact.email}
-                  </a>
-                ) : (
-                  <span className="flex items-center gap-1">
-                    <Mail className="size-3.5" /> <NotRecorded />
-                  </span>
-                )}
-                <span className="flex items-center gap-1">
-                  <Phone className="size-3.5" /> <Recorded value={client.contact.phone} />
-                </span>
-              </p>
+      <div className="border-b border-border px-5 pt-10 pb-7 sm:px-8 sm:pt-12">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-lg font-semibold tracking-tight">{client.name}</span>
+              {client.nonCompliant ? <Chip tone="danger">Non-Compliant</Chip> : <Chip tone="success">Compliant</Chip>}
             </div>
-          ) : (
-            <p className="mt-2 rounded-xl bg-pale px-3 py-2 text-xs text-muted-foreground">
-              Primary contact: <NotRecorded />
+            <p className="mt-2 text-xs text-muted-foreground">
+              {client.id} · {client.type} · <Recorded value={client.sector} /> · {client.activePolicies} active{" "}
+              {client.activePolicies === 1 ? "policy" : "policies"}
             </p>
-          )}
-          <p className="mt-2 text-xs text-muted-foreground">
-            Remarks: <Recorded value={client.remarks} />
-          </p>
-          <div className="mt-2">
-            <Person name={client.manager} />
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {canEditClient && onEdit ? (
+              <OutlineButton onClick={onEdit}>
+                <Pencil className="size-3.5" /> Edit
+              </OutlineButton>
+            ) : null}
+            <button
+              type="button"
+              aria-label="Close client file"
+              onClick={onClose}
+              className="flex size-9 items-center justify-center rounded-full bg-secondary text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-4" />
+            </button>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {canEditClient && onEdit ? (
-            <OutlineButton onClick={onEdit}>
-              <Pencil className="size-3.5" /> Edit
-            </OutlineButton>
+
+        <dl className="mt-7 grid gap-x-8 gap-y-4 text-xs sm:grid-cols-2">
+          <div className="min-w-0">
+            <dt className="text-[11px] text-subtle">Contact</dt>
+            <dd className="mt-1 truncate">
+              <Recorded value={client.contact?.name} />
+              {client.contact?.title ? <span className="text-muted-foreground"> · {client.contact.title}</span> : null}
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="text-[11px] text-subtle">Accounts Executive</dt>
+            <dd className="mt-1 truncate">
+              <Recorded value={client.manager} />
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="sr-only">Email</dt>
+            <dd className="flex items-center gap-1.5 truncate">
+              <Mail className="size-3.5 shrink-0 text-muted-foreground" />
+              {client.contact?.email ? (
+                <a href={`mailto:${client.contact.email}`} className="truncate text-primary hover:underline">
+                  {client.contact.email}
+                </a>
+              ) : (
+                <NotRecorded />
+              )}
+            </dd>
+          </div>
+          <div className="min-w-0">
+            <dt className="sr-only">Phone</dt>
+            <dd className="flex items-center gap-1.5 truncate">
+              <Phone className="size-3.5 shrink-0 text-muted-foreground" /> <Recorded value={client.contact?.phone} />
+            </dd>
+          </div>
+          <div className="min-w-0 sm:col-span-2">
+            <dt className="sr-only">Address</dt>
+            <dd className="flex items-center gap-1.5 truncate">
+              <MapPin className="size-3.5 shrink-0 text-muted-foreground" /> <Recorded value={client.address} />
+            </dd>
+          </div>
+          {client.remarks?.trim() ? (
+            <div className="min-w-0 sm:col-span-2">
+              <dt className="text-[11px] text-subtle">Remarks</dt>
+              <dd className="mt-1">{client.remarks}</dd>
+            </div>
           ) : null}
-          <button
-            type="button"
-            aria-label="Close client file"
-            onClick={onClose}
-            className="flex size-9 items-center justify-center rounded-full bg-secondary text-muted-foreground hover:text-foreground"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
+        </dl>
       </div>
 
-      <div className="px-4 py-5 sm:px-6">
+      <div className="px-5 py-7 sm:px-8">
         <SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />
 
         {tab === "KYC & Compliance" ? (
           seesDocumentDetail ? (
-            <div className="mt-4 space-y-2">
-              {client.documents.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No KYC documents uploaded yet. Section A: Not Started.</p>
-              ) : null}
+            <div className="mt-6 space-y-2.5">
               {client.documents.map((d) => (
                 <div
                   key={d.name}
@@ -196,7 +202,7 @@ export function ClientFile({
                   <Flag className="size-3.5" /> Flag as Non-Compliant
                 </NavyButton>
               ) : null}
-              <div className="pt-4">
+              <div className={client.documents.length ? "pt-6" : undefined}>
                 {/* Backend clients use the real document API; sample clients keep files in this tab. */}
                 <DocumentPanel
                   subject={{ type: "CLIENT", id: client.uuid ?? client.id }}
@@ -205,12 +211,12 @@ export function ClientFile({
                   canUpload={canUploadDocuments}
                   canReplace={canReplaceDocuments}
                   title="KYC Files"
-                  emptyText="No KYC files uploaded yet."
+                  emptyText="No KYC files yet."
                 />
               </div>
             </div>
           ) : (
-            <p className="mt-4 text-xs text-muted-foreground">
+            <p className="mt-6 text-xs text-muted-foreground">
               Document details are not part of the Finance Director view.
             </p>
           )
@@ -230,7 +236,7 @@ export function ClientFile({
               }}
             />
           ) : (
-            <div className="mt-4">
+            <div className="mt-6">
               {canAddPolicy && onChanged ? (
                 <div className="mb-3 flex justify-end">
                   <NavyButton onClick={() => setPolicyEditor("new")}>
@@ -328,7 +334,7 @@ export function ClientFile({
         ) : null}
 
         {tab === "Claims" ? (
-          <div className="mt-4 space-y-2">
+          <div className="mt-6 space-y-2.5">
             {claims.length === 0 ? (
               <p className="text-xs text-muted-foreground">No claims on record.</p>
             ) : (
@@ -350,7 +356,7 @@ export function ClientFile({
         ) : null}
 
         {tab === "Correspondence" ? (
-          <div className="mt-4 space-y-2">
+          <div className="mt-6 space-y-2.5">
             {client.correspondence.length === 0 ? (
               <p className="text-xs text-muted-foreground">No correspondence on record yet.</p>
             ) : null}

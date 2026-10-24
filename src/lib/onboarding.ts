@@ -1,218 +1,347 @@
-// GRAL's client onboarding (SOP Handbook v3, section 3 "Client Acquisition
-// SOP"): 11 steps from lead to welcome letter, with the owner and deadline the
-// SOP gives each one. Deadlines are in working days (weekends skipped; public
-// holidays once the backend calendar is connected).
-//
-// Key controls from the SOP:
-// - No quotation without the signed KYC Approval Form (step 3).
-// - KYC approval within 3 working days of receiving all documents.
-// - Quotes from at least 3 insurers, unless justified in writing and approved by the MD.
-// - Written client acceptance before placement.
-// - Full onboarding in 10 to 15 working days.
+// GRAL's client onboarding (SOP Handbook v3, section 3), as the backend runs it:
+// a lead covers steps 1 and 2; each policy being placed is a policy track that
+// runs steps 3 to 11 on its own. The backend decides deadlines, blockers and
+// which actions are allowed; this file only names them in plain words.
 
-import { addWorkingDays, workingDaysBetween } from "./claims";
+import { workingDaysBetween } from "./claims";
 import { todayIso } from "./renewals";
-import type { ClientType, KycItem, OnboardingCase, OnboardingStepCode } from "./types";
+import type { Lead, PolicyTrack } from "./types";
 
-export type OnboardingStepDef = {
-  code: OnboardingStepCode;
+export type StageDef = {
   n: number;
+  /** The backend's milestone code for this step. */
+  code: string;
   name: string;
-  /** Role responsible, as the SOP names it. */
   owner: string;
-  /** Working days allowed, counted from `from`. */
-  days: number;
-  /** The step whose completion starts the clock (null = the lead's date). */
-  from: OnboardingStepCode | null;
   deadlineLabel: string;
-  /** What has to be done, in one line. */
   task: string;
-  /** The record to attach when completing the step. */
-  evidenceHint?: string;
 };
 
-export const ONBOARDING_STEPS: OnboardingStepDef[] = [
-  {
-    code: "LEAD", n: 1, name: "Lead registration", owner: "Commercial Director", days: 0, from: null,
-    deadlineLabel: "Same day", task: "Record the lead and assign an Accounts Executive (CRM Manager)",
-  },
-  {
-    code: "MEETING", n: 2, name: "Meeting & needs assessment", owner: "Accounts Executive", days: 3, from: "LEAD",
-    deadlineLabel: "3 working days", task: "Send the pre-meeting document request, meet the client, send the meeting summary",
-    evidenceHint: "Meeting summary note, e.g. Meeting summary.pdf",
-  },
-  {
-    code: "KYC", n: 3, name: "KYC & AML verification", owner: "Accounts Executive", days: 3, from: "MEETING",
-    deadlineLabel: "3 working days after all documents",
-    task: "Collect the KYC documents, screen against sanctions lists, get the KYC Approval Form signed",
-  },
-  {
-    code: "RISK_SURVEY", n: 4, name: "Risk survey", owner: "Technical Director", days: 5, from: "MEETING",
-    deadlineLabel: "5 working days after the meeting", task: "Site visit, hazards and controls, risk grade, written report",
-    evidenceHint: "Risk survey report, e.g. Risk survey report.pdf",
-  },
-  {
-    code: "DESIGN", n: 5, name: "Insurance programme design", owner: "Technical Director", days: 3, from: "RISK_SURVEY",
-    deadlineLabel: "3 working days", task: "Decide the recommended covers and draft the programme proposal",
-    evidenceHint: "Insurance programme proposal, e.g. Programme proposal.pdf",
-  },
-  {
-    code: "QUOTES", n: 6, name: "Quotation request", owner: "GI Underwriting Manager", days: 1, from: "DESIGN",
-    deadlineLabel: "24 hours", task: "Send the terms of reference to at least 3 licensed insurers and record their quotes",
-  },
-  {
-    code: "COMPARISON", n: 7, name: "Comparative analysis", owner: "GI Underwriting Manager", days: 2, from: "QUOTES",
-    deadlineLabel: "2 working days", task: "Compare premium, deductibles, limits, exclusions and claims support; recommend one",
-    evidenceHint: "Quotation comparison matrix, e.g. Comparison matrix.xlsx",
-  },
-  {
-    code: "APPROVAL", n: 8, name: "Internal approval", owner: "Technical Director / MD", days: 2, from: "COMPARISON",
-    deadlineLabel: "Before the presentation", task: "Approval by commission: under RWF 1M the TD, up to 10M the MD, above that the MD and the Board",
-  },
-  {
-    code: "ACCEPTANCE", n: 9, name: "Presentation & acceptance", owner: "Accounts Executive", days: 3, from: "APPROVAL",
-    deadlineLabel: "3 working days", task: "Present the comparison to the client and get written acceptance",
-    evidenceHint: "Written acceptance (email or letter), e.g. Client acceptance.pdf",
-  },
-  {
-    code: "PLACEMENT", n: 10, name: "Policy placement", owner: "GI Underwriting Manager", days: 2, from: "ACCEPTANCE",
-    deadlineLabel: "2 working days", task: "Instruct the insurer, receive the policy schedule and check it matches the quote",
-    evidenceHint: "Verified policy schedule, e.g. Policy schedule.pdf",
-  },
-  {
-    code: "WELCOME", n: 11, name: "Welcome & filing", owner: "Accounts Executive", days: 2, from: "PLACEMENT",
-    deadlineLabel: "2 working days", task: "Send the welcome letter, deliver the documents, open the client file",
-    evidenceHint: "Welcome letter, e.g. Welcome letter.pdf",
-  },
+/** Steps 3 to 11, one policy track each. */
+export const TRACK_STAGES: StageDef[] = [
+  { n: 3, code: "KYC", name: "KYC & AML verification", owner: "Accounts Executive · Risk & Compliance Manager approves", deadlineLabel: "Before any quotation", task: "The client's KYC review must be approved. It is shared by all of the client's policy tracks." },
+  { n: 4, code: "SURVEY", name: "Risk survey", owner: "Technical Director", deadlineLabel: "5 working days after the meeting", task: "Site visit, hazards and controls, a Low, Medium or High grade, and the written report. Not needed for individuals." },
+  { n: 5, code: "PROGRAM", name: "Insurance programme", owner: "Technical Director", deadlineLabel: "3 working days", task: "The recommended covers, with the programme signed by the Technical Director." },
+  { n: 6, code: "RFQ", name: "Request for quotations", owner: "Underwriting Manager", deadlineLabel: "24 hours after the programme", task: "Send the terms of reference to at least 3 licensed insurers, or ask the MD for a single-source exception." },
+  { n: 7, code: "COMPARISON", name: "Quotes & comparison", owner: "Underwriting Manager", deadlineLabel: "2 working days", task: "Record every insurer's answer, compare the quotes and recommend one. Two usable quotes are enough; one needs the MD's exception." },
+  { n: 8, code: "APPROVAL", name: "Internal approval", owner: "Technical Director / MD", deadlineLabel: "Before the presentation", task: "Approval by expected annual commission: under RWF 1m the TD; RWF 1m to 10m the TD then the MD; above that the MD, then the Board's written approval recorded by the MD." },
+  { n: 9, code: "ACCEPTANCE", name: "Presentation & acceptance", owner: "Accounts Executive", deadlineLabel: "3 working days after approval", task: "Present the approved recommendation and get the client's written acceptance. Accepting is not cover yet." },
+  { n: 10, code: "PLACEMENT", name: "Placement & verification", owner: "Underwriting Manager", deadlineLabel: "2 working days after acceptance", task: "Instruct the insurer, record its confirmation and the schedule, check the schedule matches the accepted terms, then convert it into the client's policy." },
+  { n: 11, code: "WELCOME", name: "Welcome & filing", owner: "Accounts Executive", deadlineLabel: "2 working days after the schedule", task: "Send the welcome letter, deliver the verified policy documents and complete the client file checklist." },
 ];
 
-/** The 11 steps in four stages, so the tracker reads at a glance. */
-export const ONBOARDING_PHASES: { name: string; steps: OnboardingStepCode[] }[] = [
-  { name: "Meet", steps: ["LEAD", "MEETING"] },
-  { name: "Assess", steps: ["KYC", "RISK_SURVEY", "DESIGN"] },
-  { name: "Quote", steps: ["QUOTES", "COMPARISON", "APPROVAL"] },
-  { name: "Close", steps: ["ACCEPTANCE", "PLACEMENT", "WELCOME"] },
+/** The tracker's stages: steps 3 to 11 in three groups. */
+export const TRACK_PHASES: { name: string; stages: number[] }[] = [
+  { name: "Assess", stages: [3, 4, 5] },
+  { name: "Quote", stages: [6, 7, 8] },
+  { name: "Close", stages: [9, 10, 11] },
 ];
 
-export function phaseOf(code: OnboardingStepCode) {
-  return ONBOARDING_PHASES.find((p) => p.steps.includes(code))!.name;
+export function stageOf(n: number): StageDef {
+  return TRACK_STAGES.find((s) => s.n === n) ?? TRACK_STAGES[0]!;
 }
 
-/** Working days the SOP allows for the whole onboarding (10 to 15). */
+export function phaseOf(n: number) {
+  return TRACK_PHASES.find((p) => p.stages.includes(n))?.name ?? "";
+}
+
+/** SOP target for the whole onboarding, in working days. */
 export const ONBOARDING_TARGET_DAYS = 15;
 
-export function stepOf(code: OnboardingStepCode) {
-  return ONBOARDING_STEPS.find((s) => s.code === code)!;
-}
+/* ----------------------------------- Leads ----------------------------------- */
 
-/** The step being worked on, or null once onboarding is complete. */
-export function currentStep(c: OnboardingCase): OnboardingStepDef | null {
-  return ONBOARDING_STEPS[c.completed.length] ?? null;
-}
+export type LeadStepKey = "ASSIGN" | "CONFIRM" | "RESPOND" | "ASSESS" | "CLIENT";
 
-export function isComplete(c: OnboardingCase) {
-  return c.completed.length >= ONBOARDING_STEPS.length;
-}
+/** Steps 1 and 2 as a short checklist, in order. */
+export const LEAD_STEPS: { key: LeadStepKey; step: 1 | 2; name: string; owner: string; deadline: string }[] = [
+  { key: "ASSIGN", step: 1, name: "Assign the Accounts Executive", owner: "CRM Manager", deadline: "Same day" },
+  { key: "CONFIRM", step: 1, name: "Confirm the registration", owner: "Commercial Director", deadline: "Same day" },
+  { key: "RESPOND", step: 2, name: "First response to the prospect", owner: "Accounts Executive", deadline: "Within 24 hours" },
+  { key: "ASSESS", step: 2, name: "Meeting & needs assessment", owner: "Accounts Executive", deadline: "3 working days" },
+  { key: "CLIENT", step: 2, name: "Open the prospect client", owner: "Accounts Executive", deadline: "After the assessment" },
+];
 
-function completedAt(c: OnboardingCase, code: OnboardingStepCode) {
-  return c.completed.find((r) => r.code === code)?.completedAt;
-}
-
-/** Date all required KYC documents were in, or null while some are missing. */
-export function kycDocumentsCompleteAt(c: OnboardingCase): string | null {
-  const required = c.kyc.items.filter((i) => i.required);
-  if (required.some((i) => !i.receivedAt)) return null;
-  return required.map((i) => i.receivedAt!).sort().at(-1) ?? null;
-}
-
-/** When a step is due. KYC counts from when the last document arrived. */
-export function stepDue(c: OnboardingCase, def: OnboardingStepDef): string {
-  if (def.code === "KYC") {
-    const docs = kycDocumentsCompleteAt(c);
-    if (docs) return addWorkingDays(docs, def.days);
+export function leadStepDone(l: Lead, key: LeadStepKey): boolean {
+  switch (key) {
+    case "ASSIGN":
+      return !!l.ownerId;
+    case "CONFIRM":
+      return l.confirmed;
+    case "RESPOND":
+      return !!l.respondedAt;
+    case "ASSESS":
+      return l.assessed;
+    case "CLIENT":
+      return !!l.clientId;
   }
-  const start = def.from ? completedAt(c, def.from) : undefined;
-  return addWorkingDays(start ?? c.createdAt, def.days);
 }
 
-export type OnboardingHealth = "complete" | "overdue" | "due-soon" | "on-track";
+/** The first lead step still to do, or null when the lead is ready for policy tracks. */
+export function nextLeadStep(l: Lead) {
+  return LEAD_STEPS.find((s) => !leadStepDone(l, s.key)) ?? null;
+}
 
-export function onboardingHealth(c: OnboardingCase): OnboardingHealth {
-  const step = currentStep(c);
-  if (!step) return "complete";
-  const left = workingDaysBetween(todayIso(), stepDue(c, step));
+export function leadReady(l: Lead) {
+  return !!l.clientId && l.assessed && l.confirmed && (l.status === "OPEN" || l.status === "CONVERTED");
+}
+
+export const LEAD_STATUS_LABEL: Record<string, string> = {
+  OPEN: "Open",
+  CONVERTED: "Converted",
+  CLOSED_LOST: "Closed: lost",
+  CANCELLED: "Cancelled",
+};
+
+export const TRACK_STATUS_LABEL: Record<string, string> = {
+  OPEN: "In progress",
+  ON_HOLD: "On hold",
+  COMPLETED: "Completed",
+  CLOSED_LOST: "Closed: lost",
+  CANCELLED: "Cancelled",
+};
+
+/** Working days since the lead came in (or until it converted). */
+export function leadAge(l: Lead) {
+  const start = l.receivedAt.slice(0, 10);
+  const end = (l.convertedAt ?? new Date().toISOString()).slice(0, 10);
+  return workingDaysBetween(start, end);
+}
+
+/* --------------------------------- Deadlines --------------------------------- */
+
+/** The open milestone of a track: what is due now. */
+export function openMilestone(t: PolicyTrack) {
+  return t.milestones.find((m) => m.status === "OPEN") ?? null;
+}
+
+export type Health = "done" | "overdue" | "due-soon" | "on-track" | "held" | "closed";
+
+export function trackHealth(t: PolicyTrack): Health {
+  if (t.status === "COMPLETED") return "done";
+  if (t.status === "ON_HOLD") return "held";
+  if (t.status !== "OPEN") return "closed";
+  const due = openMilestone(t)?.dueAt?.slice(0, 10);
+  if (!due) return "on-track";
+  const left = workingDaysBetween(todayIso(), due);
   if (left < 0) return "overdue";
   if (left <= 1) return "due-soon";
   return "on-track";
 }
 
-/** Working days since the lead was registered (or until the case finished). */
-export function onboardingAge(c: OnboardingCase) {
-  const end = isComplete(c) ? c.completed.at(-1)!.completedAt : todayIso();
-  return workingDaysBetween(c.createdAt, end);
+/** The lead's own deadline while steps 1 and 2 are open. */
+export function leadHealth(l: Lead): Health {
+  if (l.status === "CONVERTED") return "done";
+  if (l.status !== "OPEN") return "closed";
+  const due = (!l.respondedAt ? l.responseDueAt : !l.assessed ? l.needsDueAt : undefined)?.slice(0, 10);
+  if (!due) return "on-track";
+  const left = workingDaysBetween(todayIso(), due);
+  if (left < 0) return "overdue";
+  if (left <= 1) return "due-soon";
+  return "on-track";
 }
 
-export function kycApproved(c: OnboardingCase) {
-  return !!completedAt(c, "KYC");
+/* ------------------------------ Words for codes ------------------------------ */
+
+/** The backend's blocker codes in plain words. */
+const BLOCKERS: Record<string, string> = {
+  OWNER_REQUIRED: "An Accounts Executive must be assigned.",
+  LEAD_CONFIRMATION_REQUIRED: "The Commercial Director has not confirmed the registration yet.",
+  ASSESSMENT_REQUIRED: "The needs assessment has not been recorded yet.",
+  CLIENT_IDENTITY_REQUIRED: "The prospect client has not been opened or linked yet.",
+  NOT_STARTED: "The client's KYC review has not been started.",
+  DRAFT: "The client's KYC review is still being prepared.",
+  SUBMITTED: "The client's KYC review is waiting for the Risk & Compliance Manager.",
+  RETURNED: "The Risk & Compliance Manager returned the KYC review for changes.",
+  REJECTED: "The client's KYC review was rejected.",
+  KYC_REVIEW_OVERDUE: "The KYC review is past its 3-working-day deadline.",
+  KYC_NOT_READY: "The client's KYC is not approved yet.",
+  KYC_IDENTITY_CHANGED: "The client's details changed after KYC approval, so a new KYC review is needed.",
+  KYC_TEMPLATE_CHANGED: "GRAL's KYC checklist changed after approval, so a new KYC review is needed.",
+  SURVEY_APPLICABILITY_REQUIRED: "Record that a risk survey does not apply to this individual, with the reason.",
+  RISK_SURVEY_REQUIRED: "The risk survey report is needed.",
+  PROGRAM_SIGNOFF_REQUIRED: "The programme signed by the Technical Director is needed.",
+  RFQ_DISPATCH_REQUIRED: "The requests for quotations have not been sent yet.",
+  RFQ_RESPONSES_UNACCOUNTED: "Every insurer asked must be accounted for: a quote, a decline, or no reply after the due date.",
+  QUOTE_REQUIRED: "No quotes recorded yet.",
+  SINGLE_SOURCE_APPROVAL_REQUIRED: "Only one insurer quoted, so the MD must approve a single-source exception.",
+  APPROVAL_REQUIRED: "The recommendation must be sent for internal approval.",
+  APPROVAL_PENDING: "Waiting for the internal approval.",
+  APPROVAL_RETURNED: "The approver returned the recommendation. Revise it and send it again.",
+  APPROVAL_REJECTED: "The recommendation was rejected.",
+  APPROVAL_STATUS_UNAVAILABLE: "The approval's status could not be checked right now.",
+  APPROVAL_DISABLED: "Approvals are not switched on in the system yet, so this step cannot continue. Ask Toochukwu to enable the onboarding approval policy.",
+  CLIENT_PRESENTATION_REQUIRED: "The presentation to the client has not been recorded.",
+  WRITTEN_ACCEPTANCE_REQUIRED: "The client's written acceptance is needed. A verbal yes is not enough.",
+  PROPERTY_ASSET_LIST_REQUIRED: "Property cover needs the client's detailed asset list before placement.",
+  PLACEMENT_CONFIRMATION_REQUIRED: "Waiting for the insurer's confirmation of the placement.",
+  POLICY_SCHEDULE_REQUIRED: "The insurer's policy schedule has not been received.",
+  SCHEDULE_TERMS_MISMATCH: "The schedule does not match the accepted terms. Get a corrected schedule from the insurer.",
+  TECHNICAL_VERIFICATION_REQUIRED: "The Technical Director must check the schedule.",
+  POLICY_VERIFICATION_REQUIRED: "The underwriter's final check of the schedule is needed.",
+};
+
+export function blockerText(code: string) {
+  return BLOCKERS[code] ?? code.replace(/_/g, " ").toLowerCase().replace(/^./, (c) => c.toUpperCase()) + ".";
 }
 
-/** Why KYC can't be sent for approval yet, or null. */
-export function kycSubmitBlocker(c: OnboardingCase): string | null {
-  const missing = c.kyc.items.filter((i) => i.required && !i.receivedAt);
-  if (missing.length) return `Still missing: ${missing.map((i) => i.name).join(", ")}.`;
-  const noExpiry = c.kyc.items.filter((i) => i.receivedAt && i.hasExpiry && !i.expiry);
-  if (noExpiry.length) return `Enter the expiry date for: ${noExpiry.map((i) => i.name).join(", ")}.`;
-  if (!c.kyc.screening) return "Record the sanctions and watchlist screening result.";
-  return null;
+/** Button and form titles for the backend's action codes. */
+export const ACTION_LABEL: Record<string, string> = {
+  QUALIFY_KYC: "Confirm KYC is approved",
+  SURVEY: "Record the risk survey",
+  SURVEY_NOT_APPLICABLE: "Survey not applicable",
+  PROGRAM: "Record the signed programme",
+  LICENSE: "Record an insurer licence check",
+  SINGLE_SOURCE: "Ask for a single-source exception",
+  RFQ: "Send requests for quotations",
+  QUOTE: "Record a quote",
+  RECOMMEND: "Recommend a quote",
+  REQUEST_APPROVAL: "Send for internal approval",
+  REVISE: "Revise the recommendation",
+  RECORD_BOARD_EVIDENCE: "Record the Board's approval",
+  PRESENT: "Record the presentation",
+  ACCEPT: "Record the written acceptance",
+  PROPERTY_ASSETS: "Record the asset list",
+  PLACE: "Instruct the insurer",
+  CONFIRM_PLACEMENT: "Record the insurer's confirmation",
+  SCHEDULE: "Record the policy schedule",
+  TECHNICAL_VERIFICATION: "Record the TD's check",
+  VERIFY: "Verify the schedule",
+  CONVERT: "Convert into the client's policy",
+  WELCOME: "Complete welcome & filing",
+  ASSIGN: "Change who is assigned",
+  ON_HOLD: "Put on hold",
+  RESUME: "Resume",
+  CLOSE: "Close this track",
+};
+
+export const RESPONSIBILITY_LABEL: Record<string, string> = {
+  OWNER: "Accounts Executive",
+  TECHNICAL: "Technical Director",
+  UNDERWRITING: "Underwriting Manager",
+};
+
+export const TIER_LABEL: Record<string, string> = {
+  STANDARD: "Standard (under RWF 1m): the Technical Director approves",
+  LARGE: "Large (RWF 1m to 10m): the Technical Director, then the MD",
+  STRATEGIC: "Strategic (above RWF 10m): the MD, then the Board's written approval",
+  SINGLE_SOURCE: "Single-source exception: the Technical Director, then the MD",
+};
+
+export function commissionTier(annualCommissionRwf: number) {
+  return annualCommissionRwf < 1_000_000 ? "STANDARD" : annualCommissionRwf <= 10_000_000 ? "LARGE" : "STRATEGIC";
 }
 
-/* ------------------------------ KYC checklists ------------------------------- */
-// PROVISIONAL: the SOP names only the core documents (Certificate of
-// Incorporation, ID/passport, TIN/VAT registration) plus sanctions screening.
-// The rest is a sensible list per client type for GRAL to confirm.
+export const LEAD_SOURCES = [
+  "Referral from an existing client",
+  "Referral from a partner or insurer",
+  "Direct approach",
+  "Website enquiry",
+  "Marketing campaign",
+  "Tender invitation",
+  "Other",
+];
 
-const ID_OF_REPRESENTATIVE = "ID or passport of the company representative";
-const TIN = "TIN / VAT registration certificate";
-const OWNERS = "Beneficial owners list (25% or more)";
-const AML_FORM = "Signed AML / KYC questionnaire";
+/** Client types for the prospect client. Individuals only for individual leads. */
+export const PROSPECT_TYPES: { code: string; label: string; leadType: "CORPORATE" | "INDIVIDUAL" }[] = [
+  { code: "CORPORATE", label: "Corporate", leadType: "CORPORATE" },
+  { code: "SME", label: "SME", leadType: "CORPORATE" },
+  { code: "NGO", label: "NGO", leadType: "CORPORATE" },
+  { code: "STATE_ENTERPRISE", label: "State Enterprise", leadType: "CORPORATE" },
+  { code: "FINANCIAL_INSTITUTION", label: "Financial Institution", leadType: "CORPORATE" },
+  { code: "INDIVIDUAL", label: "Individual", leadType: "INDIVIDUAL" },
+];
 
-export const KYC_CHECKLISTS: Record<ClientType, Omit<KycItem, "receivedAt" | "fileName" | "expiry">[]> = {
-  Corporate: [
-    { name: "Certificate of Incorporation", required: true },
-    { name: TIN, required: true },
-    { name: ID_OF_REPRESENTATIVE, required: true },
-    { name: OWNERS, required: true },
-    { name: "Trading licence", required: true, hasExpiry: true },
-    { name: AML_FORM, required: true },
+/* --------------------------------- KYC --------------------------------------- */
+
+export const KYC_STATUS_LABEL: Record<string, string> = {
+  NOT_STARTED: "Not started",
+  DRAFT: "Being prepared",
+  SUBMITTED: "Waiting for compliance",
+  RETURNED: "Returned for changes",
+  APPROVED: "Approved",
+  REJECTED: "Rejected",
+};
+
+/**
+ * A suggested starting checklist, offered when GRAL has not set one up in the
+ * system yet. PROVISIONAL: the SOP names only the core documents; GRAL confirms
+ * the rest before it is saved as their checklist.
+ */
+export const SUGGESTED_KYC_REQUIREMENTS: Record<"CORPORATE" | "INDIVIDUAL", { code: string; label: string; required: boolean }[]> = {
+  CORPORATE: [
+    { code: "CERTIFICATE_OF_INCORPORATION", label: "Certificate of Incorporation", required: true },
+    { code: "TIN_CERTIFICATE", label: "TIN / VAT registration certificate", required: true },
+    { code: "REPRESENTATIVE_ID", label: "ID or passport of the company representative", required: true },
+    { code: "BENEFICIAL_OWNERS", label: "Beneficial owners list (25% or more)", required: true },
+    { code: "TRADING_LICENCE", label: "Trading licence", required: false },
+    { code: "AML_QUESTIONNAIRE", label: "Signed AML / KYC questionnaire", required: true },
   ],
-  SME: [
-    { name: "Business registration certificate", required: true },
-    { name: TIN, required: true },
-    { name: "ID or passport of the owner", required: true },
-    { name: "Trading licence", required: false, hasExpiry: true },
-  ],
-  NGO: [
-    { name: "RGB registration certificate", required: true },
-    { name: TIN, required: true },
-    { name: ID_OF_REPRESENTATIVE, required: true },
-    { name: "Board resolution naming authorised signatories", required: true },
-  ],
-  "State Enterprise": [
-    { name: "Establishment instrument (law or order)", required: true },
-    { name: TIN, required: true },
-    { name: "Authorised signatory list", required: true },
-    { name: ID_OF_REPRESENTATIVE, required: true },
-  ],
-  "Financial Institution": [
-    { name: "Certificate of Incorporation", required: true },
-    { name: "BNR operating licence", required: true, hasExpiry: true },
-    { name: TIN, required: true },
-    { name: OWNERS, required: true },
-    { name: "Authorised signatory list", required: true },
-    { name: AML_FORM, required: true },
+  INDIVIDUAL: [
+    { code: "NATIONAL_ID", label: "National ID or passport", required: true },
+    { code: "PROOF_OF_ADDRESS", label: "Proof of address", required: true },
+    { code: "TIN_CERTIFICATE", label: "TIN certificate, if registered", required: false },
   ],
 };
 
-export function checklistFor(type: ClientType): KycItem[] {
-  return KYC_CHECKLISTS[type].map((i) => ({ ...i }));
+/* ----------------------- The original 11-step journey ----------------------- */
+// The Leads screens show one journey of 11 steps per lead. Steps 1 and 2 are
+// the backend's lead; steps 3 to 11 are one of its policy tracks (the furthest
+// one, or the one picked when there are several).
+
+export type JourneyStep = { n: number; name: string; owner: string; deadline: string };
+
+export const JOURNEY_STEPS: JourneyStep[] = [
+  { n: 1, name: "Lead registration", owner: "Commercial Director · CRM Manager assigns", deadline: "Same day" },
+  { n: 2, name: "Meeting & needs assessment", owner: "Accounts Executive", deadline: "3 working days" },
+  ...TRACK_STAGES.map((s) => ({
+    n: s.n,
+    name: { 5: "Insurance programme design", 6: "Quotation request", 7: "Comparative analysis", 10: "Policy placement" }[s.n] ?? s.name,
+    owner: s.owner,
+    deadline: s.deadlineLabel,
+  })),
+];
+
+export const JOURNEY_PHASES: { name: string; steps: number[] }[] = [
+  { name: "Meet", steps: [1, 2] },
+  { name: "Assess", steps: [3, 4, 5] },
+  { name: "Quote", steps: [6, 7, 8] },
+  { name: "Close", steps: [9, 10, 11] },
+];
+
+/** The track a lead's journey shows: the open one furthest along, else the latest completed. */
+export function primaryTrack(tracks: PolicyTrack[]): PolicyTrack | undefined {
+  const rank = (t: PolicyTrack) => (t.status === "OPEN" || t.status === "ON_HOLD" ? 100 : t.status === "COMPLETED" ? 50 : 0) + t.stage;
+  return [...tracks].sort((a, b) => rank(b) - rank(a))[0];
+}
+
+/** The step being worked on (1 to 11), or null when the journey is complete. */
+export function journeyStep(l: Lead, t?: PolicyTrack): number | null {
+  if (!(l.ownerId && l.confirmed)) return 1;
+  if (!(l.respondedAt && l.assessed && l.clientId)) return 2;
+  if (!t) return 3;
+  if (t.status === "COMPLETED") return null;
+  return t.stage;
+}
+
+/** When the current step is due. */
+export function journeyDue(l: Lead, t?: PolicyTrack): string | undefined {
+  const step = journeyStep(l, t);
+  if (step === 1) return l.receivedAt;
+  if (step === 2) return !l.respondedAt ? l.responseDueAt : l.needsDueAt;
+  return t ? openMilestone(t)?.dueAt : undefined;
+}
+
+export function journeyHealth(l: Lead, t?: PolicyTrack): Health {
+  if (l.status === "CLOSED_LOST" || l.status === "CANCELLED") return "closed";
+  if (journeyStep(l, t) === null) return "done";
+  if (t && t.status !== "OPEN") return t.status === "ON_HOLD" ? "held" : "closed";
+  const due = journeyDue(l, t)?.slice(0, 10);
+  if (!due) return "on-track";
+  const left = workingDaysBetween(todayIso(), due);
+  return left < 0 ? "overdue" : left <= 1 ? "due-soon" : "on-track";
+}
+
+/** Short reference shown on screen: demo IDs as they are, backend UUIDs shortened. */
+export function leadRef(id: string) {
+  return id.length > 16 ? `LD-${id.slice(0, 8).toUpperCase()}` : id;
 }

@@ -16,7 +16,6 @@ import {
   UserPlus,
   Wallet,
 } from "lucide-react";
-import { toast } from "sonner";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader } from "@/components/gral/shell";
 import {
@@ -25,31 +24,28 @@ import {
   DistributionRow,
   FloatCard,
   NavyButton,
-  OutlineButton,
   Person,
-  QuickAction,
-  QuickActionRow,
+  StageBar,
   StatTile,
-  TextLink,
 } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
-import { formatRwf } from "@/lib/format";
+import { formatRwf, timeAgo } from "@/lib/format";
 import {
   getClaimMonthly,
   getClaimSteps,
   listApprovals,
   listClaimsSummary,
   listClients,
-  listOnboarding,
-  listRecentActivity,
+  listActivity,
+  listLeads,
   listRenewals,
 } from "@/lib/api";
 import { canDecide } from "@/lib/approvals";
-import { isComplete, onboardingHealth } from "@/lib/onboarding";
+import { leadHealth, trackHealth } from "@/lib/onboarding";
 import { useCurrentUser } from "@/lib/auth-context";
 import { canAccessPath } from "@/lib/permissions";
 import { currentMilestone, daysOverdue, daysToExpiry, renewalHealth } from "@/lib/renewals";
-import type { ActivityItem, ClaimMonth, ClaimStep, Client, ClientClaim, OnboardingCase, RenewalCase, Role } from "@/lib/types";
+import type { ActivityItem, ClaimMonth, ClaimStep, Client, ClientClaim, Lead, PolicyTrack, RenewalCase, Role } from "@/lib/types";
 
 type Tile = { icon: LucideIcon; label: string; value: string; delta?: string; tone?: "up" | "down"; href: string };
 
@@ -205,7 +201,8 @@ export function OverviewView() {
   const [monthly, setMonthly] = useState<ClaimMonth[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [renewals, setRenewals] = useState<RenewalCase[]>([]);
-  const [leads, setLeads] = useState<OnboardingCase[]>([]);
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [tracks, setTracks] = useState<PolicyTrack[]>([]);
   const [waiting, setWaiting] = useState(0);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
 
@@ -222,11 +219,21 @@ export function OverviewView() {
     else setClients([]);
     if (canRenewals) listRenewals().then(setRenewals);
     else setRenewals([]);
-    if (canLeads) listOnboarding().then(setLeads);
-    else setLeads([]);
+    if (canLeads) {
+      listLeads()
+        .then((r) => {
+          setLeads(r.leads);
+          setTracks(r.tracks);
+        })
+        .catch(() => setLeads([]));
+    } else {
+      setLeads([]);
+      setTracks([]);
+    }
     if (canApprovals) listApprovals().then((list) => setWaiting(list.filter((r) => canDecide(r, role)).length));
     else setWaiting(0);
-    listRecentActivity().then(setActivity);
+    if (canClaims || canRenewals) listActivity({ claims: canClaims, renewals: canRenewals }).then((a) => setActivity(a.slice(0, 5)));
+    else setActivity([]);
   }, [canClaims, canClients, canRenewals, canLeads, canApprovals, role]);
 
   const now = new Date();
@@ -243,11 +250,11 @@ export function OverviewView() {
   const pipelineValue = claims.reduce((s, c) => s + c.amount, 0);
   const renewalPremium = dueIn90.reduce((s, r) => s + r.premium, 0);
   const completeFiles = clients.filter((c) => c.docsFiled === c.docsTotal && !c.nonCompliant).length;
-  const openLeads = leads.filter((c) => !isComplete(c));
+  const openLeads = leads.filter((l) => l.status === "OPEN");
 
   const catalog: Record<TileKey, Tile & { needs: keyof Access }> = {
-    openClaims: { icon: ClipboardList, label: "Open Claims", value: String(claims.length), delta: "8.5%", href: "/claims", needs: "claims" },
-    slaBreached: { icon: AlertTriangle, label: "SLA Breached", value: String(breached), delta: "4.5%", tone: "down", href: "/claims", needs: "claims" },
+    openClaims: { icon: ClipboardList, label: "Open Claims", value: String(claims.length), href: "/claims", needs: "claims" },
+    slaBreached: { icon: AlertTriangle, label: "SLA Breached", value: String(breached), tone: "down", href: "/claims", needs: "claims" },
     renewals30: { icon: CalendarClock, label: "Renewals Due in 30 Days", value: String(dueIn30), href: "/renewals", needs: "renewals" },
     renewalsQuarter: { icon: CalendarClock, label: "Renewals This Quarter", value: String(dueIn90.length), href: "/renewals", needs: "renewals" },
     incompleteFiles: { icon: FileWarning, label: "Clients with Incomplete Files", value: String(incompleteFiles), href: "/clients", needs: "clients" },
@@ -258,8 +265,8 @@ export function OverviewView() {
     openLeads: { icon: UserPlus, label: "Open Leads", value: String(openLeads.length), href: "/clients/leads", needs: "leads" },
     leadsOverdue: {
       icon: AlertTriangle,
-      label: "Lead Steps Overdue",
-      value: String(openLeads.filter((c) => onboardingHealth(c) === "overdue").length),
+      label: "Onboarding Steps Overdue",
+      value: String(openLeads.filter((l) => leadHealth(l) === "overdue").length + tracks.filter((t) => trackHealth(t) === "overdue").length),
       tone: "down",
       href: "/clients/leads",
       needs: "leads",
@@ -290,15 +297,11 @@ export function OverviewView() {
     return list;
   }, [claims, renewals, clients, role]);
 
-  const seesModule = (m: ActivityItem["module"]) => (m === "Claims" ? canClaims : m === "Renewals" ? canRenewals : canClients);
-  const visibleActivity = activity.filter((a) => seesModule(a.module));
 
   const stepCounts = steps.map((s) => ({
     label: s.name === "FNOL Received" ? "FNOL" : s.name === "Documentation" ? "Docs" : s.name,
     count: claims.filter((c) => c.step === s.n).length,
   }));
-  const stepTotal = stepCounts.reduce((s, x) => s + x.count, 0) || 1;
-  const shades = ["bg-primary", "bg-sky", "bg-sky/70", "bg-sky/50", "bg-pale", "bg-secondary", "bg-background"];
 
   const nothingToShow = !canClaims && !canRenewals && !canClients && !canLeads && !canApprovals;
 
@@ -369,26 +372,40 @@ export function OverviewView() {
           {canClaims ? (
             <FloatCard className="p-4 sm:p-5" delay={180}>
               <h2 className="text-base font-semibold tracking-tight">Claims Pipeline</h2>
-              <div className="mt-4 overflow-x-auto pb-1">
-                <div className="flex min-w-[520px] gap-1">
-                  {stepCounts.map((s, i) => (
-                    <button
-                      key={s.label}
-                      type="button"
-                      onClick={() => router.push("/claims")}
-                      className="min-w-0 flex-1 text-left"
-                      style={{ flexGrow: Math.max(s.count, 0.6) / stepTotal + 0.4 }}
-                      title={`${s.label}: ${s.count}`}
-                    >
-                      <span className={cn("block h-2.5 rounded-full", shades[i % shades.length])} />
-                      <span className="mt-2 block truncate text-[10px] text-muted-foreground">{s.label}</span>
-                      <span className="block text-xs font-semibold">{s.count}</span>
-                    </button>
-                  ))}
-                </div>
+              <div className="mt-4">
+                <StageBar stages={stepCounts} onSelect={() => router.push("/claims")} />
               </div>
-              <p className="mt-3 text-[11px] text-muted-foreground">Total value in pipeline: {formatRwf(pipelineValue)}</p>
+              <p className="mt-4 text-[11px] text-muted-foreground">Total value in pipeline: {formatRwf(pipelineValue)}</p>
             </FloatCard>
+          ) : null}
+
+          {canClaims ? (
+            <ChartCard
+              delay={280}
+              title="Claims per Month"
+              legend={[
+                { label: "Amount (RWF m)", tone: "sky" },
+                { label: "Number of claims", tone: "primary" },
+              ]}
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={monthly} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                  <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" vertical={false} />
+                  <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
+                  <YAxis yAxisId="left" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    tick={{ fontSize: 10, fill: "var(--subtle)" }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", fontSize: 11 }} />
+                  <Line yAxisId="left" type="monotone" dataKey="amount" stroke="var(--sky)" strokeWidth={2} dot={false} name="Amount (RWF m)" />
+                  <Line yAxisId="right" type="monotone" dataKey="count" stroke="var(--primary)" strokeWidth={2} dot={false} name="Number of claims" />
+                </LineChart>
+              </ResponsiveContainer>
+            </ChartCard>
           ) : null}
 
           {canRenewals ? (
@@ -430,33 +447,6 @@ export function OverviewView() {
         </div>
 
         <div className="min-w-0 space-y-4">
-          {canClaims || canClients ? (
-            <QuickAction delay={160}>
-              {canClaims ? (
-                <QuickActionRow
-                  icon={AlertTriangle}
-                  text="3 unassigned claims"
-                  action={
-                    <OutlineButton onClick={() => toast.success("Assignment sheet opened for 3 claims.")}>Assign</OutlineButton>
-                  }
-                />
-              ) : null}
-              {canClients ? (
-                <QuickActionRow
-                  icon={CheckCircle2}
-                  tone="success"
-                  tinted
-                  text={`${clients.length - kycComplete} clients missing KYC documents`}
-                  action={
-                    <NavyButton onClick={() => toast.success(`KYC requests sent to ${clients.length - kycComplete} clients.`)}>
-                      Send Requests
-                    </NavyButton>
-                  }
-                />
-              ) : null}
-            </QuickAction>
-          ) : null}
-
           {canClients ? (
             <FloatCard className="p-5" delay={220}>
               <h2 className="text-base font-semibold tracking-tight">Client File Status</h2>
@@ -470,52 +460,27 @@ export function OverviewView() {
             </FloatCard>
           ) : null}
 
-          {canClaims ? (
-            <ChartCard
-              delay={280}
-              height={200}
-              title="Claims & Amount per Month"
-              legend={[
-                { label: "Claim amount (RWF m)", tone: "sky" },
-                { label: "Count of claims", tone: "primary" },
-              ]}
-            >
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={monthly} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-                  <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" vertical={false} />
-                  <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
-                  <YAxis yAxisId="left" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
-                    tick={{ fontSize: 10, fill: "var(--subtle)" }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", fontSize: 11 }} />
-                  <Line yAxisId="left" type="monotone" dataKey="amount" stroke="var(--sky)" strokeWidth={2} dot={false} name="Claim amount (RWF m)" />
-                  <Line yAxisId="right" type="monotone" dataKey="count" stroke="var(--primary)" strokeWidth={2} dot={false} name="Count of claims" />
-                </LineChart>
-              </ResponsiveContainer>
-            </ChartCard>
-          ) : null}
 
-          {visibleActivity.length > 0 ? (
+          {!nothingToShow ? (
             <FloatCard className="p-5" delay={340}>
               <h2 className="text-base font-semibold tracking-tight">Recent Activity</h2>
-              <div className="mt-3 space-y-3">
-                {visibleActivity.map((a) => (
-                  <div key={a.what} className="min-w-0">
+              {activity.length === 0 ? <p className="mt-4 text-xs text-muted-foreground">Nothing recorded yet.</p> : null}
+              <div className="mt-4 space-y-4">
+                {activity.map((a, i) => (
+                  <Link key={`${a.at}-${i}`} href={a.href} className="block min-w-0 hover:opacity-80">
                     <Person name={a.who} />
-                    <p className="mt-1 text-[11px] text-muted-foreground">
-                      {a.what} · {a.when}
+                    <p className="mt-1.5 text-[11px] text-muted-foreground">
+                      {a.what} · {timeAgo(a.at)}
                     </p>
-                  </div>
+                  </Link>
                 ))}
               </div>
-              <div className="mt-3">
-                <TextLink onClick={() => toast.success("Full audit log opened.")}>View all</TextLink>
-              </div>
+              <Link
+                href="/activity"
+                className="mt-4 inline-block text-xs font-semibold text-primary underline underline-offset-4 hover:opacity-70"
+              >
+                View all
+              </Link>
             </FloatCard>
           ) : null}
         </div>
