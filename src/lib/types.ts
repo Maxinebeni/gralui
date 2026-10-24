@@ -553,6 +553,19 @@ export type ManagedUser = {
   updatedAt: string;
 };
 
+/** A signed-in browser session (GET /api/v1/admin/sessions). Cookie IDs are never sent. */
+export type ManagedSession = {
+  /** Administrative reference used to end the session; not the browser cookie. */
+  sessionReference: string;
+  userId: string;
+  email: string;
+  fullName: string;
+  /** May be empty for sessions that started before session monitoring. */
+  authenticatedAt?: string;
+  lastAccessedAt?: string;
+  expiresAt?: string;
+};
+
 export type ManagedRole = {
   id: string;
   code: string;

@@ -92,6 +92,7 @@ import type {
   EvidenceRef,
   InsurerSummary,
   ManagedRole,
+  ManagedSession,
   OnboardingCase,
   OnboardingStepCode,
   ManagedUser,
@@ -2259,6 +2260,62 @@ function demoSaveUser(updated: ManagedUser): ManagedUser {
 
 function demoActiveAdmins() {
   return DEMO.users.filter((u) => u.status === "ACTIVE" && u.roles.includes("ADMINISTRATOR")).length;
+}
+
+/* Sessions: who is signed in (Christian, admin session management) */
+
+/** Demo sessions for the active sample accounts, at different times of activity. */
+const DEMO_SESSIONS: ManagedSession[] = (() => {
+  const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const active = USERS_DATA.filter((u) => u.status === "ACTIVE");
+  const activity = [[95, 1], [240, 4], [30, 12], [480, 45], [60, 3], [20, 26], [300, 90]];
+  return active.slice(0, activity.length).flatMap((u, i) => {
+    const [since, last] = activity[i]!;
+    const session = (n: number, s: number, l: number): ManagedSession => ({
+      sessionReference: `${u.id}-session-${n}`,
+      userId: u.id,
+      email: u.email,
+      fullName: u.fullName,
+      authenticatedAt: ago(s),
+      lastAccessedAt: ago(l),
+      expiresAt: new Date(Date.now() - l * 60_000 + 30 * 60_000).toISOString(),
+    });
+    // One person signed in on two devices.
+    return i === 1 ? [session(1, since, last), session(2, 35, 7)] : [session(1, since, last)];
+  });
+})();
+
+export async function listActiveSessions(): Promise<ManagedSession[]> {
+  if (MOCK_AUTH) return [...DEMO_SESSIONS];
+  return allPages<ManagedSession>("/api/v1/admin/sessions");
+}
+
+/** Signs one session out. The backend refuses ending your own sessions here. */
+export async function endSession(s: ManagedSession, reason: string, selfId?: string): Promise<void> {
+  requireReason(reason);
+  if (s.userId === selfId) throw new Error("You can't end your own session here. Use Sign out instead.");
+  if (MOCK_AUTH) {
+    const i = DEMO_SESSIONS.findIndex((x) => x.sessionReference === s.sessionReference);
+    if (i < 0) throw new Error("This session has already ended.");
+    DEMO_SESSIONS.splice(i, 1);
+    return;
+  }
+  const res = await apiFetch(`/api/v1/admin/sessions/${s.sessionReference}/revoke`, { method: "POST", body: JSON.stringify({ reason: reason.trim() }) });
+  if (res.status === 404) throw new Error("This session has already ended.");
+  if (!res.ok) throw new Error(await adminError(res, "Could not end the session."));
+}
+
+/** Signs a person out everywhere. Returns how many sessions were ended. */
+export async function endAllSessionsFor(userId: string, reason: string, selfId?: string): Promise<number> {
+  requireReason(reason);
+  if (userId === selfId) throw new Error("You can't end your own sessions here. Use Sign out instead.");
+  if (MOCK_AUTH) {
+    const before = DEMO_SESSIONS.length;
+    for (let i = DEMO_SESSIONS.length - 1; i >= 0; i--) if (DEMO_SESSIONS[i]!.userId === userId) DEMO_SESSIONS.splice(i, 1);
+    return before - DEMO_SESSIONS.length;
+  }
+  const result = await adminSend<{ revokedSessions: number }>(`/api/v1/admin/users/${userId}/sessions/revoke`, { reason: reason.trim() }, "Could not end the sessions.");
+  return result?.revokedSessions ?? 0;
 }
 
 /* Users */

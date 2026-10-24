@@ -27,7 +27,7 @@ export type NavItem = {
  * table, dev branch). Add "CLAIM" and "RENEWAL" when the backend adds
  * CLAIM_READ and RENEWAL_READ — then those menus follow the backend too.
  */
-const BACKEND_MODULES = ["CLIENT", "USER", "ROLE"];
+const BACKEND_MODULES = ["CLIENT", "USER", "ROLE", "SESSION"];
 
 const CLAIM_ROLES: readonly Role[] = [
   "MD",
@@ -89,6 +89,7 @@ export const NAV_ITEMS: NavItem[] = [
   // permissions; in demo mode only the MD sees them.
   { label: "Users", href: "/admin", permission: "USER_READ", roles: ["MD"], parent: ACCOUNT_MENU },
   { label: "Roles & Permissions", href: "/admin/roles", permission: "ROLE_READ", roles: ["MD"], parent: ACCOUNT_MENU },
+  { label: "Active Sessions", href: "/admin/sessions", permission: "SESSION_READ", roles: ["MD"], parent: ACCOUNT_MENU },
 ];
 
 /** Pages without a menu item of their own, and the menu item that controls them. */
@@ -271,6 +272,7 @@ export function adminPermissions(user: SessionUser) {
     canDeactivate: has("USER_DEACTIVATE"),
     canCreateRole: has("ROLE_CREATE"),
     canUpdateRole: has("ROLE_UPDATE"),
+    canEndSessions: has("SESSION_REVOKE"),
   };
 }
 
