@@ -124,10 +124,10 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
             </select>
           </Field>
           <Field id="leadName" label={v.type === "INDIVIDUAL" ? "Full name" : "Company name"} error={errors.name}>
-            <input id="leadName" value={v.name} onChange={(e) => set("name", e.target.value)} placeholder={v.type === "INDIVIDUAL" ? "e.g. Aline Mukeshimana" : "e.g. Kivu Lakeside Hotels Ltd"} className={inputClass(errors.name)} {...describedBy("leadName", errors.name)} />
+            <input id="leadName" value={v.name} onChange={(e) => set("name", e.target.value)} className={inputClass(errors.name)} {...describedBy("leadName", errors.name)} />
           </Field>
           <Field id="leadIndustry" label="Industry" error={errors.industry}>
-            <input id="leadIndustry" value={v.industry} onChange={(e) => set("industry", e.target.value)} placeholder="e.g. Hospitality" className={inputClass(errors.industry)} {...describedBy("leadIndustry", errors.industry)} />
+            <input id="leadIndustry" value={v.industry} onChange={(e) => set("industry", e.target.value)} className={inputClass(errors.industry)} {...describedBy("leadIndustry", errors.industry)} />
           </Field>
           <Field id="leadReceived" label="Enquiry received on" error={errors.receivedAt}>
             <input id="leadReceived" type="date" max={todayIso()} value={v.receivedAt} onChange={(e) => set("receivedAt", e.target.value)} className={inputClass(errors.receivedAt)} {...describedBy("leadReceived", errors.receivedAt)} />
@@ -158,7 +158,7 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
             </select>
           </Field>
           <Field id="leadSourceRef" label="Referred by (optional)">
-            <input id="leadSourceRef" value={v.sourceReference} onChange={(e) => set("sourceReference", e.target.value)} placeholder="e.g. Kigali Steel Industries" className={inputClass()} />
+            <input id="leadSourceRef" value={v.sourceReference} onChange={(e) => set("sourceReference", e.target.value)} className={inputClass()} />
           </Field>
           {canAssignLead ? (
             <Field id="leadOwner" label="Accounts Executive (optional now)" wide>

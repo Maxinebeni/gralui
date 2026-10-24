@@ -308,7 +308,7 @@ function ActionFormFor({
     case "SURVEY_NOT_APPLICABLE":
       return (
         <ActionForm title={title} submitLabel={title} success="Recorded. The programme is next." onCancel={onCancel} onSubmit={() => run({ action, reason })}>
-          <TextInput id="sna-reason" label="Reason" value={reason} onChange={setReason} wide placeholder="e.g. Private home and two cars; no site survey needed" />
+          <TextInput id="sna-reason" label="Reason" value={reason} onChange={setReason} wide />
         </ActionForm>
       );
     case "PROGRAM":
@@ -370,7 +370,7 @@ function SurveyForm({ title, run, destination, onCancel }: { title: string; run:
       }}
     >
       <SelectInput id="sv-grade" label="Risk grade" value={grade} onChange={setGrade} placeholder="Select" options={["LOW", "MEDIUM", "HIGH"].map((g) => ({ value: g, label: g.charAt(0) + g.slice(1).toLowerCase() }))} />
-      <TextInput id="sv-findings" label="Findings" value={findings} onChange={setFindings} multiline wide placeholder="e.g. Sprinklers working; generator room needs a second extinguisher" />
+      <TextInput id="sv-findings" label="Findings" value={findings} onChange={setFindings} multiline wide />
       <EvidenceField label="Risk survey report" destination={destination} value={evidence} onChange={setEvidence} dateLabel="Surveyed on" />
     </ActionForm>
   );
@@ -390,7 +390,7 @@ function ProgramForm({ title, run, destination, onCancel }: { title: string; run
         return run({ action: "PROGRAM", fields: { terms: terms.trim() }, evidence: evidence ? { main: evidence } : undefined });
       }}
     >
-      <TextInput id="pg-terms" label="Recommended covers" value={terms} onChange={setTerms} multiline wide placeholder="e.g. Property all risks RWF 4bn and public liability RWF 500m" />
+      <TextInput id="pg-terms" label="Recommended covers" value={terms} onChange={setTerms} multiline wide />
       <EvidenceField label="Programme signed by the Technical Director" destination={destination} value={evidence} onChange={setEvidence} dateLabel="Signed on" />
     </ActionForm>
   );
@@ -447,7 +447,7 @@ function InsurerResponseForm({ title, track: t, insurerName, run, onCancel }: { 
     >
       <SelectInput id="ir-ins" label="Insurer" value={insurerId} onChange={setInsurerId} options={waiting.map((i) => ({ value: i.insurerId, label: `${insurerName(i.insurerId)} (due ${dateOf(i.responseDue)})` }))} />
       <SelectInput id="ir-out" label="Outcome" value={outcome} onChange={setOutcome} options={[{ value: "DECLINED", label: "Declined to quote" }, { value: "NO_RESPONSE", label: "No reply by the due date" }]} />
-      <TextInput id="ir-detail" label="Details" value={detail} onChange={setDetail} wide placeholder="e.g. Declined: does not write bankers bond" />
+      <TextInput id="ir-detail" label="Details" value={detail} onChange={setDetail} wide />
     </ActionForm>
   );
 }
@@ -469,8 +469,8 @@ function TermsFields({ value, onChange, options, prefix }: { value: TermsDraft; 
         <Label htmlFor={`${prefix}-net`}>Net premium (RWF)</Label>
         <AmountInput id={`${prefix}-net`} value={value.netPremium} onChange={set("netPremium")} className={inputClass()} />
       </div>
-      <TextInput id={`${prefix}-rate`} label="Commission rate (%)" value={value.commissionRate} onChange={set("commissionRate")} placeholder="e.g. 15" />
-      <TextInput id={`${prefix}-sums`} label="Sums insured" value={value.sumsInsured} onChange={set("sumsInsured")} placeholder="e.g. Buildings RWF 3bn, contents RWF 1bn" />
+      <TextInput id={`${prefix}-rate`} label="Commission rate (%)" value={value.commissionRate} onChange={set("commissionRate")} />
+      <TextInput id={`${prefix}-sums`} label="Sums insured" value={value.sumsInsured} onChange={set("sumsInsured")} />
       <TextInput id={`${prefix}-limits`} label="Limits" value={value.limits} onChange={set("limits")} />
       <TextInput id={`${prefix}-ded`} label="Deductibles" value={value.deductibles} onChange={set("deductibles")} />
       <TextInput id={`${prefix}-excl`} label="Exclusions" value={value.exclusions} onChange={set("exclusions")} wide />
@@ -618,7 +618,7 @@ function ScheduleForm({ title, track: t, options, run, leadName, destination, on
     >
       <TextInput id="sc-num" label="Policy number on the schedule" value={policyNumber} onChange={setPolicyNumber} wide />
       <TermsFields value={draft} onChange={setDraft} options={options} prefix="sc" />
-      <TextInput id="sc-disc" label="Differences from the accepted terms, one per line (leave empty if none)" value={discrepancies} onChange={setDiscrepancies} multiline wide />
+      <TextInput id="sc-disc" label="Differences from accepted terms (optional)" value={discrepancies} onChange={setDiscrepancies} multiline wide />
       <EvidenceField label="The insurer's policy schedule" destination={destination} value={evidence} onChange={setEvidence} dateLabel="Received on" />
     </ActionForm>
   );

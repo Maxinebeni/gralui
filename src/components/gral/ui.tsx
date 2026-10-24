@@ -297,9 +297,12 @@ export function SegmentedBar({ segments }: { segments: { label: string; value: n
 export function StageBar({
   stages,
   onSelect,
+  wideLabels = false,
 }: {
   stages: { label: string; count: number }[];
   onSelect?: (label: string) => void;
+  /** Room for longer stage names. */
+  wideLabels?: boolean;
 }) {
   const max = Math.max(...stages.map((s) => s.count), 1);
   return (
@@ -310,7 +313,10 @@ export function StageBar({
             type="button"
             disabled={!onSelect}
             onClick={() => onSelect?.(s.label)}
-            className="grid w-full grid-cols-[minmax(0,7.5rem)_minmax(0,1fr)_2rem] items-center gap-3 text-left disabled:cursor-default"
+            className={cn(
+              "grid w-full items-center gap-3 text-left disabled:cursor-default",
+              wideLabels ? "grid-cols-[minmax(0,11rem)_minmax(0,1fr)_2rem]" : "grid-cols-[minmax(0,7.5rem)_minmax(0,1fr)_2rem]",
+            )}
             title={`${s.label}: ${s.count}`}
           >
             <span className="truncate text-xs text-muted-foreground">{s.label}</span>

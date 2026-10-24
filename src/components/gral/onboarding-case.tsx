@@ -18,8 +18,10 @@ import {
   journeyDue,
   journeyHealth,
   journeyStep,
+  leadAge,
   leadReady,
   leadRef,
+  trackHealth,
 } from "@/lib/onboarding";
 import { onboardingPermissions } from "@/lib/permissions";
 import { todayIso } from "@/lib/renewals";
@@ -85,7 +87,11 @@ export function OnboardingCaseView({
       <Link href="/clients/leads" className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary">
         <ArrowLeft className="size-3.5" /> Leads
       </Link>
-      <PageHeader title={l.name} subtitle={`${leadRef(l.id)} · ${l.type === "INDIVIDUAL" ? "Individual" : "Company"} · ${l.industry}`} />
+      <PageHeader
+        title={l.name}
+        subtitle={`${leadRef(l.id)} · ${l.type === "INDIVIDUAL" ? "Individual" : "Company"} · ${l.industry}`}
+        action={perms.canCloseLead && l.status === "OPEN" ? <CloseLead lead={l} onChanged={onChanged} /> : null}
+      />
 
       <FloatCard className="mt-5 p-4 sm:p-5" delay={60}>
         {tracks.length > 1 || (t && canAddTrack) ? (
@@ -188,12 +194,40 @@ export function OnboardingCaseView({
               <Detail label="Industry" value={l.industry} />
               <Detail label="Source" value={[l.source, l.sourceReference].filter(Boolean).join(": ")} />
               <Detail label="Received" value={dateOf(l.receivedAt)} />
+              {l.status === "OPEN" ? <Detail label="Working days" value={String(leadAge(l))} /> : null}
               {l.clientName ? <Detail label="Client" value={l.clientName} /> : null}
             </dl>
           </FloatCard>
 
           {t ? <OtherActions track={t} options={options} insurerName={insurerName} run={run} /> : null}
-          {perms.canCloseLead && l.status === "OPEN" ? <CloseLead lead={l} onChanged={onChanged} /> : null}
+          {tracks.length ? (
+            <FloatCard className="p-5" delay={180}>
+              <h2 className="text-base font-semibold tracking-tight">Policies</h2>
+              <ul className="mt-3 divide-y divide-border">
+                {tracks.map((x) => {
+                  const done = x.status === "COMPLETED";
+                  const closed = x.status === "CLOSED_LOST" || x.status === "CANCELLED";
+                  return (
+                    <li key={x.id}>
+                      <button
+                        type="button"
+                        onClick={() => onSelectTrack(x.id)}
+                        className={cn("flex w-full items-center justify-between gap-3 py-2.5 text-left", x.id === t?.id && "font-medium")}
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-xs">{x.productName ?? "Policy"}</span>
+                          <span className="block text-[11px] text-muted-foreground">
+                            {done ? "Placed" : closed ? "Closed" : `${x.stage}. ${JOURNEY_STEPS[x.stage - 1]?.name ?? ""}`}
+                          </span>
+                        </span>
+                        {done ? <Chip tone="success">Done</Chip> : closed ? <Chip>Closed</Chip> : <HealthChip health={trackHealth(x)} />}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </FloatCard>
+          ) : null}
 
           <FloatCard className="p-5" delay={200}>
             <h2 className="text-base font-semibold tracking-tight">History</h2>
@@ -367,7 +401,6 @@ function StepDetail({
         </div>
         <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-3">
           <Fact label="Owner" value={ownerName} />
-          <Fact label="SOP deadline" value={step.deadline} />
           {due ? <Fact label="Due" value={dateOf(due)} danger={state === "late"} /> : null}
         </dl>
       </div>
