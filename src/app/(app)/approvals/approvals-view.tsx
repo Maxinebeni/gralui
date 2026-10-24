@@ -81,7 +81,6 @@ export function ApprovalsView() {
     <>
       <PageHeader
         title="Approvals"
-        subtitle="Requests waiting for a decision, and the ones you sent."
         extraPills={
           <FilterMenu
             label="Requested"

@@ -2,11 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Check, Circle, KeyRound, LinkIcon } from "lucide-react";
+import { ArrowLeft, Check, KeyRound } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { InvalidLinkError, acceptInvitation, confirmPasswordReset } from "@/lib/api";
-import { NavyButton } from "./ui";
+import { Dot, NavyButton } from "./ui";
 
 // Backend rule (IdentityRecoveryService): 15+ characters, at most 72 bytes,
 // used exactly as typed (no trimming).
@@ -111,7 +111,7 @@ export function SetPasswordForm({ mode }: { mode: "reset" | "invitation" }) {
         ) : token === null || linkError ? (
           <div className="mt-7 text-center">
             <span className="mx-auto flex size-12 items-center justify-center rounded-full bg-danger-soft text-danger">
-              <LinkIcon className="size-5" />
+              
             </span>
             <h1 className="mt-4 text-lg font-semibold tracking-tight">This link isn&apos;t valid</h1>
             <p className="mt-2 text-sm text-muted-foreground">
@@ -190,7 +190,7 @@ export function SetPasswordForm({ mode }: { mode: "reset" | "invitation" }) {
 function Rule({ ok, children }: { ok: boolean; children: React.ReactNode }) {
   return (
     <li className={cn("flex items-center gap-1.5", ok ? "text-success" : "text-muted-foreground")}>
-      {ok ? <Check className="size-3.5" /> : <Circle className="size-3.5" />}
+      {ok ? <Check className="size-3.5" /> : <Dot tone="subtle" />}
       {children}
     </li>
   );

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, ClipboardList, Gavel, Layers, Plus, Timer } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ClipboardList, Gavel, Plus, Timer } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader } from "@/components/gral/shell";
 import { FilterMenu } from "@/components/gral/filter-menu";
@@ -230,7 +230,7 @@ export function ClaimsView() {
               <SegmentedBar segments={stepSegments} />
             </div>
             <p className="mt-3 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <Layers className="size-3.5 text-sky" /> GRAL 6-step claims process, plus Claims Committee disputes
+              GRAL 6-step claims process, plus Claims Committee disputes
             </p>
           </FloatCard>
 

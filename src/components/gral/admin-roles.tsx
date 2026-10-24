@@ -4,7 +4,7 @@
 // role. Permissions are grouped by area so the checklist reads like the app.
 
 import { useState } from "react";
-import { Lock, X } from "lucide-react";
+import { X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { createRole, updateRole } from "@/lib/api";
@@ -147,7 +147,7 @@ export function RolePanel({
             <Chip tone="sky">{CATEGORY_LABEL[role.category]}</Chip>
             {isProtected ? (
               <Chip tone="neutral">
-                <Lock className="mr-1 size-3" /> Built-in
+                Built-in
               </Chip>
             ) : null}
           </div>

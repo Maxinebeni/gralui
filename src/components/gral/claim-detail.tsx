@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AlertTriangle, Check, Clock, FileText, Flag, Gavel, Upload, X } from "lucide-react";
+import { Check, FileText, Flag, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
@@ -45,7 +45,7 @@ import { AmountInput } from "./amount-input";
 import { ClaimSlaChip } from "./claim-list";
 import { DocumentPanel, FilePickButton } from "./documents";
 import { ReviewDialog } from "./review-dialog";
-import { Chip, NavyButton, OutlineButton, Person, PriorityPill, SegmentedTabs } from "./ui";
+import { Chip, Dot, NavyButton, OutlineButton, Person, PriorityPill, SegmentedTabs } from "./ui";
 
 const TABS = ["Documents", "Follow-ups", "Activity Log", "Internal Notes"] as const;
 type Tab = (typeof TABS)[number];
@@ -262,7 +262,7 @@ function CurrentStep({
     >
       {blocker ? (
         <p className="flex items-center gap-1.5 font-medium text-warning">
-          <AlertTriangle className="size-3.5" /> {blocker}
+          {blocker}
         </p>
       ) : null}
       {claim.step === "REGISTER" ? (
@@ -493,7 +493,7 @@ function SettlementStep({
         return (
           <div key={s} className="flex items-center justify-between gap-3 rounded-xl bg-card px-3 py-2.5">
             <span className="flex items-center gap-2 font-medium">
-              {signed ? <Check className="size-4 text-success" /> : <Clock className="size-4 text-warning" />}
+              {signed ? <Check className="size-4 text-success" /> : <Dot tone="warning" />}
               {s === "Board" ? "Board (informed by MD)" : s}
             </span>
             {signed ? (
@@ -528,7 +528,7 @@ function DisputeStep({ claim, canDecide, userName, run }: { claim: Claim; canDec
   return (
     <Box tone="warning" title="Disputed · Claims Committee" right={<span className="text-[11px] text-muted-foreground">Decide by {dueLabel(claim)}</span>}>
       <p className="flex items-start gap-1.5">
-        <Gavel className="mt-0.5 size-3.5 shrink-0 text-warning" />
+        
         <span>
           {claim.insurer} rejected the claim on {formatDate(d.raisedAt)}: {d.reason}
         </span>
@@ -613,7 +613,7 @@ function DocumentsTab({ claim, canUpdate, userName, run }: { claim: Claim; canUp
         <div key={d.name} className="rounded-xl border border-border px-3 py-2.5">
           <div className="flex items-center justify-between gap-3">
             <span className="flex min-w-0 items-center gap-2 text-xs">
-              {d.filedAt ? <Check className="size-4 shrink-0 text-success" /> : <Clock className="size-4 shrink-0 text-danger" />}
+              {d.filedAt ? <Check className="size-4 shrink-0 text-success" /> : <Dot tone="danger" />}
               <span className="min-w-0">
                 {d.name}
                 {!d.required ? <span className="text-subtle"> (optional)</span> : null}

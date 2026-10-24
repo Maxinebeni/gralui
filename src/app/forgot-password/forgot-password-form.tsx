@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, MailCheck } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { NavyButton } from "@/components/gral/ui";
 import { requestPasswordReset } from "@/lib/api";
@@ -45,7 +45,7 @@ export function ForgotPasswordForm() {
         {sentTo ? (
           <div className="mt-7 text-center">
             <span className="mx-auto flex size-12 items-center justify-center rounded-full bg-success-soft text-success">
-              <MailCheck className="size-5" />
+              
             </span>
             <h1 className="mt-4 text-lg font-semibold tracking-tight">Check your email</h1>
             <p className="mt-2 text-sm text-muted-foreground">

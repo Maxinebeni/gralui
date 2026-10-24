@@ -1,4 +1,4 @@
-import { ChevronDown, TrendingDown, TrendingUp, type LucideIcon } from "lucide-react";
+import { ChevronDown, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/format";
@@ -45,14 +45,14 @@ export function CardHeader({
 }
 
 export function StatTile({
-  icon: Icon,
   label,
   value,
   delta,
   tone = "up",
   delay = 0,
 }: {
-  icon: LucideIcon;
+  /** Kept for existing callers; tiles no longer show an icon. */
+  icon?: LucideIcon;
   label: string;
   value: string;
   delta?: string;
@@ -61,12 +61,7 @@ export function StatTile({
 }) {
   return (
     <FloatCard className="px-4 py-4" delay={delay}>
-      <div className="flex items-center gap-2">
-        <span className="flex size-6 items-center justify-center rounded-md bg-pale text-primary">
-          <Icon className="size-3.5" />
-        </span>
-        <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      </div>
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
       <div className="mt-3 flex items-end justify-between gap-2">
         <span className="min-w-0 break-words text-2xl leading-none font-semibold tracking-tight sm:text-3xl">
           {value}
@@ -74,11 +69,10 @@ export function StatTile({
         {delta ? (
           <span
             className={cn(
-              "flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
+              "rounded-full px-2 py-0.5 text-[11px] font-medium",
               tone === "up" ? "bg-success-soft text-success" : "bg-danger-soft text-danger",
             )}
           >
-            {tone === "up" ? <TrendingUp className="size-3" /> : <TrendingDown className="size-3" />}
             {delta}
           </span>
         ) : null}
@@ -342,13 +336,13 @@ export function QuickAction({ children, delay = 0 }: { children: ReactNode; dela
 }
 
 export function QuickActionRow({
-  icon: Icon,
   tone = "danger",
   text,
   action,
   tinted,
 }: {
-  icon: LucideIcon;
+  /** Kept for existing callers; the row shows a coloured dot instead. */
+  icon?: LucideIcon;
   tone?: "danger" | "success";
   text: string;
   action: ReactNode;
@@ -362,7 +356,7 @@ export function QuickActionRow({
       )}
     >
       <div className="flex min-w-0 items-center gap-2.5">
-        <Icon className={cn("size-4 shrink-0", tone === "danger" ? "text-danger" : "text-success")} />
+        <Dot tone={tone === "danger" ? "danger" : "success"} />
         <span className="min-w-0 text-xs font-medium text-foreground">{text}</span>
       </div>
       {action}
@@ -379,4 +373,22 @@ export function NotRecorded() {
 export function Recorded({ value }: { value: ReactNode }) {
   if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) return <NotRecorded />;
   return <>{value}</>;
+}
+
+/** A small coloured dot that shows a state by colour, in place of an icon. Sized to line up with text and ticks. */
+export function Dot({ tone = "subtle", className }: { tone?: "danger" | "warning" | "sky" | "success" | "subtle"; className?: string }) {
+  return (
+    <span aria-hidden className={cn("flex size-4 shrink-0 items-center justify-center", className)}>
+      <span
+        className={cn(
+          "size-2.5 rounded-full",
+          tone === "danger" && "bg-danger",
+          tone === "warning" && "bg-warning",
+          tone === "sky" && "bg-sky",
+          tone === "success" && "bg-success",
+          tone === "subtle" && "bg-border",
+        )}
+      />
+    </span>
+  );
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, BadgeCheck, Building2, FileWarning, Plus, Users } from "lucide-react";
+import { AlertTriangle, BadgeCheck, FileWarning, Plus, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader } from "@/components/gral/shell";
@@ -133,7 +133,7 @@ export function ClientsView() {
               <SegmentedBar segments={typeSegments} />
             </div>
             <p className="mt-3 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <Building2 className="size-3.5 text-sky" /> Portfolio mix across the book
+              Portfolio mix across the book
             </p>
           </FloatCard>
         </div>

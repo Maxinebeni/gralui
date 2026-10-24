@@ -5,7 +5,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Check, Circle, Clock, CornerUpLeft, FileText, Paperclip, X, XCircle } from "lucide-react";
+import { Check, FileText, Paperclip, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
@@ -17,7 +17,7 @@ import { canAccessPath } from "@/lib/permissions";
 import { formatDate } from "@/lib/renewals";
 import type { ApprovalDecision, ApprovalRequest, ApprovalStep } from "@/lib/types";
 import { FilePickButton } from "./documents";
-import { Chip, NavyButton, SegmentedTabs } from "./ui";
+import { Chip, Dot, NavyButton, SegmentedTabs } from "./ui";
 
 const INPUT =
   "w-full rounded-xl border border-input bg-card px-3 py-2 text-xs outline-none focus:border-sky focus:ring-2 focus:ring-sky/30";
@@ -167,10 +167,10 @@ function StepRow({ step: s }: { step: ApprovalStep }) {
   const icon = {
     APPROVED: <Check className="size-4 text-success" />,
     INFORMED: <Check className="size-4 text-success" />,
-    PENDING: <Clock className="size-4 text-warning" />,
-    REJECTED: <XCircle className="size-4 text-danger" />,
-    RETURNED: <CornerUpLeft className="size-4 text-warning" />,
-    WAITING: <Circle className="size-4 text-subtle" />,
+    PENDING: <Dot tone="warning" />,
+    REJECTED: <Dot tone="danger" />,
+    RETURNED: <Dot tone="warning" />,
+    WAITING: <Dot tone="subtle" />,
   }[s.status];
   const label = {
     APPROVED: "Approved",

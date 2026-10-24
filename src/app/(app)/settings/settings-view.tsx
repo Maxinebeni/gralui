@@ -5,7 +5,7 @@
 // and help. Admin tools stay in the name menu.
 
 import { useState } from "react";
-import { HelpCircle, KeyRound, UserRound } from "lucide-react";
+
 import { toast } from "sonner";
 import { PageHeader } from "@/components/gral/shell";
 import { Chip, FloatCard, NavyButton } from "@/components/gral/ui";
@@ -57,7 +57,7 @@ export function SettingsView() {
       <div className="mt-5 grid items-start gap-4 xl:grid-cols-2">
         <FloatCard className="p-5 sm:p-6">
           <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
-            <UserRound className="size-4 text-primary" /> My account
+            My account
           </h2>
           <div className="mt-4 flex items-center gap-4">
             <span className="flex size-14 shrink-0 items-center justify-center rounded-full bg-primary text-lg font-semibold text-primary-foreground">
@@ -104,7 +104,7 @@ export function SettingsView() {
         <div className="space-y-4">
           <FloatCard className="p-5 sm:p-6">
             <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
-              <KeyRound className="size-4 text-primary" /> Password
+              Password
             </h2>
             <p className="mt-2 text-sm text-muted-foreground">
               To change your password, we email you a secure link. Open it and choose a new password.
@@ -123,7 +123,7 @@ export function SettingsView() {
 
           <FloatCard className="p-5 sm:p-6">
             <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
-              <HelpCircle className="size-4 text-primary" /> Help
+              Help
             </h2>
             <dl className="mt-3 divide-y divide-border text-sm">
               <div className="flex items-center justify-between gap-3 py-3">

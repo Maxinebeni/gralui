@@ -90,7 +90,6 @@ export function LeadsView() {
     <>
       <PageHeader
         title="Leads"
-        subtitle="Lead to welcome letter in 10 to 15 working days. No quotation before KYC approval."
         action={
           canRegisterLead ? (
             <NavyButton className="px-4 py-2 text-sm" onClick={() => setNewOpen(true)}>

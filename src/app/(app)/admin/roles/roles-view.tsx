@@ -64,7 +64,6 @@ export function RolesView() {
     <>
       <PageHeader
         title="Roles & Permissions"
-        subtitle="What each role can do in the platform"
         action={
           canCreateRole ? (
             <NavyButton className="px-4 py-2 text-sm" onClick={() => setNewOpen(true)}>

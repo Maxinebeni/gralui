@@ -5,7 +5,7 @@
 // them before the person tries, instead of only showing an error.
 
 import { useState } from "react";
-import { Mail, ShieldCheck, UserX, X } from "lucide-react";
+import { Mail, UserX, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { assignUserRoles, deactivateUser, inviteUser, resendInvitation } from "@/lib/api";
@@ -115,7 +115,7 @@ export function UserPanel({
       <div className="space-y-6 px-4 py-5 sm:px-6">
         <section>
           <h3 className="flex items-center gap-2 text-sm font-semibold">
-            <ShieldCheck className="size-4 text-primary" /> Roles
+            Roles
           </h3>
           <p className="mt-1 text-xs text-muted-foreground">
             A {CATEGORY_LABEL[u.profileCategory].toLowerCase()} account can only have{" "}

@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle } from "lucide-react";
+
 import { amountInWords } from "@/lib/amounts";
 import { formatRwf } from "@/lib/format";
 import { NavyButton, OutlineButton } from "./ui";
@@ -72,7 +72,7 @@ export function ReviewDialog({
         {warnings.length > 0 ? (
           <div className="mt-4 rounded-2xl bg-warning-soft/60 p-3.5">
             <p className="flex items-center gap-1.5 text-xs font-semibold text-warning">
-              <AlertTriangle className="size-3.5" /> {warnings.length === 1 ? "One figure looks unusual" : `${warnings.length} figures look unusual`}
+              {warnings.length === 1 ? "One figure looks unusual" : `${warnings.length} figures look unusual`}
             </p>
             <ul className="mt-2 space-y-1.5 text-xs">
               {warnings.map((w) => (

@@ -112,10 +112,6 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
       <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
         <div>
           <h2 className="text-lg font-semibold tracking-tight">New Lead</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Step 1 of onboarding: register the prospect the same day. The KYC checklist is created from the client type, and
-            the Accounts Executive takes it from here.
-          </p>
         </div>
         <button
           type="button"

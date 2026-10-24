@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Check, Clock, Flag, Mail, MapPin, Pencil, Phone, Plus, X } from "lucide-react";
+import { Check, Flag, Mail, MapPin, Pencil, Phone, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
@@ -10,7 +10,7 @@ import { listClientClaims, listClientPolicies } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { canAccessPath, clientEditPermissions, clientPermissions, documentPermissions } from "@/lib/permissions";
 import type { Client, ClientClaim, Policy } from "@/lib/types";
-import { Chip, NavyButton, NotRecorded, OutlineButton, Person, Recorded, SegmentedTabs, TextLink } from "./ui";
+import { Chip, Dot, NavyButton, NotRecorded, OutlineButton, Person, Recorded, SegmentedTabs, TextLink } from "./ui";
 import { PolicyForm } from "./policy-form";
 import { DocumentPanel } from "./documents";
 
@@ -173,7 +173,7 @@ export function ClientFile({
                     {d.filed ? (
                       <Check className="size-4 text-success" />
                     ) : (
-                      <Clock className="size-4 text-danger" />
+                      <Dot tone="danger" />
                     )}
                     {d.name}
                   </span>

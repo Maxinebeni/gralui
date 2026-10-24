@@ -90,7 +90,6 @@ export function UsersView() {
     <>
       <PageHeader
         title="Users"
-        subtitle="Staff accounts, invitations and roles"
         action={
           rights.canInvite ? (
             <NavyButton className="px-4 py-2 text-sm" onClick={() => setInviteOpen(true)}>

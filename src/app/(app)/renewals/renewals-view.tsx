@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangle, CalendarClock, CheckCircle2, Coins, Timer } from "lucide-react";
+import { AlertTriangle, CalendarClock, CheckCircle2, Coins } from "lucide-react";
 import { toast } from "sonner";
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader, SlideOver } from "@/components/gral/shell";
@@ -173,7 +173,7 @@ export function RenewalsView() {
               <SegmentedBar segments={stageSegments} />
             </div>
             <p className="mt-3 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <Timer className="size-3.5 text-sky" /> GRAL renewal process, Day −120 to delivery
+              GRAL renewal process, Day −120 to delivery
             </p>
           </FloatCard>
 

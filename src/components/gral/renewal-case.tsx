@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Check, Circle, Clock, FileText, X } from "lucide-react";
+import { Check, FileText, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
@@ -31,7 +31,7 @@ import {
 } from "@/lib/renewals";
 import type { RenewalCase } from "@/lib/types";
 import { AmountInput } from "./amount-input";
-import { Chip, NavyButton, OutlineButton, Person, SegmentedTabs } from "./ui";
+import { Chip, Dot, NavyButton, OutlineButton, Person, SegmentedTabs } from "./ui";
 
 const TABS = ["Milestones", "Quotes", "Acceptance"] as const;
 type Tab = (typeof TABS)[number];
@@ -184,9 +184,9 @@ function MilestonesTab({
                 {done ? (
                   <Check className="size-4 text-success" />
                 ) : late ? (
-                  <Clock className="size-4 text-danger" />
+                  <Dot tone="danger" />
                 ) : (
-                  <Circle className={cn("size-4", isCurrent ? "text-sky" : "text-subtle")} />
+                  <Dot tone={isCurrent ? "sky" : "subtle"} />
                 )}
               </span>
               <div className="min-w-0">
