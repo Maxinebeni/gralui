@@ -3,10 +3,11 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Bell, ChevronDown, LogOut, Search, Settings } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/format";
 import { useCurrentUser } from "@/lib/auth-context";
+import { getNotificationInbox, listApprovals, listNotifications, markNotificationRead, type InboxNotification, type Notice } from "@/lib/api";
 import {
   ACCOUNT_MENU,
   NAV_ITEMS,
@@ -16,11 +17,12 @@ import {
   usesBackendPermissions,
   type NavItem,
 } from "@/lib/permissions";
-import { listApprovals, listNotifications, type Notice } from "@/lib/api";
 import { formatDate, todayIso } from "@/lib/renewals";
 import { canDecide } from "@/lib/approvals";
 import { CalendarMenu } from "./calendar-menu";
 import { GlobalSearch } from "./global-search";
+import { NotificationRealtime } from "./notification-realtime";
+import { toast } from "sonner";
 
 import {
   DropdownMenu,
@@ -55,8 +57,33 @@ export function Shell({ children }: { children: ReactNode }) {
 
   // Approvals waiting for this person, shown as a count in the menus.
   const [waiting, setWaiting] = useState(0);
-  // The bell: approvals to decide and this person's own tasks.
+  const [notifications, setNotifications] = useState<InboxNotification[]>([]);
+  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
   const [notices, setNotices] = useState<Notice[]>([]);
+  const notificationIds = useRef(new Set<string>());
+  const refreshNotifications = useCallback(async () => {
+    const inbox = await getNotificationInbox();
+    notificationIds.current = new Set(inbox.items.map((item) => item.id));
+    setNotifications(inbox.items);
+    setUnreadNotificationCount(inbox.unreadCount);
+  }, []);
+  const receiveNotification = useCallback((notification: InboxNotification) => {
+    if (notificationIds.current.has(notification.id)) return;
+    notificationIds.current.add(notification.id);
+    setNotifications((current) => [notification, ...current].slice(0, 20));
+    if (!notification.readAt) setUnreadNotificationCount((count) => count + 1);
+    toast(notification.title, { description: notification.body });
+  }, []);
+  const openNotification = useCallback(async (notification: InboxNotification) => {
+    if (notification.readAt) return;
+    try {
+      await markNotificationRead(notification.id);
+      setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, readAt: new Date().toISOString() } : item));
+      setUnreadNotificationCount((count) => Math.max(0, count - 1));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not mark the notification as read.");
+    }
+  }, []);
   // Admin pages live in the name menu, not the top bar.
   const adminLinks = navChildrenFor(user, ACCOUNT_MENU);
   useEffect(() => {
@@ -140,43 +167,60 @@ export function Shell({ children }: { children: ReactNode }) {
             </IconBtn>
             <DropdownMenu>
               <DropdownMenuTrigger
-                aria-label={notices.length > 0 ? `Notifications, ${notices.length} new` : "Notifications"}
+                aria-label={notices.length + unreadNotificationCount > 0 ? `Notifications, ${notices.length + unreadNotificationCount} new` : "Notifications"}
                 className="relative flex size-10 items-center justify-center rounded-full bg-card text-muted-foreground shadow-[var(--shadow-pill)] outline-none transition-colors hover:text-primary"
               >
                 <Bell className="size-4" />
-                {notices.length > 0 ? (
+                {notices.length + unreadNotificationCount > 0 ? (
                   <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[9px] font-semibold text-white ring-2 ring-background">
-                    {notices.length > 99 ? "99+" : notices.length}
+                    {notices.length + unreadNotificationCount > 99 ? "99+" : notices.length + unreadNotificationCount}
                   </span>
                 ) : null}
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" sideOffset={8} className="w-80 rounded-2xl p-2 shadow-[var(--shadow-float)]">
                 <p className="px-3 py-2 text-sm font-semibold">Notifications</p>
                 <div className="my-1 h-px bg-border" />
-                {notices.length === 0 ? (
-                  <p className="px-3 py-3 text-sm text-muted-foreground">You&apos;re all caught up.</p>
-                ) : (
-                  <div className="max-h-[60vh] overflow-y-auto">
-                    {notices.slice(0, 8).map((n) => {
-                      const late = n.due < todayIso();
-                      return (
-                        <DropdownMenuItem key={n.key} onSelect={() => router.push(n.href)} className="items-start gap-2.5 rounded-xl px-3 py-2.5">
-                          <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", late ? "bg-danger" : "bg-sky")} />
-                          <span className="min-w-0">
-                            <span className="block text-xs font-medium text-foreground">{n.title}</span>
-                            <span className="block truncate text-[11px] text-muted-foreground">
-                              {[n.detail, `${late ? "Overdue since" : "Due"} ${formatDate(n.due)}`].filter(Boolean).join(" · ")}
-                            </span>
+                <div className="max-h-[60vh] overflow-y-auto">
+                  {notifications.length ? <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Inbox</p> : null}
+                  {notifications.map((notification) => (
+                    <DropdownMenuItem
+                      key={notification.id}
+                      onSelect={() => void openNotification(notification)}
+                      className={cn("items-start rounded-xl px-3 py-2.5 text-sm", !notification.readAt && "bg-primary/5")}
+                    >
+                      <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", notification.readAt ? "bg-muted-foreground/30" : "bg-primary")} />
+                      <span className="min-w-0">
+                        <span className="block font-medium">{notification.title}</span>
+                        <span className="mt-0.5 block line-clamp-2 text-xs text-muted-foreground">{notification.body}</span>
+                        <span className="mt-1 block text-[10px] text-muted-foreground">{new Date(notification.createdAt).toLocaleString()}</span>
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                  {notices.length ? <p className="px-3 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Work reminders</p> : null}
+                  {notices.slice(0, 8).map((notice) => {
+                    const late = notice.due < todayIso();
+                    return (
+                      <DropdownMenuItem key={notice.key} onSelect={() => router.push(notice.href)} className="items-start gap-2.5 rounded-xl px-3 py-2.5">
+                        <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", late ? "bg-danger" : "bg-sky")} />
+                        <span className="min-w-0">
+                          <span className="block text-xs font-medium text-foreground">{notice.title}</span>
+                          <span className="block truncate text-[11px] text-muted-foreground">
+                            {[notice.detail, `${late ? "Overdue since" : "Due"} ${formatDate(notice.due)}`].filter(Boolean).join(" · ")}
                           </span>
-                        </DropdownMenuItem>
-                      );
-                    })}
-                  </div>
-                )}
-                <div className="my-1 h-px bg-border" />
-                <DropdownMenuItem onSelect={() => router.push("/my-work")} className="justify-center rounded-xl px-3 py-2 text-xs font-semibold text-primary">
-                  {notices.length > 8 ? `See all ${notices.length} in My Work` : "Open My Work"}
-                </DropdownMenuItem>
+                        </span>
+                      </DropdownMenuItem>
+                    );
+                  })}
+                  {notifications.length === 0 && notices.length === 0 ? <p className="px-3 py-3 text-sm text-muted-foreground">You&apos;re all caught up.</p> : null}
+                </div>
+                {notices.length > 0 ? (
+                  <>
+                    <div className="my-1 h-px bg-border" />
+                    <DropdownMenuItem onSelect={() => router.push("/my-work")} className="justify-center rounded-xl px-3 py-2 text-xs font-semibold text-primary">
+                      {notices.length > 8 ? `See all ${notices.length} in My Work` : "Open My Work"}
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
             <Link
@@ -248,6 +292,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <main className="mt-10 pb-24 sm:mt-14">{children}</main>
       </div>
       <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <NotificationRealtime userId={user.id} onNotification={receiveNotification} onSync={refreshNotifications} />
     </div>
   );
 }

@@ -29,6 +29,7 @@ type Values = {
   phone: string;
   receivedAt: string;
   ownerId: string;
+  assignmentReason: string;
 };
 
 export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreated: (lead: Lead) => void }) {
@@ -46,6 +47,7 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
     phone: "",
     receivedAt: todayIso(),
     ownerId: "",
+    assignmentReason: "",
   });
   const [errors, setErrors] = useState<Partial<Record<keyof Values, string>>>({});
   const [saving, setSaving] = useState(false);
@@ -69,6 +71,7 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
     if (v.email.trim() && !EMAIL_PATTERN.test(v.email.trim())) found.email = "Enter a valid email, e.g. name@company.rw.";
     if (!v.email.trim() && !v.phone.trim()) found.email = "Enter an email or a phone number so the Accounts Executive can follow up.";
     if (!v.receivedAt || v.receivedAt > todayIso()) found.receivedAt = "Enter the date the enquiry came in (not in the future).";
+    if (v.ownerId && !v.assignmentReason.trim()) found.assignmentReason = "Give a reason for assigning this Accounts Executive.";
     setErrors(found);
     if (Object.keys(found).length) return toast.error("Please fix the highlighted fields.");
     setSaving(true);
@@ -84,6 +87,7 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
         phone: v.phone,
         receivedAt: v.receivedAt,
         ownerId: v.ownerId || undefined,
+        assignmentReason: v.ownerId ? v.assignmentReason : undefined,
       });
       toast.success(
         created.ownerId
@@ -161,16 +165,23 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
             <input id="leadSourceRef" value={v.sourceReference} onChange={(e) => set("sourceReference", e.target.value)} className={inputClass()} />
           </Field>
           {canAssignLead ? (
-            <Field id="leadOwner" label="Accounts Executive (optional now)" wide>
-              <select id="leadOwner" value={v.ownerId} onChange={(e) => set("ownerId", e.target.value)} className={inputClass()}>
-                <option value="">Assign later from the lead</option>
-                {executives.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            <>
+              <Field id="leadOwner" label="Accounts Executive (optional now)" wide>
+                <select id="leadOwner" value={v.ownerId} onChange={(e) => set("ownerId", e.target.value)} className={inputClass()}>
+                  <option value="">Assign later from the lead</option>
+                  {executives.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {v.ownerId ? (
+                <Field id="leadAssignmentReason" label="Reason for assignment" error={errors.assignmentReason} wide>
+                  <textarea id="leadAssignmentReason" value={v.assignmentReason} onChange={(e) => set("assignmentReason", e.target.value)} placeholder="Explain why this Accounts Executive is being assigned" className={inputClass(errors.assignmentReason)} {...describedBy("leadAssignmentReason", errors.assignmentReason)} />
+                </Field>
+              ) : null}
+            </>
           ) : null}
         </Section>
       </div>
