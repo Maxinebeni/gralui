@@ -58,6 +58,7 @@ type Perms = ReturnType<typeof onboardingPermissions>;
 export function AssignForm({ lead, onDone, onCancel }: { lead: Lead; onDone: () => void; onCancel?: () => void }) {
   const [options, setOptions] = useState<ChoiceOption[]>([]);
   const [ownerId, setOwnerId] = useState(lead.ownerId ?? "");
+  const [reason, setReason] = useState("");
   useEffect(() => {
     onboardingOptions().then((o) => setOptions(o.accountExecutives));
   }, []);
@@ -68,11 +69,13 @@ export function AssignForm({ lead, onDone, onCancel }: { lead: Lead; onDone: () 
       onCancel={onCancel}
       onSubmit={async () => {
         if (!ownerId) throw new Error("Choose the Accounts Executive.");
-        await assignLead(lead, ownerId);
+        if (!reason.trim()) throw new Error("Give a reason for this assignment.");
+        await assignLead(lead, ownerId, reason);
         onDone();
       }}
     >
       <SelectInput id="lead-owner" label="Accounts Executive" value={ownerId} onChange={setOwnerId} placeholder="Select a person" options={options.map((o) => ({ value: o.id, label: o.name }))} wide />
+      <TextInput id="lead-assignment-reason" label="Reason for assignment" value={reason} onChange={setReason} placeholder="Explain why this Accounts Executive is being assigned" multiline wide />
     </ActionForm>
   );
 }
