@@ -67,6 +67,7 @@ import {
   stageOf,
 } from "./onboarding";
 import { RWANDA_HOLIDAYS, type Holiday } from "./holidays";
+import { recordHref } from "./links";
 import { demoCanRunTrackAction } from "./permissions";
 import { INSURER_GROUPS, PRODUCT_GROUPS, type OptionGroup } from "./reference-data";
 import { RENEWAL_MILESTONES, completionBlocker, currentMilestone, formatDate, milestoneDue, todayIso } from "./renewals";
@@ -1355,6 +1356,40 @@ function approvalTask(r: ApprovalRequest): WorkTask | null {
   };
 }
 
+/**
+ * What the bell shows: approvals waiting for this person's decision and their
+ * own open tasks, soonest due first. With the backend, only the backend's own
+ * tasks count; sample tasks never notify a real user.
+ */
+export type Notice = { key: string; title: string; detail?: string; href: string; due: string };
+
+export async function listNotifications(user: SessionUser): Promise<Notice[]> {
+  const [approvals, tasks] = await Promise.all([listApprovals().catch(() => []), listTasks().catch(() => [])]);
+  const decide: Notice[] = approvals
+    .filter((r) => canDecide(r, user.role))
+    .map((r) => ({
+      key: `APPROVAL:${r.id}`,
+      title: `Approve: ${r.title}`,
+      detail: r.client,
+      href: recordHref("APPROVAL", r.id),
+      due: r.dueAt,
+    }));
+  const mine = (t: WorkTask) =>
+    MOCK_AUTH
+      ? t.ownerRole === user.role || t.owner === user.name
+      : t.key.startsWith("BACKEND:") && (t.owner === user.name || (!!user.id && t.owner === user.id));
+  const work: Notice[] = tasks
+    .filter((t) => t.status === "OPEN" && t.type !== "APPROVAL" && mine(t))
+    .map((t) => ({
+      key: t.key,
+      title: t.title,
+      detail: t.client && !t.title.includes(t.client) ? t.client : undefined,
+      href: recordHref(t.resourceType, t.resourceId),
+      due: t.dueDate,
+    }));
+  return [...decide, ...work].sort((a, b) => a.due.localeCompare(b.due));
+}
+
 export async function listTasks(): Promise<WorkTask[]> {
   const approvals = await listApprovals();
   const pendingRenewals = new Set(approvals.filter((a) => a.subjectType === "RENEWAL" && a.status === "PENDING").map((a) => a.subjectId));
@@ -2562,6 +2597,10 @@ const ONBOARDING_MESSAGES: Record<string, string> = {
   KYC_REVIEW_NOT_OVERDUE: "A KYC review can only be escalated after its deadline.",
   CLIENT_TYPE_UNRESOLVED: "The client's type must be set before a KYC review can start.",
   DOCUMENT_NOT_USABLE: "The document could not be used. Upload it again.",
+  APPROVAL_DISABLED: "Approvals are switched off on this server, so the request cannot be sent.",
+  APPROVAL_POLICY_UNAVAILABLE: "No approval rules are set up on this server for new business yet.",
+  INVALID_ONBOARDING_APPROVAL_POLICY: "The approval rules on this server do not match the onboarding tiers.",
+  INVALID_BOARD_APPROVAL_POLICY: "The approval rules on this server are missing the board evidence step.",
 };
 
 async function onboardingProblem(res: Response, fallback: string): Promise<string> {
@@ -3724,7 +3763,7 @@ function onboardingTasks(): WorkTask[] {
       resourceRef: raw.id,
       client: raw.name,
       owner: byOwner ? raw.ownerId : undefined,
-      ownerRole: byOwner ? undefined : step.owner,
+      ownerRole: step.owner,
       dueDate: ((step.key === "RESPOND" ? raw.responseDueAt : raw.needsDueAt) ?? raw.receivedAt).slice(0, 10),
       status: "OPEN",
       source: "SYSTEM",
@@ -3758,7 +3797,7 @@ function onboardingTasks(): WorkTask[] {
       resourceRef: t.id,
       client: t.leadName,
       owner: byOwner ? t.ownerId : undefined,
-      ownerRole: byOwner ? undefined : role,
+      ownerRole: byOwner ? "Accounts Executive" : role,
       dueDate: due,
       status: "OPEN",
       source: "SYSTEM",
