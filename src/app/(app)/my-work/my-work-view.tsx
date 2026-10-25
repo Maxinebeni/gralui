@@ -80,6 +80,10 @@ export function MyWorkView() {
     listAssignees().then(setAssignees);
   }, [reload]);
 
+  // Workflow tasks are done on the record itself, so the row opens it.
+  const opensRecord = (t: WorkTask) =>
+    t.source === "SYSTEM" && canAccessPath(user, recordHref(t.resourceType, t.resourceId).split("?")[0]!);
+
   // Counts and lists only include tasks this person may see (their own, or the team's for managers).
   const visible = useMemo(() => tasks.filter((t) => managesTeamWork || isMine(t, user)), [tasks, managesTeamWork, user]);
   const open = visible.filter((t) => t.status === "OPEN");
@@ -151,7 +155,11 @@ export function MyWorkView() {
             </thead>
             <tbody>
               {rows.map((t) => (
-                <tr key={t.key} className="cursor-pointer hover:bg-pale/50" onClick={() => setSelected(t)}>
+                <tr
+                  key={t.key}
+                  className="cursor-pointer hover:bg-pale/50"
+                  onClick={() => (opensRecord(t) ? router.push(recordHref(t.resourceType, t.resourceId)) : setSelected(t))}
+                >
                   <Td>
                     <div className={cn("max-w-[280px] text-xs font-medium", t.status === "DONE" && "text-muted-foreground line-through")}>
                       {t.title}
@@ -176,7 +184,21 @@ export function MyWorkView() {
                     )}
                   </Td>
                   <Td>
-                    <TextLink>Details</TextLink>
+                    <div className="flex items-center gap-3 whitespace-nowrap">
+                      <TextLink>{opensRecord(t) ? "Open" : "Details"}</TextLink>
+                      {opensRecord(t) && t.status === "OPEN" && (managesTeamWork || isMine(t, user)) ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelected(t);
+                          }}
+                          className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                        >
+                          Reassign
+                        </button>
+                      ) : null}
+                    </div>
                   </Td>
                 </tr>
               ))}
@@ -281,9 +303,6 @@ function TaskPanel({
             >
               Open {t.resourceRef}
             </Link>
-          ) : null}
-          {t.source === "SYSTEM" ? (
-            <span className="text-[11px] text-subtle">This task closes by itself when the work is done on the record.</span>
           ) : null}
         </div>
 
