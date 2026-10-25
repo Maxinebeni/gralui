@@ -556,8 +556,9 @@ type ProductView = {
   active: boolean;
   productLineCodes?: string[];
 };
-type CategoryView = { id: string; code: string; name: string; active: boolean };
-type InsurerTypeView = { id: string; code: string; name: string; active: boolean };
+type CategoryView = { id: string; code: string; name: string; termCode: string; active: boolean };
+type ProductTermView = { id: string; code: string; name: string; active: boolean };
+type InsurerTypeView = { id: string; code: string; name: string; active: boolean; termCodes?: string[] };
 
 type PolicyPeriodView = {
   id: string;
@@ -608,11 +609,13 @@ type Catalog = {
   insurers: InsurerView[];
   products: ProductView[];
   lines: CategoryView[];
+  terms: ProductTermView[];
   insurerTypes: InsurerTypeView[];
 };
 
 /** The insurer and product catalog from the backend, loaded once. */
 let CATALOG: Catalog | null = null;
+const INSURER_PRODUCT_IDS = new Map<string, string[]>();
 
 async function getJson<T>(path: string): Promise<T | null> {
   try {
@@ -625,15 +628,24 @@ async function getJson<T>(path: string): Promise<T | null> {
 
 async function loadCatalog(): Promise<Catalog | null> {
   if (CATALOG) return CATALOG;
-  const [insurers, products, lines, insurerTypes] = await Promise.all([
+  const [insurers, products, lines, insurerTypes, terms] = await Promise.all([
     getJson<InsurerView[]>("/api/v1/policy/catalog/insurers"),
     getJson<ProductView[]>("/api/v1/policy/catalog/products"),
     getJson<CategoryView[]>("/api/v1/policy/catalog/product-lines"),
     getJson<InsurerTypeView[]>("/api/v1/policy/catalog/insurer-types"),
+    getJson<ProductTermView[]>("/api/v1/policy/catalog/product-terms"),
   ]);
-  if (!insurers?.length || !products?.length) return null;
-  CATALOG = { insurers, products, lines: lines ?? [], insurerTypes: insurerTypes ?? [] };
+  if (!insurers || !products) return null;
+  CATALOG = { insurers, products, lines: lines ?? [], insurerTypes: insurerTypes ?? [], terms: terms ?? [] };
   return CATALOG;
+}
+
+async function loadInsurerProductLinks(insurers: InsurerView[]): Promise<void> {
+  await Promise.all(insurers.filter((insurer) => insurer.active).map(async (insurer) => {
+    if (INSURER_PRODUCT_IDS.has(insurer.id)) return;
+    const products = await getJson<ProductView[]>(`/api/v1/policy/catalog/insurers/${insurer.id}/products`);
+    if (products) INSURER_PRODUCT_IDS.set(insurer.id, products.filter((product) => product.active).map((product) => product.id));
+  }));
 }
 
 /** Dropdown lists for the policy form, grouped with headings. */
@@ -2188,6 +2200,23 @@ export async function replaceDocument(subject: DocumentSubject, doc: StoredDocum
   };
 }
 
+/** Load an exact document version for inline preview or download. */
+export async function getDocumentContent(
+  subject: DocumentSubject,
+  doc: StoredDocument,
+  version = doc.version,
+): Promise<Blob> {
+  if (!usesDocumentBackend(subject)) {
+    const blob = LOCAL_FILES.get(`${doc.id}:${version}`);
+    if (!blob) throw new Error("This is a sample record; there is no file to download.");
+    return blob;
+  }
+  const params = new URLSearchParams({ subjectType: subject.type, subjectId: subject.id, purpose: doc.purpose });
+  const res = await apiFetch(`/api/v1/documents/${doc.id}/versions/${version}/content?${params}`);
+  if (!res.ok) throw new Error(await documentError(res, "Could not load the file."));
+  return res.blob();
+}
+
 /** Download an exact version of a document. */
 export async function downloadDocument(
   subject: DocumentSubject,
@@ -2195,16 +2224,7 @@ export async function downloadDocument(
   version = doc.version,
 ): Promise<void> {
   const name = version === doc.version ? doc.originalFileName : doc.previous.find((p) => p.version === version)?.originalFileName ?? doc.originalFileName;
-  let blob: Blob | undefined;
-  if (!usesDocumentBackend(subject)) {
-    blob = LOCAL_FILES.get(`${doc.id}:${version}`);
-    if (!blob) throw new Error("This is a sample record; there is no file to download.");
-  } else {
-    const params = new URLSearchParams({ subjectType: subject.type, subjectId: subject.id, purpose: doc.purpose });
-    const res = await apiFetch(`/api/v1/documents/${doc.id}/versions/${version}/content?${params}`);
-    if (!res.ok) throw new Error(await documentError(res, "Could not download the file."));
-    blob = await res.blob();
-  }
+  const blob = await getDocumentContent(subject, doc, version);
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -2597,7 +2617,16 @@ async function onboardingProblem(res: Response, fallback: string): Promise<strin
 
 async function sendOnboarding<T>(method: "POST" | "PUT", path: string, body: unknown, fallback: string): Promise<T> {
   const res = await apiFetch(path, { method, body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(await onboardingProblem(res, fallback));
+  if (!res.ok) {
+    console.error("[Onboarding API] Backend request failed", {
+      method,
+      path,
+      status: res.status,
+      statusText: res.statusText,
+      responseBody: await res.clone().text(),
+    });
+    throw new Error(await onboardingProblem(res, fallback));
+  }
   return (await res.json()) as T;
 }
 
@@ -2635,11 +2664,111 @@ export async function onboardingOptions(): Promise<{ products: ChoiceOption[]; i
     return { products: names(PRODUCT_GROUPS), insurers: names(INSURER_GROUPS), accountExecutives: (await mockListManagers()).map((n) => ({ id: n, name: n })) };
   }
   const [catalog, managers] = await Promise.all([loadCatalog(), loadManagers()]);
+  const activeInsurers = (catalog?.insurers ?? []).filter((insurer) => insurer.active);
+  await loadInsurerProductLinks(activeInsurers);
+  const supportedProductIds = new Set(activeInsurers.flatMap((insurer) => INSURER_PRODUCT_IDS.get(insurer.id) ?? []));
   return {
-    products: (catalog?.products ?? []).filter((p) => p.active).map((p) => ({ id: p.id, name: p.name })),
-    insurers: (catalog?.insurers ?? []).filter((i) => i.active).map((i) => ({ id: i.id, name: i.name })),
+    products: (catalog?.products ?? []).filter((p) => p.active && supportedProductIds.has(p.id)).map((p) => ({ id: p.id, name: p.name })),
+    insurers: activeInsurers.map((i) => ({ id: i.id, name: i.name })),
     accountExecutives: managers.map((m) => ({ id: m.id, name: m.fullName })),
   };
+}
+
+/** Active insurers that the backend catalog links to a product. */
+export async function insurersForProduct(productId: string): Promise<string[] | null> {
+  if (MOCK_AUTH) return null;
+  const catalog = await loadCatalog();
+  if (!catalog || !productId) return null;
+  const insurers = catalog.insurers.filter((insurer) => insurer.active);
+  await loadInsurerProductLinks(insurers);
+  return insurers.filter((insurer) => INSURER_PRODUCT_IDS.get(insurer.id)?.includes(productId)).map((insurer) => insurer.id);
+}
+
+export type InsurerProductCatalog = {
+  insurers: { id: string; name: string; typeCode: string; supportedTermCodes: string[] }[];
+  products: { id: string; name: string; termCode: string }[];
+  insurerTypes: { code: string; name: string; termCodes: string[] }[];
+  productTerms: { code: string; name: string }[];
+  productLines: { code: string; name: string; termCode: string }[];
+  linkedProductIds: Record<string, string[]>;
+};
+
+/** Load active catalog entries and their current insurer-product links for management. */
+export async function getInsurerProductCatalog(): Promise<InsurerProductCatalog> {
+  if (MOCK_AUTH) throw new Error("Sign in to the backend as a GI Underwriting Manager to manage insurer products.");
+  const catalog = await loadCatalog();
+  if (!catalog) throw new Error("Could not load the insurer and product catalogs.");
+  const activeInsurers = catalog.insurers.filter((insurer) => insurer.active);
+  const activeProducts = catalog.products.filter((product) => product.active);
+  const linkedProductIds: Record<string, string[]> = {};
+  await Promise.all(activeInsurers.map(async (insurer) => {
+    const path = `/api/v1/policy/catalog/insurers/${insurer.id}/products`;
+    const res = await apiFetch(path);
+    if (!res.ok) throw new Error(await catalogApiProblem(res, `Could not load products for ${insurer.name}.`));
+    const products = (await res.json()) as ProductView[];
+    const ids = products.filter((product) => product.active).map((product) => product.id);
+    linkedProductIds[insurer.id] = ids;
+    INSURER_PRODUCT_IDS.set(insurer.id, ids);
+  }));
+  return {
+    insurers: activeInsurers.map((insurer) => ({
+      id: insurer.id,
+      name: insurer.name,
+      typeCode: insurer.typeCode,
+      supportedTermCodes: catalog.insurerTypes.find((type) => type.code === insurer.typeCode)?.termCodes ?? [],
+    })),
+    products: activeProducts.map((product) => ({ id: product.id, name: product.name, termCode: product.termCode })),
+    insurerTypes: catalog.insurerTypes.filter((type) => type.active).map((type) => ({ code: type.code, name: type.name, termCodes: type.termCodes ?? [] })),
+    productTerms: catalog.terms.filter((term) => term.active).map((term) => ({ code: term.code, name: term.name })),
+    productLines: catalog.lines.filter((line) => line.active).map((line) => ({ code: line.code, name: line.name, termCode: line.termCode })),
+    linkedProductIds,
+  };
+}
+
+/** Create the backend-audited insurer-product link. */
+export async function linkProductToInsurer(insurerId: string, productId: string, reason: string): Promise<void> {
+  if (!reason.trim()) throw new Error("Give a reason for linking this product to the insurer.");
+  const res = await apiFetch(`/api/v1/policy/catalog/insurers/${insurerId}/products/${productId}`, {
+    method: "POST",
+    body: JSON.stringify({ reason: reason.trim() }),
+  });
+  if (!res.ok) throw new Error(await catalogApiProblem(res, "Could not link the product to the insurer."));
+  INSURER_PRODUCT_IDS.delete(insurerId);
+}
+
+export async function addInsurer(input: { code: string; name: string; typeCode: string; reason: string }): Promise<void> {
+  if (!input.reason.trim()) throw new Error("Give a reason for adding this insurer.");
+  const res = await apiFetch("/api/v1/policy/catalog/insurers", { method: "POST", body: JSON.stringify({ ...input, reason: input.reason.trim() }) });
+  if (!res.ok) throw new Error(await catalogApiProblem(res, "Could not add the insurer."));
+  CATALOG = null;
+  INSURER_PRODUCT_IDS.clear();
+}
+
+export async function addCatalogProduct(input: { code: string; name: string; notes?: string; termCode: string; productLineCodes: string[]; reason: string }): Promise<void> {
+  if (!input.reason.trim()) throw new Error("Give a reason for adding this product.");
+  if (!input.productLineCodes.length) throw new Error("Choose at least one product line.");
+  const res = await apiFetch("/api/v1/policy/catalog/products", { method: "POST", body: JSON.stringify({ ...input, notes: input.notes?.trim() || undefined, reason: input.reason.trim() }) });
+  if (!res.ok) throw new Error(await catalogApiProblem(res, "Could not add the product."));
+  CATALOG = null;
+  INSURER_PRODUCT_IDS.clear();
+}
+
+export async function unlinkProductFromInsurer(insurerId: string, productId: string, reason: string): Promise<void> {
+  if (!reason.trim()) throw new Error("Give a reason for removing this product link.");
+  const params = new URLSearchParams({ reason: reason.trim() });
+  const res = await apiFetch(`/api/v1/policy/catalog/insurers/${insurerId}/products/${productId}?${params}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(await catalogApiProblem(res, "Could not remove the product link."));
+  INSURER_PRODUCT_IDS.delete(insurerId);
+}
+
+async function catalogApiProblem(res: Response, fallback: string): Promise<string> {
+  const problem = await readProblem(res);
+  if (res.status === 401) return "Your session has ended. Please sign in again.";
+  if (res.status === 403) return "You do not have permission to manage insurer products.";
+  if (problem.code === "INSURANCE_TYPE_MISMATCH") return "This insurer cannot offer products in that insurance term.";
+  if (problem.code === "INSURER_PRODUCT_ALREADY_LINKED") return "This product is already linked to the insurer.";
+  if (problem.code) return `${problem.code}: ${fallback}`;
+  return problem.title && problem.title !== "Bad Request" ? problem.title : fallback;
 }
 
 /** Name of a person, insurer or product from its ID. Demo IDs are already names. */
@@ -2760,10 +2889,13 @@ export type NewLeadInput = {
   receivedAt: string;
   /** The Accounts Executive, when the CRM Manager assigns one straight away. */
   ownerId?: string;
+  /** Required when assigning an Accounts Executive during lead registration. */
+  assignmentReason?: string;
 };
 
 /** Step 1: register the lead, then assign the Accounts Executive if one was chosen. */
 export async function registerLead(input: NewLeadInput): Promise<Lead> {
+  if (input.ownerId) requireReason(input.assignmentReason ?? "");
   const body = {
     commandId: crypto.randomUUID(),
     name: input.name.trim(),
@@ -2797,32 +2929,35 @@ export async function registerLead(input: NewLeadInput): Promise<Lead> {
     };
     DEMO_LEADS.unshift(created);
     demoLog(created.id, "LEAD_REGISTERED");
-    if (input.ownerId) demoLog(created.id, "LEAD_ASSIGNED");
+    if (input.ownerId) demoLog(created.id, "LEAD_ASSIGNED", input.assignmentReason);
     return demoLeadView(created);
   }
   let lead = await sendOnboarding<Lead>("POST", "/api/v1/leads", body, "Could not register the lead. Please try again.");
   if (input.ownerId && input.ownerId !== lead.ownerId) {
     // The lead is saved; a failed assignment is shown on the lead to retry, not undone.
-    lead = await assignLead(lead, input.ownerId).catch(() => lead);
+    lead = await assignLead(lead, input.ownerId, input.assignmentReason!).catch(() => lead);
   }
   return decorateLead(lead);
 }
 
-function demoLeadCommand(lead: Lead, action: string, change: (l: Lead) => Partial<Lead>): Lead {
+function demoLeadCommand(lead: Lead, action: string, change: (l: Lead) => Partial<Lead>, reason?: string): Lead {
   const index = DEMO_LEADS.findIndex((l) => l.id === lead.id);
   const current = DEMO_LEADS[index];
   if (!current) throw new Error("This lead could not be found.");
   if (current.version !== lead.version) throw new Error(ONBOARDING_MESSAGES.STALE_VERSION!);
   const updated = { ...current, ...change(current), version: current.version + 1, updatedAt: new Date().toISOString() };
   DEMO_LEADS[index] = updated;
-  demoLog(lead.id, action);
+  demoLog(lead.id, action, reason);
   return demoLeadView(updated);
 }
 
-export async function assignLead(lead: Lead, ownerId: string): Promise<Lead> {
-  if (MOCK_AUTH) return demoLeadCommand(lead, "LEAD_ASSIGNED", () => ({ ownerId }));
+export async function assignLead(lead: Lead, ownerId: string, reason: string): Promise<Lead> {
+  requireReason(reason);
+  if (MOCK_AUTH) return demoLeadCommand(lead, "LEAD_ASSIGNED", () => ({ ownerId }), reason.trim());
+  const path = `/api/v1/leads/${lead.id}/assignment`;
+  const body = { command: commandEnvelope(lead.version, reason.trim()), ownerId };
   return decorateLead(
-    await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/assignment`, { command: commandEnvelope(lead.version), ownerId }, "Could not assign the Accounts Executive."),
+    await sendOnboarding<Lead>("POST", path, body, "Could not assign the Accounts Executive."),
   );
 }
 
@@ -3005,7 +3140,7 @@ const TRACK_ROUTES: Record<string, { path: string; purpose?: string; classificat
   SURVEY: { path: "risk-survey", purpose: "RISK_SURVEY", shape: "nested" },
   SURVEY_NOT_APPLICABLE: { path: "risk-survey-not-applicable", shape: "plain" },
   PROGRAM: { path: "program", purpose: "PROGRAM", classification: "APPROVAL_EVIDENCE", shape: "nested" },
-  LICENSE: { path: "insurer-license", purpose: "INSURER_LICENSE", shape: "nested" },
+  LICENSE: { path: "insurer-license", purpose: "INSURER_LICENSE", classification: "CORRESPONDENCE", shape: "nested" },
   SINGLE_SOURCE: { path: "request-single-source", purpose: "SINGLE_SOURCE", shape: "flat" },
   RFQ: { path: "dispatch-rfq", purpose: "RFQ", shape: "nested" },
   INSURER_RESPONSE: { path: "insurer-response", shape: "custom" },
@@ -3039,6 +3174,9 @@ export async function runTrackAction(track: PolicyTrack, input: TrackActionInput
   if (reasonRequired && !input.reason?.trim()) throw new Error("Give the reason. It is kept in the history.");
   const subject = { type: "ONBOARDING" as const, id: track.id };
   const f = input.fields ?? {};
+  if (input.action === "LICENSE" && (!f.insurerId || !f.validUntil || !String(f.source ?? "").trim() || !input.evidence?.main)) {
+    throw new Error("Choose an insurer, enter the licence expiry date and source, and attach the licence evidence file.");
+  }
   const purpose = input.action === "LICENSE" ? `INSURER_LICENSE_${String(f.insurerId ?? "").replace(/-/g, "")}` : route.purpose;
 
   const proofs: Record<string, Awaited<ReturnType<typeof uploadProof>>> = {};
@@ -3110,7 +3248,10 @@ export async function saveKycTemplate(
     else DEMO_KYC_TEMPLATES.push(saved);
     return saved;
   }
-  return sendOnboarding<KycTemplate>("PUT", `/api/v1/kyc-templates/${encodeURIComponent(code)}`, { expectedVersion, ...input }, "Could not save the KYC checklist.");
+  const path = `/api/v1/kyc-templates/${encodeURIComponent(code)}`;
+  const body = { expectedVersion, ...input };
+  console.info("[KYC checklist request]", { method: "PUT", url: `${API_URL}${path}`, body });
+  return sendOnboarding<KycTemplate>("PUT", path, body, "Could not save the KYC checklist.");
 }
 
 export async function getClientKyc(clientId: string): Promise<{ summary: KycGate | null; reviews: KycReview[] }> {
@@ -3241,12 +3382,10 @@ export async function decideKycReview(review: KycReview, input: { decision: "APP
       };
     });
   }
-  return sendOnboarding<KycReview>(
-    "POST",
-    `/api/v1/kyc-cases/${review.id}/decisions`,
-    { command: kycCommand(review), decision: input.decision, reason: input.reason.trim(), documentId: p?.documentId, documentVersion: p?.documentVersion },
-    "Could not record the decision.",
-  );
+  const path = `/api/v1/kyc-cases/${review.id}/decisions`;
+  const body = { command: kycCommand(review), decision: input.decision, reason: input.reason.trim(), documentId: p?.documentId, documentVersion: p?.documentVersion };
+  console.info("[KYC decision request]", { method: "POST", url: `${API_URL}${path}`, body });
+  return sendOnboarding<KycReview>("POST", path, body, "Could not record the decision.");
 }
 
 export async function escalateKycReview(review: KycReview, input: { evidence: EvidenceInput; revisedDueAt: string; reason: string }): Promise<KycReview> {
@@ -4230,7 +4369,47 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
     const problem = await readProblem(res.clone());
     if (problem.code === "CSRF_INVALID") res = await send();
   }
+  // A revoked or expired backend session is authoritative. Notify the auth
+  // provider so the open tab clears its local user state and returns to login.
+  // Ignore auth endpoints because 401 there can mean an ordinary failed login.
+  if (res.status === 401 && !path.startsWith("/api/v1/auth/")) {
+    if (typeof window !== "undefined") window.dispatchEvent(new Event("gral:session-expired"));
+  }
   return res;
+}
+
+export type InboxNotification = {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  readAt: string | null;
+};
+
+export type NotificationInbox = { items: InboxNotification[]; unreadCount: number };
+
+/** Fresh CSRF token for the STOMP CONNECT frame after the session is established. */
+export async function getNotificationSocketCsrf(): Promise<{ headerName: string; token: string }> {
+  return getCsrf();
+}
+
+/** Load the signed-in user's durable notification inbox and unread count. */
+export async function getNotificationInbox(): Promise<NotificationInbox> {
+  const [inboxResponse, countResponse] = await Promise.all([
+    apiFetch("/api/v1/notifications?page=0&size=20&unreadOnly=false"),
+    apiFetch("/api/v1/notifications/unread-count"),
+  ]);
+  if (!inboxResponse.ok) throw new Error(await onboardingProblem(inboxResponse, "Could not load notifications."));
+  if (!countResponse.ok) throw new Error(await onboardingProblem(countResponse, "Could not load notification count."));
+  const inbox = (await inboxResponse.json()) as { items?: InboxNotification[] };
+  const count = (await countResponse.json()) as { count?: number };
+  return { items: inbox.items ?? [], unreadCount: count.count ?? 0 };
+}
+
+export async function markNotificationRead(notificationId: string): Promise<void> {
+  const response = await apiFetch(`/api/v1/notifications/${encodeURIComponent(notificationId)}/read`, { method: "POST" });
+  if (!response.ok) throw new Error(await onboardingProblem(response, "Could not mark the notification as read."));
 }
 
 // Backend role codes translated to the frontend's role names. Add codes here

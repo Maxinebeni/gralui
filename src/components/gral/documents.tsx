@@ -87,7 +87,7 @@ export function UploadPreview({
         aria-modal="true"
         aria-labelledby="upload-preview-title"
         onClick={(e) => e.stopPropagation()}
-        className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-t-3xl bg-card p-5 shadow-[var(--shadow-float)] outline-none sm:rounded-3xl sm:p-6"
+        className="max-h-[calc(100dvh-2rem)] w-full max-w-6xl overflow-y-auto rounded-t-3xl bg-card p-5 shadow-[var(--shadow-float)] outline-none sm:rounded-3xl sm:p-6"
       >
         <h2 id="upload-preview-title" className="text-lg font-semibold tracking-tight">
           Is this the right file?
@@ -101,13 +101,13 @@ export function UploadPreview({
         <div className="mt-4 overflow-hidden rounded-2xl border border-border bg-secondary/50">
           {url ? (
             isPdf ? (
-              <iframe src={`${url}#page=1&toolbar=0&navpanes=0&view=FitH`} title={`Preview of ${file.name}`} className="h-80 w-full bg-card" />
+              <iframe src={`${url}#page=1&toolbar=0&navpanes=0&view=FitH`} title={`Preview of ${file.name}`} className="h-[65vh] w-full bg-card" />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={url} alt={`Preview of ${file.name}`} className="mx-auto max-h-80 w-auto object-contain" />
+              <img src={url} alt={`Preview of ${file.name}`} className="mx-auto max-h-[65vh] max-w-full object-contain" />
             )
           ) : (
-            <div className="h-80" />
+            <div className="h-[65vh]" />
           )}
         </div>
 

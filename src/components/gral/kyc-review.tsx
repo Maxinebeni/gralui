@@ -6,12 +6,15 @@
 // Approval Form. One review is shared by all of the client's policy tracks.
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
-import { ArrowLeft, Check, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, Download, Eye, Plus, Trash2, X } from "lucide-react";
+import { toast } from "sonner";
 import {
   attachKycDocument,
   decideKycReview,
   escalateKycReview,
+  getDocumentContent,
   listKycTemplates,
   recordKycScreening,
   saveKycTemplate,
@@ -24,11 +27,11 @@ import { KYC_STATUS_LABEL, SUGGESTED_KYC_REQUIREMENTS } from "@/lib/onboarding";
 import { onboardingPermissions } from "@/lib/permissions";
 import { addWorkingDays } from "@/lib/claims";
 import { todayIso } from "@/lib/renewals";
-import type { CommandHistory, KycRequirement, KycReview, KycTemplate, LeadType } from "@/lib/types";
+import type { CommandHistory, KycRequirement, KycReview, KycTemplate, LeadType, Proof, StoredDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { inputClass } from "./client-form";
 import { PageHeader } from "./shell";
-import { ActionForm, EvidenceField, HistoryList, Label, ProofList, SelectInput, TextInput, dateOf } from "./onboarding-ui";
+import { ActionForm, EvidenceField, HistoryList, Label, SelectInput, TextInput, dateOf } from "./onboarding-ui";
 import { Chip, Dot, FloatCard, OutlineButton, SegmentedTabs } from "./ui";
 
 const EVIDENCE_LABELS: Record<string, string> = { SCREENING: "Screening record", KYC_APPROVAL: "Signed KYC Approval Form", KYC_ESCALATION: "Escalation note" };
@@ -84,14 +87,14 @@ export function KycReviewPage({ review: r, history, onChanged }: { review: KycRe
             {r.screeningResult ? (
               <p className="mt-2 text-sm">
                 <Chip tone={r.screeningResult === "CLEAR" ? "success" : r.screeningResult === "REJECTED" ? "danger" : "warning"}>
-                  {r.screeningResult === "CLEAR" ? "Clear" : r.screeningResult === "REJECTED" ? "Rejected" : "Review required"}
+                  {r.screeningResult === "CLEAR" ? "Clear · all is good" : r.screeningResult === "REJECTED" ? "Rejected" : "Review required"}
                 </Chip>{" "}
                 {r.screeningNotes ?? ""}
               </p>
             ) : (
               <p className="mt-2 text-xs text-muted-foreground">Not recorded yet.</p>
             )}
-            {perms.canScreenKyc && editable ? (
+            {perms.canScreenKyc && (editable || r.status === "SUBMITTED") ? (
               <div className="mt-3">
                 <ScreeningForm review={r} onChanged={onChanged} />
               </div>
@@ -118,8 +121,19 @@ export function KycReviewPage({ review: r, history, onChanged }: { review: KycRe
           <FloatCard className="p-5" delay={160}>
             <h2 className="text-base font-semibold tracking-tight">Records</h2>
             <div className="mt-3">
-              <ProofList items={r.evidence.filter((e) => EVIDENCE_LABELS[e.purpose])} labels={EVIDENCE_LABELS} />
-              {!r.evidence.some((e) => EVIDENCE_LABELS[e.purpose]) ? <p className="text-xs text-muted-foreground">No screening or decision records yet.</p> : null}
+              {r.evidence.filter((e) => EVIDENCE_LABELS[e.purpose]).length ? (
+                <ul className="space-y-2">
+                  {r.evidence.filter((e) => EVIDENCE_LABELS[e.purpose]).map((proof) => (
+                    <li key={`${proof.purpose}-${proof.occurredAt}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border px-3 py-2">
+                      <div className="min-w-0 text-xs">
+                        <p className="font-medium">{EVIDENCE_LABELS[proof.purpose]}</p>
+                        <p className="text-muted-foreground">{proof.fileName ?? "Attached document"} · {dateOf(proof.occurredAt)}</p>
+                      </div>
+                      <KycProofPreview reviewId={r.id} proof={proof} label={EVIDENCE_LABELS[proof.purpose]} />
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="text-xs text-muted-foreground">No screening or decision records yet.</p>}
             </div>
           </FloatCard>
           <FloatCard className="p-5" delay={200}>
@@ -135,7 +149,20 @@ export function KycReviewPage({ review: r, history, onChanged }: { review: KycRe
 function ChecklistRow({ review, item, canFile, onChanged }: { review: KycReview; item: KycReview["items"][number]; canFile: boolean; onChanged: () => void }) {
   const [filing, setFiling] = useState(false);
   const [evidence, setEvidence] = useState<EvidenceInput | null>(null);
+  const [preview, setPreview] = useState<{ url: string; fileName: string; mediaType: string } | null>(null);
   const proof = review.evidence.find((e) => e.purpose === item.code);
+  useEffect(() => {
+    if (!preview) return;
+    const { url } = preview;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPreview(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      URL.revokeObjectURL(url);
+    };
+  }, [preview]);
   return (
     <li className="rounded-xl border border-border px-3 py-2.5">
       <div className="flex items-center justify-between gap-3">
@@ -147,7 +174,34 @@ function ChecklistRow({ review, item, canFile, onChanged }: { review: KycReview;
           </span>
         </span>
         {item.documentId ? (
-          <Chip tone="success">Received {dateOf(proof?.receivedAt ?? proof?.occurredAt)}</Chip>
+          <div className="flex shrink-0 items-center gap-2">
+            <Chip tone="success">Received {dateOf(proof?.receivedAt ?? proof?.occurredAt)}</Chip>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 text-xs font-medium text-primary underline underline-offset-2"
+              onClick={async () => {
+                const document: StoredDocument = {
+                  id: item.documentId!,
+                  version: item.documentVersion ?? proof?.documentVersion ?? 1,
+                  originalFileName: proof?.fileName ?? item.label,
+                  mediaType: "application/octet-stream",
+                  sizeBytes: 0,
+                  classification: "KYC",
+                  purpose: item.code,
+                  uploadedAt: proof?.occurredAt ?? new Date().toISOString(),
+                  previous: [],
+                };
+                try {
+                  const file = await getDocumentContent({ type: "KYC", id: review.id }, document);
+                  setPreview({ url: URL.createObjectURL(file), fileName: document.originalFileName, mediaType: file.type || document.mediaType });
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "Could not preview the KYC document.");
+                }
+              }}
+            >
+              <Eye className="size-3.5" /> Preview
+            </button>
+          </div>
         ) : canFile && !filing ? (
           <OutlineButton onClick={() => setFiling(true)}>File the document</OutlineButton>
         ) : (
@@ -171,7 +225,109 @@ function ChecklistRow({ review, item, canFile, onChanged }: { review: KycReview;
           </ActionForm>
         </div>
       ) : null}
+      {preview ? createPortal((
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-foreground/50 p-3 sm:p-6" onClick={() => setPreview(null)}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Preview ${preview.fileName}`}
+            className="flex max-h-[95dvh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-card shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+              <p className="min-w-0 truncate text-sm font-medium">{preview.fileName}</p>
+              <div className="flex shrink-0 items-center gap-3">
+                <a href={preview.url} download={preview.fileName} className="inline-flex items-center gap-1 text-xs font-medium text-primary underline underline-offset-2">
+                  <Download className="size-3.5" /> Download
+                </a>
+                <button type="button" aria-label="Close preview" onClick={() => setPreview(null)} className="rounded-full p-1.5 hover:bg-secondary">
+                  <X className="size-4" />
+                </button>
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 bg-secondary/40">
+              {preview.mediaType === "application/pdf" || /\.pdf$/i.test(preview.fileName) ? (
+                <iframe src={`${preview.url}#toolbar=0&navpanes=0&view=FitH`} title={`Preview of ${preview.fileName}`} className="h-[82dvh] w-full bg-card" />
+              ) : preview.mediaType.startsWith("image/") || /\.(png|jpe?g)$/i.test(preview.fileName) ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={preview.url} alt={preview.fileName} className="mx-auto max-h-[82dvh] max-w-full object-contain" />
+              ) : (
+                <div className="p-8 text-center text-sm text-muted-foreground">Preview isn&apos;t available for this file type. Download it to view.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      ), document.body) : null}
     </li>
+  );
+}
+
+function KycProofPreview({ reviewId, proof, label }: { reviewId: string; proof: Proof; label: string }) {
+  const [preview, setPreview] = useState<{ url: string; fileName: string; mediaType: string } | null>(null);
+  useEffect(() => {
+    if (!preview) return;
+    const { url } = preview;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPreview(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      URL.revokeObjectURL(url);
+    };
+  }, [preview]);
+
+  async function openPreview() {
+    if (!proof.documentId) {
+      toast.error("This record has no attached document.");
+      return;
+    }
+    const document: StoredDocument = {
+      id: proof.documentId,
+      version: proof.documentVersion ?? 1,
+      originalFileName: proof.fileName ?? label,
+      mediaType: "application/octet-stream",
+      sizeBytes: 0,
+      classification: "KYC",
+      purpose: proof.purpose,
+      uploadedAt: proof.occurredAt,
+      previous: [],
+    };
+    try {
+      const file = await getDocumentContent({ type: "KYC", id: reviewId }, document);
+      setPreview({ url: URL.createObjectURL(file), fileName: document.originalFileName, mediaType: file.type || document.mediaType });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not preview the KYC document.");
+    }
+  }
+
+  return (
+    <>
+      <button type="button" onClick={openPreview} className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary underline underline-offset-2">
+        <Eye className="size-3.5" /> Preview
+      </button>
+      {preview ? createPortal((
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-foreground/50 p-3 sm:p-6" onClick={() => setPreview(null)}>
+          <div role="dialog" aria-modal="true" aria-label={`Preview ${preview.fileName}`} className="flex max-h-[95dvh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-card shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+              <p className="min-w-0 truncate text-sm font-medium">{preview.fileName}</p>
+              <div className="flex shrink-0 items-center gap-3">
+                <a href={preview.url} download={preview.fileName} className="inline-flex items-center gap-1 text-xs font-medium text-primary underline underline-offset-2"><Download className="size-3.5" /> Download</a>
+                <button type="button" aria-label="Close preview" onClick={() => setPreview(null)} className="rounded-full p-1.5 hover:bg-secondary"><X className="size-4" /></button>
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 bg-secondary/40">
+              {preview.mediaType === "application/pdf" || /\.pdf$/i.test(preview.fileName) ? (
+                <iframe src={`${preview.url}#toolbar=0&navpanes=0&view=FitH`} title={`Preview of ${preview.fileName}`} className="h-[82dvh] w-full bg-card" />
+              ) : preview.mediaType.startsWith("image/") || /\.(png|jpe?g)$/i.test(preview.fileName) ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={preview.url} alt={preview.fileName} className="mx-auto max-h-[82dvh] max-w-full object-contain" />
+              ) : <div className="p-8 text-center text-sm text-muted-foreground">Preview isn&apos;t available for this file type. Download it to view.</div>}
+            </div>
+          </div>
+        </div>
+      ), document.body) : null}
+    </>
   );
 }
 
@@ -195,7 +351,7 @@ function ScreeningForm({ review, onChanged }: { review: KycReview; onChanged: ()
         value={result}
         onChange={(v) => setResult(v as typeof result)}
         options={[
-          { value: "CLEAR", label: "Clear: no matches" },
+          { value: "CLEAR", label: "Clear: all is good" },
           { value: "REVIEW_REQUIRED", label: "Review required: possible match (e.g. a politically exposed person)" },
           { value: "REJECTED", label: "Rejected: a confirmed sanctions match" },
         ]}
@@ -373,7 +529,7 @@ function ChecklistEditor({ templates, onDone, onCancel }: { templates: KycTempla
       onCancel={onCancel}
       onSubmit={async () => {
         const clean = items.filter((i) => i.label.trim()).map((i) => ({ ...i, label: i.label.trim(), code: i.code.trim() || i.label.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_") }));
-        await saveKycTemplate(code.trim(), { clientType, requirements: clean, reason }, existing?.version);
+        await saveKycTemplate(code.trim(), { clientType, requirements: clean, reason }, existing?.version ?? 0);
         onDone();
       }}
     >
