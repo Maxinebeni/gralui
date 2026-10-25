@@ -12,6 +12,7 @@ import { SlideOver } from "@/components/gral/shell";
 import { NavyButton, OutlineButton } from "@/components/gral/ui";
 import { createClient, listManagers, updateClient, type ClientInput } from "@/lib/api";
 import { clientEditPermissions } from "@/lib/permissions";
+import { INDUSTRIES } from "@/lib/reference-data";
 import type { Client, ClientType, Role, SessionUser } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -83,7 +84,7 @@ function validate(v: FormValues): Errors {
   const e: Errors = {};
   if (v.name.trim().length < 2) e.name = "Enter the company name.";
   if (!v.type) e.type = "Choose the client type.";
-  if (!v.sector.trim()) e.sector = "Enter the sector, for example Energy or Banking.";
+  if (!v.sector.trim()) e.sector = "Choose the sector.";
   if (!v.address.trim()) e.address = "Enter the physical address.";
   if (!v.contactName.trim()) e.contactName = "Enter the contact person's name.";
   if (!v.contactTitle.trim()) e.contactTitle = "Enter the contact person's job title.";
@@ -251,14 +252,7 @@ export function ClientFormPanel({
             </select>
           </Field>
           <Field id="sector" label="Sector" error={errors.sector}>
-            <input
-              id="sector"
-              value={values.sector}
-              onChange={(e) => set("sector", e.target.value)}
-              placeholder="e.g. Energy"
-              className={inputClass(errors.sector)}
-              {...describedBy("sector", errors.sector)}
-            />
+            <IndustrySelect id="sector" value={values.sector} onChange={(v) => set("sector", v)} error={errors.sector} />
           </Field>
           <Field id="address" label="Physical address" error={errors.address} wide>
             <input
@@ -402,4 +396,53 @@ export function describedBy(id: string, error?: string) {
     "aria-invalid": error ? true : undefined,
     "aria-describedby": error ? `${id}-error` : undefined,
   };
+}
+const OTHER = "__other__";
+
+/** The industry list, plus "Other" with a text box for anything not listed. */
+export function IndustrySelect({
+  id,
+  value,
+  onChange,
+  error,
+}: {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  error?: string;
+}) {
+  const listed = INDUSTRIES.includes(value);
+  const [other, setOther] = useState(!!value && !listed);
+  return (
+    <div className="space-y-2">
+      <select
+        id={id}
+        value={other ? OTHER : value}
+        onChange={(e) => {
+          const next = e.target.value;
+          setOther(next === OTHER);
+          onChange(next === OTHER ? "" : next);
+        }}
+        className={inputClass(error)}
+        {...describedBy(id, error)}
+      >
+        <option value="">Select an industry</option>
+        {INDUSTRIES.map((i) => (
+          <option key={i} value={i}>
+            {i}
+          </option>
+        ))}
+        <option value={OTHER}>Other</option>
+      </select>
+      {other ? (
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          aria-label="Other industry"
+          className={inputClass(error)}
+          autoFocus
+        />
+      ) : null}
+    </div>
+  );
 }

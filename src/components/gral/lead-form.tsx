@@ -13,7 +13,7 @@ import { LEAD_SOURCES } from "@/lib/onboarding";
 import { onboardingPermissions } from "@/lib/permissions";
 import { todayIso } from "@/lib/renewals";
 import type { Lead, LeadType } from "@/lib/types";
-import { Field, Section, describedBy, inputClass } from "./client-form";
+import { Field, IndustrySelect, Section, describedBy, inputClass } from "./client-form";
 import { NavyButton, OutlineButton } from "./ui";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -63,7 +63,7 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
     e.preventDefault();
     const found: Partial<Record<keyof Values, string>> = {};
     if (v.name.trim().length < 2) found.name = v.type === "INDIVIDUAL" ? "Enter the person's full name." : "Enter the company name.";
-    if (!v.industry.trim()) found.industry = "Enter the industry, e.g. Hospitality.";
+    if (!v.industry.trim()) found.industry = "Choose the industry.";
     if (!v.source) found.source = "Choose where the lead came from.";
     if (!v.contactName.trim()) found.contactName = "Enter the contact person's name.";
     if (v.email.trim() && !EMAIL_PATTERN.test(v.email.trim())) found.email = "Enter a valid email, e.g. name@company.rw.";
@@ -127,7 +127,7 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
             <input id="leadName" value={v.name} onChange={(e) => set("name", e.target.value)} className={inputClass(errors.name)} {...describedBy("leadName", errors.name)} />
           </Field>
           <Field id="leadIndustry" label="Industry" error={errors.industry}>
-            <input id="leadIndustry" value={v.industry} onChange={(e) => set("industry", e.target.value)} className={inputClass(errors.industry)} {...describedBy("leadIndustry", errors.industry)} />
+            <IndustrySelect id="leadIndustry" value={v.industry} onChange={(x) => set("industry", x)} error={errors.industry} />
           </Field>
           <Field id="leadReceived" label="Enquiry received on" error={errors.receivedAt}>
             <input id="leadReceived" type="date" max={todayIso()} value={v.receivedAt} onChange={(e) => set("receivedAt", e.target.value)} className={inputClass(errors.receivedAt)} {...describedBy("leadReceived", errors.receivedAt)} />
