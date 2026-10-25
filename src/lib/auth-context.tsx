@@ -32,6 +32,8 @@ function writeDemoSession(user: SessionUser | null) {
 
 type AuthState = {
   user: SessionUser | null;
+  /** True when a previously authenticated backend session was revoked or expired. */
+  sessionExpired: boolean;
   /** False until the backend has said who is signed in. */
   ready: boolean;
   signIn: (email: string, password: string) => Promise<void>;
@@ -45,6 +47,7 @@ const AuthContext = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -76,6 +79,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Catch revocation on the next API response, and also poll while the user is
+  // idle so an administrator ending a session is noticed without a page reload.
+  useEffect(() => {
+    if (MOCK_AUTH || !user) return;
+
+    const expire = () => {
+      setUser(null);
+      setSessionExpired(true);
+    };
+    const onSessionExpired = () => expire();
+    window.addEventListener("gral:session-expired", onSessionExpired);
+
+    let checking = false;
+    const checkSession = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const current = await getCurrentUser();
+        if (!current) expire();
+        else setUser(current);
+      } catch {
+        // A temporary network failure does not prove the backend session ended.
+      } finally {
+        checking = false;
+      }
+    };
+    const timer = window.setInterval(checkSession, 30_000);
+    window.addEventListener("focus", checkSession);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", checkSession);
+      window.removeEventListener("gral:session-expired", onSessionExpired);
+    };
+  }, [user]);
+
   // Demo mode: policy track actions follow the sample role, as they would follow
   // permissions on the backend. Set during render so pages that load data in
   // their own effects (which run before this provider's) already see it.
@@ -84,11 +122,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthState>(
     () => ({
       user,
+      sessionExpired,
       ready,
       roles: ROLES,
       signIn: async (email, password) => {
         const signedIn = await apiSignIn(email, password);
         setUser(signedIn);
+        setSessionExpired(false);
         writeDemoSession(signedIn);
       },
       signOut: async () => {
@@ -108,7 +148,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         writeDemoSession(updated);
       },
     }),
-    [user, ready],
+    [user, sessionExpired, ready],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

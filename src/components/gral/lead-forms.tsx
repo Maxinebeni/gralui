@@ -219,11 +219,12 @@ export function ClientForm({ lead, onDone }: { lead: Lead; onDone: () => void })
 
 export function StartTrackForm({ lead, onDone, onCancel }: { lead: Lead; onDone: () => void; onCancel: () => void }) {
   const [products, setProducts] = useState<ChoiceOption[]>([]);
+  const [productsLoaded, setProductsLoaded] = useState(false);
   const [productId, setProductId] = useState("");
   const [underwritingRole, setRole] = useState("GI_UNDERWRITING_MANAGER");
   const [property, setProperty] = useState(false);
   useEffect(() => {
-    onboardingOptions().then((o) => setProducts(o.products));
+    onboardingOptions().then((o) => setProducts(o.products)).finally(() => setProductsLoaded(true));
   }, []);
   return (
     <ActionForm
@@ -238,6 +239,7 @@ export function StartTrackForm({ lead, onDone, onCancel }: { lead: Lead; onDone:
       }}
     >
       <SelectInput id="tr-product" label="Product" value={productId} onChange={setProductId} placeholder="Select a product" options={products.map((p) => ({ value: p.id, label: p.name }))} wide />
+      {productsLoaded && products.length === 0 ? <p className="text-xs text-muted-foreground sm:col-span-2">No active products are linked to an active insurer in the catalog.</p> : null}
       <SelectInput
         id="tr-role"
         label="Underwriting by"
