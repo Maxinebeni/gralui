@@ -4191,6 +4191,12 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
     const problem = await readProblem(res.clone());
     if (problem.code === "CSRF_INVALID") res = await send();
   }
+  // A revoked or expired backend session is authoritative. Notify the auth
+  // provider so the open tab clears its local user state and returns to login.
+  // Ignore auth endpoints because 401 there can mean an ordinary failed login.
+  if (res.status === 401 && !path.startsWith("/api/v1/auth/")) {
+    if (typeof window !== "undefined") window.dispatchEvent(new Event("gral:session-expired"));
+  }
   return res;
 }
 

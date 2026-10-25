@@ -9,7 +9,7 @@ import { useAuth } from "@/lib/auth-context";
 
 export function LoginForm() {
   const router = useRouter();
-  const { user, ready, signIn } = useAuth();
+  const { user, ready, sessionExpired, signIn } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -53,6 +53,12 @@ export function LoginForm() {
           <img src="/favicon_io/android-chrome-512x512.png" alt="Global Risk Advisors Ltd" className="h-24 w-auto" />
           <p className="mt-3 text-sm text-muted-foreground">Thinking Beyond Tomorrow.</p>
         </div>
+
+        {sessionExpired ? (
+          <p role="alert" className="mt-5 rounded-xl bg-warning-soft px-3.5 py-3 text-sm font-medium text-warning">
+            Your session was ended or expired. Please sign in again.
+          </p>
+        ) : null}
 
         <form className="mt-7 space-y-4" onSubmit={handleSubmit}>
           <div>
