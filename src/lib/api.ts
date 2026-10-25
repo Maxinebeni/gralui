@@ -555,8 +555,9 @@ type ProductView = {
   active: boolean;
   productLineCodes?: string[];
 };
-type CategoryView = { id: string; code: string; name: string; active: boolean };
-type InsurerTypeView = { id: string; code: string; name: string; active: boolean };
+type CategoryView = { id: string; code: string; name: string; termCode: string; active: boolean };
+type ProductTermView = { id: string; code: string; name: string; active: boolean };
+type InsurerTypeView = { id: string; code: string; name: string; active: boolean; termCodes?: string[] };
 
 type PolicyPeriodView = {
   id: string;
@@ -607,6 +608,7 @@ type Catalog = {
   insurers: InsurerView[];
   products: ProductView[];
   lines: CategoryView[];
+  terms: ProductTermView[];
   insurerTypes: InsurerTypeView[];
 };
 
@@ -625,14 +627,15 @@ async function getJson<T>(path: string): Promise<T | null> {
 
 async function loadCatalog(): Promise<Catalog | null> {
   if (CATALOG) return CATALOG;
-  const [insurers, products, lines, insurerTypes] = await Promise.all([
+  const [insurers, products, lines, insurerTypes, terms] = await Promise.all([
     getJson<InsurerView[]>("/api/v1/policy/catalog/insurers"),
     getJson<ProductView[]>("/api/v1/policy/catalog/products"),
     getJson<CategoryView[]>("/api/v1/policy/catalog/product-lines"),
     getJson<InsurerTypeView[]>("/api/v1/policy/catalog/insurer-types"),
+    getJson<ProductTermView[]>("/api/v1/policy/catalog/product-terms"),
   ]);
-  if (!insurers?.length || !products?.length) return null;
-  CATALOG = { insurers, products, lines: lines ?? [], insurerTypes: insurerTypes ?? [] };
+  if (!insurers || !products) return null;
+  CATALOG = { insurers, products, lines: lines ?? [], insurerTypes: insurerTypes ?? [], terms: terms ?? [] };
   return CATALOG;
 }
 
@@ -2640,6 +2643,93 @@ export async function insurersForProduct(productId: string): Promise<string[] | 
   const insurers = catalog.insurers.filter((insurer) => insurer.active);
   await loadInsurerProductLinks(insurers);
   return insurers.filter((insurer) => INSURER_PRODUCT_IDS.get(insurer.id)?.includes(productId)).map((insurer) => insurer.id);
+}
+
+export type InsurerProductCatalog = {
+  insurers: { id: string; name: string; typeCode: string; supportedTermCodes: string[] }[];
+  products: { id: string; name: string; termCode: string }[];
+  insurerTypes: { code: string; name: string; termCodes: string[] }[];
+  productTerms: { code: string; name: string }[];
+  productLines: { code: string; name: string; termCode: string }[];
+  linkedProductIds: Record<string, string[]>;
+};
+
+/** Load active catalog entries and their current insurer-product links for management. */
+export async function getInsurerProductCatalog(): Promise<InsurerProductCatalog> {
+  if (MOCK_AUTH) throw new Error("Sign in to the backend as a GI Underwriting Manager to manage insurer products.");
+  const catalog = await loadCatalog();
+  if (!catalog) throw new Error("Could not load the insurer and product catalogs.");
+  const activeInsurers = catalog.insurers.filter((insurer) => insurer.active);
+  const activeProducts = catalog.products.filter((product) => product.active);
+  const linkedProductIds: Record<string, string[]> = {};
+  await Promise.all(activeInsurers.map(async (insurer) => {
+    const path = `/api/v1/policy/catalog/insurers/${insurer.id}/products`;
+    const res = await apiFetch(path);
+    if (!res.ok) throw new Error(await catalogApiProblem(res, `Could not load products for ${insurer.name}.`));
+    const products = (await res.json()) as ProductView[];
+    const ids = products.filter((product) => product.active).map((product) => product.id);
+    linkedProductIds[insurer.id] = ids;
+    INSURER_PRODUCT_IDS.set(insurer.id, ids);
+  }));
+  return {
+    insurers: activeInsurers.map((insurer) => ({
+      id: insurer.id,
+      name: insurer.name,
+      typeCode: insurer.typeCode,
+      supportedTermCodes: catalog.insurerTypes.find((type) => type.code === insurer.typeCode)?.termCodes ?? [],
+    })),
+    products: activeProducts.map((product) => ({ id: product.id, name: product.name, termCode: product.termCode })),
+    insurerTypes: catalog.insurerTypes.filter((type) => type.active).map((type) => ({ code: type.code, name: type.name, termCodes: type.termCodes ?? [] })),
+    productTerms: catalog.terms.filter((term) => term.active).map((term) => ({ code: term.code, name: term.name })),
+    productLines: catalog.lines.filter((line) => line.active).map((line) => ({ code: line.code, name: line.name, termCode: line.termCode })),
+    linkedProductIds,
+  };
+}
+
+/** Create the backend-audited insurer-product link. */
+export async function linkProductToInsurer(insurerId: string, productId: string, reason: string): Promise<void> {
+  if (!reason.trim()) throw new Error("Give a reason for linking this product to the insurer.");
+  const res = await apiFetch(`/api/v1/policy/catalog/insurers/${insurerId}/products/${productId}`, {
+    method: "POST",
+    body: JSON.stringify({ reason: reason.trim() }),
+  });
+  if (!res.ok) throw new Error(await catalogApiProblem(res, "Could not link the product to the insurer."));
+  INSURER_PRODUCT_IDS.delete(insurerId);
+}
+
+export async function addInsurer(input: { code: string; name: string; typeCode: string; reason: string }): Promise<void> {
+  if (!input.reason.trim()) throw new Error("Give a reason for adding this insurer.");
+  const res = await apiFetch("/api/v1/policy/catalog/insurers", { method: "POST", body: JSON.stringify({ ...input, reason: input.reason.trim() }) });
+  if (!res.ok) throw new Error(await catalogApiProblem(res, "Could not add the insurer."));
+  CATALOG = null;
+  INSURER_PRODUCT_IDS.clear();
+}
+
+export async function addCatalogProduct(input: { code: string; name: string; notes?: string; termCode: string; productLineCodes: string[]; reason: string }): Promise<void> {
+  if (!input.reason.trim()) throw new Error("Give a reason for adding this product.");
+  if (!input.productLineCodes.length) throw new Error("Choose at least one product line.");
+  const res = await apiFetch("/api/v1/policy/catalog/products", { method: "POST", body: JSON.stringify({ ...input, notes: input.notes?.trim() || undefined, reason: input.reason.trim() }) });
+  if (!res.ok) throw new Error(await catalogApiProblem(res, "Could not add the product."));
+  CATALOG = null;
+  INSURER_PRODUCT_IDS.clear();
+}
+
+export async function unlinkProductFromInsurer(insurerId: string, productId: string, reason: string): Promise<void> {
+  if (!reason.trim()) throw new Error("Give a reason for removing this product link.");
+  const params = new URLSearchParams({ reason: reason.trim() });
+  const res = await apiFetch(`/api/v1/policy/catalog/insurers/${insurerId}/products/${productId}?${params}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(await catalogApiProblem(res, "Could not remove the product link."));
+  INSURER_PRODUCT_IDS.delete(insurerId);
+}
+
+async function catalogApiProblem(res: Response, fallback: string): Promise<string> {
+  const problem = await readProblem(res);
+  if (res.status === 401) return "Your session has ended. Please sign in again.";
+  if (res.status === 403) return "You do not have permission to manage insurer products.";
+  if (problem.code === "INSURANCE_TYPE_MISMATCH") return "This insurer cannot offer products in that insurance term.";
+  if (problem.code === "INSURER_PRODUCT_ALREADY_LINKED") return "This product is already linked to the insurer.";
+  if (problem.code) return `${problem.code}: ${fallback}`;
+  return problem.title && problem.title !== "Bad Request" ? problem.title : fallback;
 }
 
 /** Name of a person, insurer or product from its ID. Demo IDs are already names. */
