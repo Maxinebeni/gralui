@@ -2867,12 +2867,23 @@ export type AssessmentInput = {
 /** Step 2: the meeting and needs assessment, with the pre-meeting request, the summary and the client's confirmation. */
 export async function recordAssessment(lead: Lead, input: AssessmentInput): Promise<Lead> {
   const subject = { type: "LEAD" as const, id: lead.id };
-  const [request, summary, confirmation] = await Promise.all([
+  const [requestUp, summaryUp, confirmationUp] = await Promise.all([
     uploadProof(subject, input.request, "PRE_MEETING_REQUEST"),
     uploadProof(subject, input.summary, "MEETING_SUMMARY"),
     uploadProof(subject, input.confirmation, "MEETING_CONFIRMATION"),
   ]);
-  const fields = { meetingAt: instantFrom(input.meetingAt), needs: input.needs.trim(), assets: input.assets.trim(), employeeCount: input.employeeCount, existingCover: input.existingCover.trim() };
+  // The back end expects the story in order: request, meeting, summary, confirmation.
+  const pickedDay = input.meetingAt.slice(0, 10);
+  const isToday = pickedDay >= todayIso();
+  const endMs = Date.now() - 60_000;
+  const when = (step: number) =>
+    isToday
+      ? new Date(endMs - (3 - step) * 10_000).toISOString()
+      : `${pickedDay}T${String(9 + step).padStart(2, "0")}:00:00Z`;
+  const request = { ...requestUp, occurredAt: when(0) };
+  const summary = { ...summaryUp, occurredAt: when(2) };
+  const confirmation = { ...confirmationUp, occurredAt: when(3) };
+  const fields = { meetingAt: when(1), needs: input.needs.trim(), assets: input.assets.trim(), employeeCount: input.employeeCount, existingCover: input.existingCover.trim() };
   if (MOCK_AUTH) {
     return demoLeadCommand(lead, "LEAD_ASSESSED", (l) => {
       if (!l.confirmed || !l.ownerId) throw new Error(ONBOARDING_MESSAGES.LEAD_NOT_CONFIRMED);
@@ -3116,7 +3127,7 @@ export async function saveKycTemplate(
     else DEMO_KYC_TEMPLATES.push(saved);
     return saved;
   }
-  return sendOnboarding<KycTemplate>("PUT", `/api/v1/kyc-templates/${encodeURIComponent(code)}`, { expectedVersion, ...input }, "Could not save the KYC checklist.");
+  return sendOnboarding<KycTemplate>("PUT", `/api/v1/kyc-templates/${encodeURIComponent(code)}`, { expectedVersion: expectedVersion ?? 0, ...input }, "Could not save the KYC checklist.");
 }
 
 export async function getClientKyc(clientId: string): Promise<{ summary: KycGate | null; reviews: KycReview[] }> {
