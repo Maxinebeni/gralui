@@ -3101,7 +3101,7 @@ const TRACK_ROUTES: Record<string, { path: string; purpose?: string; classificat
   SURVEY: { path: "risk-survey", purpose: "RISK_SURVEY", shape: "nested" },
   SURVEY_NOT_APPLICABLE: { path: "risk-survey-not-applicable", shape: "plain" },
   PROGRAM: { path: "program", purpose: "PROGRAM", classification: "APPROVAL_EVIDENCE", shape: "nested" },
-  LICENSE: { path: "insurer-license", purpose: "INSURER_LICENSE", shape: "nested" },
+  LICENSE: { path: "insurer-license", purpose: "INSURER_LICENSE", classification: "CORRESPONDENCE", shape: "nested" },
   SINGLE_SOURCE: { path: "request-single-source", purpose: "SINGLE_SOURCE", shape: "flat" },
   RFQ: { path: "dispatch-rfq", purpose: "RFQ", shape: "nested" },
   INSURER_RESPONSE: { path: "insurer-response", shape: "custom" },
@@ -3135,6 +3135,9 @@ export async function runTrackAction(track: PolicyTrack, input: TrackActionInput
   if (reasonRequired && !input.reason?.trim()) throw new Error("Give the reason. It is kept in the history.");
   const subject = { type: "ONBOARDING" as const, id: track.id };
   const f = input.fields ?? {};
+  if (input.action === "LICENSE" && (!f.insurerId || !f.validUntil || !String(f.source ?? "").trim() || !input.evidence?.main)) {
+    throw new Error("Choose an insurer, enter the licence expiry date and source, and attach the licence evidence file.");
+  }
   const purpose = input.action === "LICENSE" ? `INSURER_LICENSE_${String(f.insurerId ?? "").replace(/-/g, "")}` : route.purpose;
 
   const proofs: Record<string, Awaited<ReturnType<typeof uploadProof>>> = {};
@@ -4334,6 +4337,40 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
     if (typeof window !== "undefined") window.dispatchEvent(new Event("gral:session-expired"));
   }
   return res;
+}
+
+export type InboxNotification = {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  readAt: string | null;
+};
+
+export type NotificationInbox = { items: InboxNotification[]; unreadCount: number };
+
+/** Fresh CSRF token for the STOMP CONNECT frame after the session is established. */
+export async function getNotificationSocketCsrf(): Promise<{ headerName: string; token: string }> {
+  return getCsrf();
+}
+
+/** Load the signed-in user's durable notification inbox and unread count. */
+export async function getNotificationInbox(): Promise<NotificationInbox> {
+  const [inboxResponse, countResponse] = await Promise.all([
+    apiFetch("/api/v1/notifications?page=0&size=20&unreadOnly=false"),
+    apiFetch("/api/v1/notifications/unread-count"),
+  ]);
+  if (!inboxResponse.ok) throw new Error(await onboardingProblem(inboxResponse, "Could not load notifications."));
+  if (!countResponse.ok) throw new Error(await onboardingProblem(countResponse, "Could not load notification count."));
+  const inbox = (await inboxResponse.json()) as { items?: InboxNotification[] };
+  const count = (await countResponse.json()) as { count?: number };
+  return { items: inbox.items ?? [], unreadCount: count.count ?? 0 };
+}
+
+export async function markNotificationRead(notificationId: string): Promise<void> {
+  const response = await apiFetch(`/api/v1/notifications/${encodeURIComponent(notificationId)}/read`, { method: "POST" });
+  if (!response.ok) throw new Error(await onboardingProblem(response, "Could not mark the notification as read."));
 }
 
 // Backend role codes translated to the frontend's role names. Add codes here

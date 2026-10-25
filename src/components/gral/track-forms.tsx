@@ -405,6 +405,10 @@ function RfqForm({ title, track: t, options, run, destination, onCancel }: { tit
   useEffect(() => {
     let current = true;
     setProductInsurers(null);
+    console.log("[Send requests for quotations] Product being checked", {
+      productId: t.productId,
+      productName: t.productName,
+    });
     insurersForProduct(t.productId).then((ids) => {
       if (current) setProductInsurers(ids === null ? options.insurers : options.insurers.filter((insurer) => ids.includes(insurer.id)));
     }).catch(() => {
@@ -719,12 +723,14 @@ function SideForm({ action, track: t, options, run, onCancel }: { action: string
       return (
         <ActionForm title="Insurer licence check" submitLabel="Record the check" success="Licence check recorded." onCancel={onCancel} onSubmit={() => {
           if (!insurerId || !validUntil) throw new Error("Choose the insurer and the licence's end date.");
-          return run({ action, fields: { insurerId, validUntil, source: source.trim() }, evidence: evidence ? { main: evidence } : undefined });
+          if (!source.trim()) throw new Error("Enter the source where you checked the licence.");
+          if (!evidence) throw new Error("Attach the insurer licence or register extract.");
+          return run({ action, fields: { insurerId, validUntil, source: source.trim() }, evidence: { main: evidence } });
         }}>
           <SelectInput id="lc-ins" label="Insurer" value={insurerId} onChange={setInsurerId} placeholder="Select an insurer" options={options.insurers.map((i) => ({ value: i.id, label: i.name }))} wide />
           <TextInput id="lc-valid" label="Licence valid until" type="date" min={todayIso()} value={validUntil} onChange={setValidUntil} />
           <TextInput id="lc-src" label="Source checked" value={source} onChange={setSource} />
-          <EvidenceField label="The licence or register extract" destination={`Insurer licence · ${t.productName}`} value={evidence} onChange={setEvidence} dateLabel="Checked on" />
+          <EvidenceField label="Required licence or register evidence" destination={`Insurer licence · ${t.productName}`} value={evidence} onChange={setEvidence} dateLabel="Checked on" />
         </ActionForm>
       );
     case "REVISE":
