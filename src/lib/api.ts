@@ -612,6 +612,7 @@ type Catalog = {
 
 /** The insurer and product catalog from the backend, loaded once. */
 let CATALOG: Catalog | null = null;
+const INSURER_PRODUCT_IDS = new Map<string, string[]>();
 
 async function getJson<T>(path: string): Promise<T | null> {
   try {
@@ -633,6 +634,14 @@ async function loadCatalog(): Promise<Catalog | null> {
   if (!insurers?.length || !products?.length) return null;
   CATALOG = { insurers, products, lines: lines ?? [], insurerTypes: insurerTypes ?? [] };
   return CATALOG;
+}
+
+async function loadInsurerProductLinks(insurers: InsurerView[]): Promise<void> {
+  await Promise.all(insurers.filter((insurer) => insurer.active).map(async (insurer) => {
+    if (INSURER_PRODUCT_IDS.has(insurer.id)) return;
+    const products = await getJson<ProductView[]>(`/api/v1/policy/catalog/insurers/${insurer.id}/products`);
+    if (products) INSURER_PRODUCT_IDS.set(insurer.id, products.filter((product) => product.active).map((product) => product.id));
+  }));
 }
 
 /** Dropdown lists for the policy form, grouped with headings. */
@@ -2153,6 +2162,23 @@ export async function replaceDocument(subject: DocumentSubject, doc: StoredDocum
   };
 }
 
+/** Load an exact document version for inline preview or download. */
+export async function getDocumentContent(
+  subject: DocumentSubject,
+  doc: StoredDocument,
+  version = doc.version,
+): Promise<Blob> {
+  if (!usesDocumentBackend(subject)) {
+    const blob = LOCAL_FILES.get(`${doc.id}:${version}`);
+    if (!blob) throw new Error("This is a sample record; there is no file to download.");
+    return blob;
+  }
+  const params = new URLSearchParams({ subjectType: subject.type, subjectId: subject.id, purpose: doc.purpose });
+  const res = await apiFetch(`/api/v1/documents/${doc.id}/versions/${version}/content?${params}`);
+  if (!res.ok) throw new Error(await documentError(res, "Could not load the file."));
+  return res.blob();
+}
+
 /** Download an exact version of a document. */
 export async function downloadDocument(
   subject: DocumentSubject,
@@ -2160,16 +2186,7 @@ export async function downloadDocument(
   version = doc.version,
 ): Promise<void> {
   const name = version === doc.version ? doc.originalFileName : doc.previous.find((p) => p.version === version)?.originalFileName ?? doc.originalFileName;
-  let blob: Blob | undefined;
-  if (!usesDocumentBackend(subject)) {
-    blob = LOCAL_FILES.get(`${doc.id}:${version}`);
-    if (!blob) throw new Error("This is a sample record; there is no file to download.");
-  } else {
-    const params = new URLSearchParams({ subjectType: subject.type, subjectId: subject.id, purpose: doc.purpose });
-    const res = await apiFetch(`/api/v1/documents/${doc.id}/versions/${version}/content?${params}`);
-    if (!res.ok) throw new Error(await documentError(res, "Could not download the file."));
-    blob = await res.blob();
-  }
+  const blob = await getDocumentContent(subject, doc, version);
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -2558,7 +2575,16 @@ async function onboardingProblem(res: Response, fallback: string): Promise<strin
 
 async function sendOnboarding<T>(method: "POST" | "PUT", path: string, body: unknown, fallback: string): Promise<T> {
   const res = await apiFetch(path, { method, body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(await onboardingProblem(res, fallback));
+  if (!res.ok) {
+    console.error("[Onboarding API] Backend request failed", {
+      method,
+      path,
+      status: res.status,
+      statusText: res.statusText,
+      responseBody: await res.clone().text(),
+    });
+    throw new Error(await onboardingProblem(res, fallback));
+  }
   return (await res.json()) as T;
 }
 
@@ -2596,11 +2622,24 @@ export async function onboardingOptions(): Promise<{ products: ChoiceOption[]; i
     return { products: names(PRODUCT_GROUPS), insurers: names(INSURER_GROUPS), accountExecutives: (await mockListManagers()).map((n) => ({ id: n, name: n })) };
   }
   const [catalog, managers] = await Promise.all([loadCatalog(), loadManagers()]);
+  const activeInsurers = (catalog?.insurers ?? []).filter((insurer) => insurer.active);
+  await loadInsurerProductLinks(activeInsurers);
+  const supportedProductIds = new Set(activeInsurers.flatMap((insurer) => INSURER_PRODUCT_IDS.get(insurer.id) ?? []));
   return {
-    products: (catalog?.products ?? []).filter((p) => p.active).map((p) => ({ id: p.id, name: p.name })),
-    insurers: (catalog?.insurers ?? []).filter((i) => i.active).map((i) => ({ id: i.id, name: i.name })),
+    products: (catalog?.products ?? []).filter((p) => p.active && supportedProductIds.has(p.id)).map((p) => ({ id: p.id, name: p.name })),
+    insurers: activeInsurers.map((i) => ({ id: i.id, name: i.name })),
     accountExecutives: managers.map((m) => ({ id: m.id, name: m.fullName })),
   };
+}
+
+/** Active insurers that the backend catalog links to a product. */
+export async function insurersForProduct(productId: string): Promise<string[] | null> {
+  if (MOCK_AUTH) return null;
+  const catalog = await loadCatalog();
+  if (!catalog || !productId) return null;
+  const insurers = catalog.insurers.filter((insurer) => insurer.active);
+  await loadInsurerProductLinks(insurers);
+  return insurers.filter((insurer) => INSURER_PRODUCT_IDS.get(insurer.id)?.includes(productId)).map((insurer) => insurer.id);
 }
 
 /** Name of a person, insurer or product from its ID. Demo IDs are already names. */
@@ -3077,7 +3116,10 @@ export async function saveKycTemplate(
     else DEMO_KYC_TEMPLATES.push(saved);
     return saved;
   }
-  return sendOnboarding<KycTemplate>("PUT", `/api/v1/kyc-templates/${encodeURIComponent(code)}`, { expectedVersion, ...input }, "Could not save the KYC checklist.");
+  const path = `/api/v1/kyc-templates/${encodeURIComponent(code)}`;
+  const body = { expectedVersion, ...input };
+  console.info("[KYC checklist request]", { method: "PUT", url: `${API_URL}${path}`, body });
+  return sendOnboarding<KycTemplate>("PUT", path, body, "Could not save the KYC checklist.");
 }
 
 export async function getClientKyc(clientId: string): Promise<{ summary: KycGate | null; reviews: KycReview[] }> {
@@ -3208,12 +3250,10 @@ export async function decideKycReview(review: KycReview, input: { decision: "APP
       };
     });
   }
-  return sendOnboarding<KycReview>(
-    "POST",
-    `/api/v1/kyc-cases/${review.id}/decisions`,
-    { command: kycCommand(review), decision: input.decision, reason: input.reason.trim(), documentId: p?.documentId, documentVersion: p?.documentVersion },
-    "Could not record the decision.",
-  );
+  const path = `/api/v1/kyc-cases/${review.id}/decisions`;
+  const body = { command: kycCommand(review), decision: input.decision, reason: input.reason.trim(), documentId: p?.documentId, documentVersion: p?.documentVersion };
+  console.info("[KYC decision request]", { method: "POST", url: `${API_URL}${path}`, body });
+  return sendOnboarding<KycReview>("POST", path, body, "Could not record the decision.");
 }
 
 export async function escalateKycReview(review: KycReview, input: { evidence: EvidenceInput; revisedDueAt: string; reason: string }): Promise<KycReview> {

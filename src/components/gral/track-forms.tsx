@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { ExternalLink } from "lucide-react";
-import { onboardingOptions, runTrackAction, type ChoiceOption, type EvidenceInput, type TrackActionInput, type TrackDetail } from "@/lib/api";
+import { insurersForProduct, onboardingOptions, runTrackAction, type ChoiceOption, type EvidenceInput, type TrackActionInput, type TrackDetail } from "@/lib/api";
 import { addWorkingDays } from "@/lib/claims";
 import { amountInWords, parseAmount } from "@/lib/amounts";
 import { formatRwf } from "@/lib/format";
@@ -400,7 +400,18 @@ function RfqForm({ title, track: t, options, run, destination, onCancel }: { tit
   const [chosen, setChosen] = useState<string[]>([]);
   const [responseDue, setResponseDue] = useState(addWorkingDays(todayIso(), 3));
   const [evidence, setEvidence] = useState<EvidenceInput | null>(null);
+  const [productInsurers, setProductInsurers] = useState<ChoiceOption[] | null>(null);
   const exception = !!t.approvalRequests.SINGLE_SOURCE;
+  useEffect(() => {
+    let current = true;
+    setProductInsurers(null);
+    insurersForProduct(t.productId).then((ids) => {
+      if (current) setProductInsurers(ids === null ? options.insurers : options.insurers.filter((insurer) => ids.includes(insurer.id)));
+    }).catch(() => {
+      if (current) setProductInsurers([]);
+    });
+    return () => { current = false; };
+  }, [t.productId, options.insurers]);
   return (
     <ActionForm
       title={title}
@@ -415,13 +426,14 @@ function RfqForm({ title, track: t, options, run, destination, onCancel }: { tit
       <fieldset className="sm:col-span-2">
         <Label>Insurers asked ({chosen.length} chosen)</Label>
         <div className="mt-1.5 grid max-h-56 gap-1 overflow-y-auto rounded-xl border border-border p-2 sm:grid-cols-2">
-          {options.insurers.map((i) => (
+          {productInsurers === null ? <p className="p-2 text-xs text-muted-foreground">Loading insurers that offer this product…</p> : productInsurers.length ? productInsurers.map((i) => (
             <label key={i.id} className="flex items-center gap-2 rounded-lg px-2 py-1 text-xs hover:bg-secondary/60">
               <input type="checkbox" checked={chosen.includes(i.id)} onChange={(e) => setChosen((c) => (e.target.checked ? [...c, i.id] : c.filter((x) => x !== i.id)))} />
               {i.name}
             </label>
-          ))}
+          )) : <p className="p-2 text-xs text-muted-foreground">No active insurers are listed as offering this product. Check the insurer product catalog.</p>}
         </div>
+        {productInsurers?.length ? <p className="mt-1 text-[11px] text-muted-foreground">Showing all active insurers listed for {t.productName ?? "this product"}.</p> : null}
       </fieldset>
       <TextInput id="rfq-due" label="Replies due by" type="date" min={todayIso()} value={responseDue} onChange={setResponseDue} />
       <EvidenceField label="Terms of reference sent to the insurers" destination={destination} value={evidence} onChange={setEvidence} dateLabel="Sent on" />
