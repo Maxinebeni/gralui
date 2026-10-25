@@ -117,3 +117,22 @@ export const PRODUCT_GROUPS: OptionGroup[] = [
 
 export const INSURERS: string[] = INSURER_GROUPS.flatMap((g) => g.options);
 export const CLASSES_OF_INSURANCE: string[] = PRODUCT_GROUPS.flatMap((g) => g.options);
+/** Industries for clients and leads. "Other" lets the person type one that is not listed. */
+export const INDUSTRIES: string[] = [
+  "Agriculture",
+  "Banking & Finance",
+  "Construction & Real Estate",
+  "Education",
+  "Energy & Utilities",
+  "Government & Public Sector",
+  "Health",
+  "Hospitality & Tourism",
+  "ICT & Telecoms",
+  "Insurance",
+  "Manufacturing",
+  "Mining",
+  "NGO & Non-profit",
+  "Private individual",
+  "Retail & FMCG",
+  "Transport & Logistics",
+];

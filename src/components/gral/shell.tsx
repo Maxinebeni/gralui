@@ -17,7 +17,8 @@ import {
   usesBackendPermissions,
   type NavItem,
 } from "@/lib/permissions";
-import { listApprovals } from "@/lib/api";
+import { listApprovals, listNotifications, type Notice } from "@/lib/api";
+import { formatDate, todayIso } from "@/lib/renewals";
 import { canDecide } from "@/lib/approvals";
 import { CalendarMenu } from "./calendar-menu";
 import { GlobalSearch } from "./global-search";
@@ -89,7 +90,11 @@ export function Shell({ children }: { children: ReactNode }) {
     listApprovals()
       .then((list) => setWaiting(list.filter((r) => canDecide(r, user.role)).length))
       .catch(() => setWaiting(0));
-  }, [user.role, pathname]);
+    listNotifications(user)
+      .then(setNotices)
+      .catch(() => setNotices([]));
+    // Refreshed on every page change, so finished work drops off the list.
+  }, [user.id, user.name, user.role, pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="min-h-screen bg-background">
@@ -160,7 +165,6 @@ export function Shell({ children }: { children: ReactNode }) {
             <IconBtn label="Search (Ctrl+K)" mobile onClick={() => setSearchOpen(true)}>
               <Search className="size-4" />
             </IconBtn>
-            {/* Notifications: for now, approvals waiting for this person's decision. */}
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label={waiting + unreadNotificationCount > 0 ? `Notifications, ${waiting + unreadNotificationCount} new` : "Notifications"}
@@ -173,7 +177,7 @@ export function Shell({ children }: { children: ReactNode }) {
                   </span>
                 ) : null}
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" sideOffset={8} className="w-72 rounded-2xl p-2 shadow-[var(--shadow-float)]">
+              <DropdownMenuContent align="end" sideOffset={8} className="w-80 rounded-2xl p-2 shadow-[var(--shadow-float)]">
                 <p className="px-3 py-2 text-sm font-semibold">Notifications</p>
                 <div className="my-1 h-px bg-border" />
                 {notifications.map((notification) => (

@@ -112,7 +112,7 @@ export const DEMO_LEADS: Lead[] = [
   lead({
     id: "LD-2026-009",
     name: "Kivu Lakeside Hotels Ltd",
-    industry: "Hospitality",
+    industry: "Hospitality & Tourism",
     source: "Website enquiry",
     contactName: "Patrick Mugabo",
     email: "p.mugabo@kivulakeside.rw",
@@ -137,7 +137,7 @@ export const DEMO_LEADS: Lead[] = [
   lead({
     id: "LD-2026-008",
     name: "Nyarugenge Logistics Ltd",
-    industry: "Logistics",
+    industry: "Transport & Logistics",
     source: "Referral from a partner or insurer",
     contactName: "Samuel Kayitare",
     email: "s.kayitare@nyarugenge-logistics.rw",
@@ -154,7 +154,7 @@ export const DEMO_LEADS: Lead[] = [
   lead({
     id: "LD-2026-007",
     name: "Umurage Microfinance Ltd",
-    industry: "Finance",
+    industry: "Banking & Finance",
     source: "Tender invitation",
     contactName: "Grace Uwase",
     email: "g.uwase@umurage.rw",
@@ -170,7 +170,7 @@ export const DEMO_LEADS: Lead[] = [
   lead({
     id: "LD-2026-006",
     name: "Inzira Construction Ltd",
-    industry: "Construction",
+    industry: "Construction & Real Estate",
     source: "Referral from an existing client",
     contactName: "Eric Ndayisaba",
     email: "e.ndayisaba@inzira.rw",
