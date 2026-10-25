@@ -2760,10 +2760,13 @@ export type NewLeadInput = {
   receivedAt: string;
   /** The Accounts Executive, when the CRM Manager assigns one straight away. */
   ownerId?: string;
+  /** Required when assigning an Accounts Executive during lead registration. */
+  assignmentReason?: string;
 };
 
 /** Step 1: register the lead, then assign the Accounts Executive if one was chosen. */
 export async function registerLead(input: NewLeadInput): Promise<Lead> {
+  if (input.ownerId) requireReason(input.assignmentReason ?? "");
   const body = {
     commandId: crypto.randomUUID(),
     name: input.name.trim(),
@@ -2797,32 +2800,35 @@ export async function registerLead(input: NewLeadInput): Promise<Lead> {
     };
     DEMO_LEADS.unshift(created);
     demoLog(created.id, "LEAD_REGISTERED");
-    if (input.ownerId) demoLog(created.id, "LEAD_ASSIGNED");
+    if (input.ownerId) demoLog(created.id, "LEAD_ASSIGNED", input.assignmentReason);
     return demoLeadView(created);
   }
   let lead = await sendOnboarding<Lead>("POST", "/api/v1/leads", body, "Could not register the lead. Please try again.");
   if (input.ownerId && input.ownerId !== lead.ownerId) {
     // The lead is saved; a failed assignment is shown on the lead to retry, not undone.
-    lead = await assignLead(lead, input.ownerId).catch(() => lead);
+    lead = await assignLead(lead, input.ownerId, input.assignmentReason!).catch(() => lead);
   }
   return decorateLead(lead);
 }
 
-function demoLeadCommand(lead: Lead, action: string, change: (l: Lead) => Partial<Lead>): Lead {
+function demoLeadCommand(lead: Lead, action: string, change: (l: Lead) => Partial<Lead>, reason?: string): Lead {
   const index = DEMO_LEADS.findIndex((l) => l.id === lead.id);
   const current = DEMO_LEADS[index];
   if (!current) throw new Error("This lead could not be found.");
   if (current.version !== lead.version) throw new Error(ONBOARDING_MESSAGES.STALE_VERSION!);
   const updated = { ...current, ...change(current), version: current.version + 1, updatedAt: new Date().toISOString() };
   DEMO_LEADS[index] = updated;
-  demoLog(lead.id, action);
+  demoLog(lead.id, action, reason);
   return demoLeadView(updated);
 }
 
-export async function assignLead(lead: Lead, ownerId: string): Promise<Lead> {
-  if (MOCK_AUTH) return demoLeadCommand(lead, "LEAD_ASSIGNED", () => ({ ownerId }));
+export async function assignLead(lead: Lead, ownerId: string, reason: string): Promise<Lead> {
+  requireReason(reason);
+  if (MOCK_AUTH) return demoLeadCommand(lead, "LEAD_ASSIGNED", () => ({ ownerId }), reason.trim());
+  const path = `/api/v1/leads/${lead.id}/assignment`;
+  const body = { command: commandEnvelope(lead.version, reason.trim()), ownerId };
   return decorateLead(
-    await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/assignment`, { command: commandEnvelope(lead.version), ownerId }, "Could not assign the Accounts Executive."),
+    await sendOnboarding<Lead>("POST", path, body, "Could not assign the Accounts Executive."),
   );
 }
 

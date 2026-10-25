@@ -35,6 +35,10 @@ import { Chip, FloatCard, OutlineButton, Person } from "./ui";
 
 type StepState = "done" | "current" | "late" | "upcoming";
 
+function normalizedId(value?: string) {
+  return value?.trim().replace(/[{}-]/g, "").toLowerCase();
+}
+
 const RESPONSE_LABELS: Record<string, string> = {
   LEAD_RESPONSE: "First response",
   PRE_MEETING_REQUEST: "Pre-meeting request",
@@ -58,10 +62,18 @@ export function OnboardingCaseView({
   const perms = onboardingPermissions(user);
   const { lead: l, tracks } = detail;
   const t = track?.track;
+  const assignmentHistory = [...detail.history]
+    .filter((item) => /ASSIGN/i.test(item.action))
+    .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+  const assignmentReason = assignmentHistory.find((item) => item.reason?.trim())?.reason
+    ?? [...detail.history].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)).find((item) => item.reason?.trim())?.reason;
   const current = journeyStep(l, t);
   const [selected, setSelected] = useState(current ?? 11);
   const [adding, setAdding] = useState(false);
   const [options, setOptions] = useState<TrackOptions>({ products: [], insurers: [], accountExecutives: [] });
+  const matchedExecutive = options.accountExecutives.find((person) => normalizedId(person.id) === normalizedId(l.ownerId));
+  const assignedExecutiveName =
+    l.ownerName && normalizedId(l.ownerName) !== normalizedId(l.ownerId) ? l.ownerName : matchedExecutive?.name;
   useEffect(() => setSelected(current ?? 11), [current, t?.id]);
   useEffect(() => {
     onboardingOptions().then(setOptions);
@@ -151,6 +163,8 @@ export function OnboardingCaseView({
           n={selected}
           state={stateOf(selected)}
           lead={l}
+          assignedExecutiveName={assignedExecutiveName}
+          assignmentReason={assignmentReason}
           track={t}
           kyc={detail.kyc ?? t?.kyc ?? null}
           due={selected === current ? due : undefined}
@@ -343,6 +357,8 @@ function StepDetail({
   n,
   state,
   lead: l,
+  assignedExecutiveName,
+  assignmentReason,
   track: t,
   kyc,
   due,
@@ -356,6 +372,8 @@ function StepDetail({
   n: number;
   state: StepState;
   lead: Lead;
+  assignedExecutiveName?: string;
+  assignmentReason?: string;
   track?: PolicyTrack;
   kyc: LeadDetail["kyc"];
   due?: string;
@@ -447,6 +465,32 @@ function StepDetail({
                 <ActionForm
                   submitLabel="Confirm the registration"
                   success="Registration confirmed."
+                  title="Review lead registration"
+                  intro={
+                    <div className="space-y-3">
+                      <p>Review the lead details, assignment, and reason before confirming.</p>
+                      <dl className="grid gap-x-4 gap-y-2 rounded-xl border border-border bg-card p-3 sm:grid-cols-2">
+                        <Detail label="Lead" value={l.name} />
+                        <Detail label="Type" value={l.type === "INDIVIDUAL" ? "Individual" : "Company or organisation"} />
+                        <Detail label="Industry" value={l.industry} />
+                        <Detail label="Source" value={[l.source, l.sourceReference].filter(Boolean).join(" · ") || "Not recorded"} />
+                        <Detail label="Received" value={dateOf(l.receivedAt)} />
+                        <Detail label="Contact" value={[l.contactName, l.email, l.phone].filter(Boolean).join(" · ") || "Not recorded"} />
+                      </dl>
+                      <div className="space-y-2 rounded-xl bg-pale p-3">
+                        <div>
+                          <p className="text-[11px] font-medium text-muted-foreground">Assigned to</p>
+                          <p className="mt-1 text-xs text-foreground">
+                            {assignedExecutiveName ?? (l.ownerId ? `Assigned (ID: ${l.ownerId})` : "Not assigned")}
+                          </p>
+                        </div>
+                        <div className="border-t border-border/70 pt-2">
+                          <p className="text-[11px] font-medium text-muted-foreground">Assignment reason</p>
+                          <p className="mt-1 text-xs text-foreground">{assignmentReason || "Assignment reason is unavailable in the lead history."}</p>
+                        </div>
+                      </div>
+                    </div>
+                  }
                   onSubmit={async () => {
                     await confirmLead(l);
                     onChanged();
