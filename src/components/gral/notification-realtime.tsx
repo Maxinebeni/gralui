@@ -41,6 +41,11 @@ export function NotificationRealtime({
     if (!userId || MOCK_AUTH) return;
     let disposed = false;
     let client: Client | null = null;
+    // Without a socket the bell still checks the inbox every 30 seconds (see
+    // Shell), so a socket that cannot connect just stops retrying.
+    const giveUp = () => {
+      if (client) void client.deactivate();
+    };
 
     void (async () => {
       try {
@@ -48,6 +53,13 @@ export function NotificationRealtime({
         if (!configResponse.ok) throw new Error("Could not load the notification socket configuration.");
         const { url } = (await configResponse.json()) as { url: string };
         if (disposed) return;
+        // The session cookie belongs to this site (API calls go through its /api
+        // proxy), so a socket on another host cannot sign in.
+        if (new URL(url).host !== window.location.host) {
+          giveUp();
+          return;
+        }
+        let connected = false;
 
         client = new Client({
           brokerURL: url,
@@ -61,6 +73,7 @@ export function NotificationRealtime({
             client!.connectHeaders = { [csrf.headerName]: csrf.token };
           },
           onConnect: () => {
+            connected = true;
             client?.subscribe("/user/queue/notifications", (message) => {
               const notification = parseNotification(message);
               if (notification) onNotificationRef.current(notification);
@@ -69,14 +82,19 @@ export function NotificationRealtime({
           },
           onStompError: (frame) => {
             console.warn("Notification socket rejected the connection:", frame.headers.message ?? frame.body);
+            if (!connected) giveUp();
           },
           onWebSocketError: () => {
-            // STOMP retries automatically; REST inbox refreshes after reconnect.
+            // A socket that never connected will not start working by retrying.
+            if (!connected) giveUp();
           },
         });
         await client.activate();
       } catch (error) {
-        if (!disposed) console.warn("Could not connect to live notifications:", error);
+        if (!disposed) {
+          console.warn("Could not connect to live notifications:", error);
+          giveUp();
+        }
       }
     })();
 

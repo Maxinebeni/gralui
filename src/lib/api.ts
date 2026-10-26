@@ -1359,12 +1359,12 @@ function approvalTask(r: ApprovalRequest): WorkTask | null {
 /**
  * What the bell shows: approvals waiting for this person's decision and their
  * own open tasks, soonest due first. With the backend, only the backend's own
- * tasks count; sample tasks never notify a real user.
+ * tasks count; sample tasks never notify a real user. Built from approvals and
+ * tasks the caller already has, so nothing is fetched twice.
  */
 export type Notice = { key: string; title: string; detail?: string; href: string; due: string };
 
-export async function listNotifications(user: SessionUser): Promise<Notice[]> {
-  const [approvals, tasks] = await Promise.all([listApprovals().catch(() => []), listTasks().catch(() => [])]);
+export function buildNotices(approvals: ApprovalRequest[], tasks: WorkTask[], user: SessionUser): Notice[] {
   const decide: Notice[] = approvals
     .filter((r) => canDecide(r, user.role))
     .map((r) => ({
@@ -1390,8 +1390,9 @@ export async function listNotifications(user: SessionUser): Promise<Notice[]> {
   return [...decide, ...work].sort((a, b) => a.due.localeCompare(b.due));
 }
 
-export async function listTasks(): Promise<WorkTask[]> {
-  const approvals = await listApprovals();
+/** Pass the approvals when they are already loaded, so they are not fetched twice. */
+export async function listTasks(loadedApprovals?: ApprovalRequest[]): Promise<WorkTask[]> {
+  const approvals = loadedApprovals ?? (await listApprovals());
   const pendingRenewals = new Set(approvals.filter((a) => a.subjectType === "RENEWAL" && a.status === "PENDING").map((a) => a.subjectId));
   const system = [
     ...CLAIMS.map(claimTask),
@@ -2608,9 +2609,10 @@ async function onboardingProblem(res: Response, fallback: string): Promise<strin
   if (res.status === 401) return "Your session has ended. Please sign in again.";
   if (res.status === 403) return "You do not have permission to do this.";
   if (res.status === 404) return "This record could not be found.";
+  // A generic 400 with field names is more useful than "Invalid request".
+  if (res.status === 400 && problem.fields?.length) return `Please check these fields: ${problem.fields.join(", ")}.`;
   if (problem.code && ONBOARDING_MESSAGES[problem.code]) return ONBOARDING_MESSAGES[problem.code]!;
   if (problem.code) return blockerText(problem.code);
-  if (res.status === 400 && problem.fields?.length) return `Please check these fields: ${problem.fields.join(", ")}.`;
   if (problem.title && problem.title !== "Bad Request") return problem.title;
   return fallback;
 }
@@ -3356,7 +3358,6 @@ export async function submitKycReview(review: KycReview): Promise<KycReview> {
   if (MOCK_AUTH) {
     return demoKycCommand(review, "KYC_SUBMITTED", (r) => {
       if (r.items.some((i) => i.required && !i.documentId)) throw new Error(ONBOARDING_MESSAGES.KYC_DOCUMENTS_INCOMPLETE);
-      if (!r.screeningResult) throw new Error("Record the sanctions and watchlist screening first.");
       return { status: "SUBMITTED" };
     });
   }
@@ -3852,7 +3853,7 @@ export async function listClaimsSummary(): Promise<ClientClaim[]> {
   return (await listClaims()).filter((c) => !isClosed(c)).map(toClaimSummary);
 }
 
-function toClaimSummary(c: Claim): ClientClaim {
+export function toClaimSummary(c: Claim): ClientClaim {
   const sla = claimSla(c);
   return {
     id: c.id,
@@ -4283,6 +4284,11 @@ export async function listActivity(modules: { claims: boolean; renewals: boolean
     modules.claims ? listClaims().catch(() => []) : Promise.resolve([]),
     modules.renewals ? listRenewals() : Promise.resolve([]),
   ]);
+  return activityFrom(claims, renewals);
+}
+
+/** The activity in claims and renewals that are already loaded, newest first. */
+export function activityFrom(claims: Claim[], renewals: RenewalCase[]): ActivityItem[] {
   const items: ActivityItem[] = [
     ...claims.flatMap((c) =>
       c.history.map((e) => ({
