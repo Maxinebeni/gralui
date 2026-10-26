@@ -2560,10 +2560,10 @@ function commandEnvelope(version?: number, reason?: string) {
   return { commandId: crypto.randomUUID(), expectedVersion: version, ...(reason ? { reason } : {}) };
 }
 
-/** A date from a date box as an instant the backend accepts (never in the future). */
-function instantFrom(date: string): string {
+/** A date from a form as the instant the backend wants; "today" is a minute ago. Pass one clock when several dates must line up. */
+function instantFrom(date: string, now = Date.now()): string {
   if (date.length > 10) return date;
-  if (date >= todayIso()) return new Date(Date.now() - 60_000).toISOString();
+  if (date >= todayIso()) return new Date(now - 60_000).toISOString();
   return `${date}T09:00:00Z`;
 }
 
@@ -2997,13 +2997,22 @@ export type AssessmentInput = {
 
 /** Step 2: the meeting and needs assessment, with the pre-meeting request, the summary and the client's confirmation. */
 export async function recordAssessment(lead: Lead, input: AssessmentInput): Promise<Lead> {
+  // The backend checks the order: request on or before the meeting, summary on
+  // or after it, confirmation on or after the summary.
+  if (input.request.occurredAt > input.meetingAt) throw new Error("The pre-meeting request must be sent on or before the meeting date.");
+  if (input.summary.occurredAt < input.meetingAt) throw new Error("The meeting summary must be written on or after the meeting date.");
+  if (input.confirmation.occurredAt < input.summary.occurredAt) throw new Error("The client's confirmation must be on or after the summary date.");
+  // Dates on the same day get the same time, so their order holds.
+  const clock = Date.now();
+  const meetingAt = instantFrom(input.meetingAt, clock);
+  const at = (date: string) => ({ occurredAt: instantFrom(date, clock) });
   const subject = { type: "LEAD" as const, id: lead.id };
   const [request, summary, confirmation] = await Promise.all([
-    uploadProof(subject, input.request, "PRE_MEETING_REQUEST"),
-    uploadProof(subject, input.summary, "MEETING_SUMMARY"),
-    uploadProof(subject, input.confirmation, "MEETING_CONFIRMATION"),
+    uploadProof(subject, { ...input.request, ...at(input.request.occurredAt) }, "PRE_MEETING_REQUEST"),
+    uploadProof(subject, { ...input.summary, ...at(input.summary.occurredAt) }, "MEETING_SUMMARY"),
+    uploadProof(subject, { ...input.confirmation, ...at(input.confirmation.occurredAt) }, "MEETING_CONFIRMATION"),
   ]);
-  const fields = { meetingAt: instantFrom(input.meetingAt), needs: input.needs.trim(), assets: input.assets.trim(), employeeCount: input.employeeCount, existingCover: input.existingCover.trim() };
+  const fields = { meetingAt, needs: input.needs.trim(), assets: input.assets.trim(), employeeCount: input.employeeCount, existingCover: input.existingCover.trim() };
   if (MOCK_AUTH) {
     return demoLeadCommand(lead, "LEAD_ASSESSED", (l) => {
       if (!l.confirmed || !l.ownerId) throw new Error(ONBOARDING_MESSAGES.LEAD_NOT_CONFIRMED);
