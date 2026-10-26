@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import type { ReactNode } from "react";
 import { AuthProvider } from "@/lib/auth-context";
+import { QueryProvider } from "@/lib/query";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
@@ -32,8 +33,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="en" className={inter.variable}>
       <body>
         <AuthProvider>
-          {children}
-          <Toaster position="bottom-right" />
+          <QueryProvider>
+            {children}
+            <Toaster position="bottom-right" />
+          </QueryProvider>
         </AuthProvider>
       </body>
     </html>

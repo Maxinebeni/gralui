@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft } from "lucide-react";
@@ -21,7 +21,9 @@ import {
 } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
-import { listRenewals } from "@/lib/api";
+import { useQueryClient } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/query";
+import { useRenewals } from "@/lib/queries";
 import {
   RENEWAL_MILESTONES,
   currentMilestone,
@@ -42,12 +44,10 @@ export function RenewalsView() {
   const openId = searchParams.get("case");
 
   const [tab, setTab] = useState<(typeof TABS)[number]>("All");
-  const [allRenewals, setRenewals] = useState<RenewalCase[]>([]);
+  const queryClient = useQueryClient();
+  const { data: allRenewals = [] } = useRenewals();
   const [insurer, setInsurer] = useState(ALL);
 
-  useEffect(() => {
-    listRenewals().then(setRenewals);
-  }, []);
 
   // The insurer filter applies to the whole page, so the counts match the list.
   const renewals = useMemo(
@@ -68,7 +68,7 @@ export function RenewalsView() {
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   };
   const replaceCase = (updated: RenewalCase) =>
-    setRenewals((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+    queryClient.setQueryData<RenewalCase[]>(queryKeys.renewals, (prev) => prev?.map((r) => (r.id === updated.id ? updated : r)));
 
   const rows = useMemo(() => {
     const sorted = [...renewals].sort((a, b) => daysToExpiry(a) - daysToExpiry(b));

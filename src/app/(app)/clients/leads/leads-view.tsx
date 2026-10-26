@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus, Search } from "lucide-react";
@@ -10,7 +10,7 @@ import { LeadForm } from "@/components/gral/lead-form";
 import { HealthChip, dateOf } from "@/components/gral/onboarding-ui";
 import { CardHeader, FloatCard, NavyButton, SegmentedTabs, StageBar, StatTile } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
-import { listLeads } from "@/lib/api";
+import { useLeads, useRefresh } from "@/lib/queries";
 import { useCurrentUser } from "@/lib/auth-context";
 import {
   JOURNEY_STEPS,
@@ -38,27 +38,17 @@ export function LeadsView() {
   const { user } = useCurrentUser();
   const { canRegisterLead } = onboardingPermissions(user);
 
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [tracks, setTracks] = useState<PolicyTrack[]>([]);
+  const leadsQuery = useLeads();
+  const leads = useMemo(() => leadsQuery.data?.leads ?? [], [leadsQuery.data]);
+  const tracks = useMemo(() => leadsQuery.data?.tracks ?? [], [leadsQuery.data]);
+  const loading = leadsQuery.isPending;
+  const loadError = leadsQuery.error ? (leadsQuery.error instanceof Error ? leadsQuery.error.message : "Could not load the leads.") : null;
+  const reload = () => void leadsQuery.refetch();
+  const refresh = useRefresh();
   const [tab, setTab] = useState<Tab>("In progress");
   const [query, setQuery] = useState("");
   const [owner, setOwner] = useState(ALL);
   const [newOpen, setNewOpen] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  const reload = useCallback(() => {
-    setLoading(true);
-    listLeads()
-      .then((r) => {
-        setLeads(r.leads);
-        setTracks(r.tracks);
-        setLoadError(null);
-      })
-      .catch((err) => setLoadError(err instanceof Error ? err.message : "Could not load the leads."))
-      .finally(() => setLoading(false));
-  }, []);
-  useEffect(reload, [reload]);
 
   const ownerOptions = [
     { value: ALL, label: "Everyone" },
@@ -196,7 +186,10 @@ export function LeadsView() {
       </div>
 
       <SlideOver open={newOpen} onClose={() => setNewOpen(false)} wide>
-        {newOpen ? <LeadForm onClose={() => setNewOpen(false)} onCreated={(l) => router.push(`/clients/leads/${encodeURIComponent(l.id)}`)} /> : null}
+        {newOpen ? <LeadForm onClose={() => setNewOpen(false)} onCreated={(l) => {
+              refresh("leads");
+              router.push(`/clients/leads/${encodeURIComponent(l.id)}`);
+            }} /> : null}
       </SlideOver>
     </>
   );

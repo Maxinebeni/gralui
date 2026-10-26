@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Bell, ChevronDown, LogOut, Search, Settings } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { initials, timeAgo } from "@/lib/format";
 import { useCurrentUser } from "@/lib/auth-context";
@@ -19,12 +20,14 @@ import {
 import {
   MOCK_AUTH,
   getNotificationInbox,
+  buildNotices,
   listApprovals,
-  listNotifications,
+  listTasks,
   markNotificationRead,
   type InboxNotification,
-  type Notice,
+  type NotificationInbox,
 } from "@/lib/api";
+import { queryKeys } from "@/lib/query";
 import { formatDate, todayIso } from "@/lib/renewals";
 import { canDecide } from "@/lib/approvals";
 import { CalendarMenu } from "./calendar-menu";
@@ -63,52 +66,90 @@ export function Shell({ children }: { children: ReactNode }) {
   const isActiveExact = (href: string) =>
     href === "/" ? pathname === "/" : pathname === href || (pathname.startsWith(href) && !NAV_HREFS.some((h) => h !== href && h.startsWith(href) && pathname.startsWith(h)));
 
-  // Approvals waiting for this person, shown as a count in the menus.
-  const [waiting, setWaiting] = useState(0);
   // The bell has two parts: "To do" (approvals to decide and this person's own
   // tasks, each opening its record) and "Updates" (the backend's notification
-  // inbox, pushed live over the socket).
-  const [notices, setNotices] = useState<Notice[]>([]);
-  const [notifications, setNotifications] = useState<InboxNotification[]>([]);
-  const [unreadNotificationCount, setUnreadNotificationCount] = useState(0);
-  const notificationIds = useRef(new Set<string>());
+  // inbox, pushed live over the socket). All three come from the shared cache:
+  // checked every 30 seconds, when the tab gets focus, and on page changes when
+  // older than 15 seconds.
+  const queryClient = useQueryClient();
+  const approvalsQuery = useQuery({
+    queryKey: queryKeys.approvals(user.role),
+    queryFn: () => listApprovals(),
+    refetchInterval: 30_000,
+  });
+  const tasksQuery = useQuery({
+    queryKey: queryKeys.tasks(user.role),
+    queryFn: () => listTasks(approvalsQuery.data),
+    enabled: approvalsQuery.isSuccess,
+    refetchInterval: 30_000,
+  });
+  const inboxKey = useMemo(() => queryKeys.inbox(user.id ?? user.email), [user.id, user.email]);
+  const inboxQuery = useQuery({
+    queryKey: inboxKey,
+    queryFn: getNotificationInbox,
+    enabled: !MOCK_AUTH && !!user.id,
+    refetchInterval: 30_000,
+  });
+
+  // Approvals waiting for this person, shown as a count in the menus.
+  const waiting = useMemo(
+    () => (approvalsQuery.data ?? []).filter((r) => canDecide(r, user.role)).length,
+    [approvalsQuery.data, user.role],
+  );
+  const notices = useMemo(
+    () => buildNotices(approvalsQuery.data ?? [], tasksQuery.data ?? [], user),
+    [approvalsQuery.data, tasksQuery.data, user],
+  );
+  const notifications = inboxQuery.data?.items ?? [];
+  const unreadNotificationCount = inboxQuery.data?.unreadCount ?? 0;
+
+  // After a page change, finished work should drop off soon.
+  const { refetch: refetchApprovals, dataUpdatedAt: approvalsAt } = approvalsQuery;
+  useEffect(() => {
+    if (Date.now() - approvalsAt > 15_000) void refetchApprovals();
+  }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const refreshNotifications = useCallback(async () => {
-    const inbox = await getNotificationInbox();
-    notificationIds.current = new Set(inbox.items.map((item) => item.id));
-    setNotifications(inbox.items);
-    setUnreadNotificationCount(inbox.unreadCount);
-  }, []);
-  const receiveNotification = useCallback((notification: InboxNotification) => {
-    if (notificationIds.current.has(notification.id)) return;
-    notificationIds.current.add(notification.id);
-    setNotifications((current) => [notification, ...current].slice(0, 20));
-    if (!notification.readAt) setUnreadNotificationCount((count) => count + 1);
-    toast(notification.title, { description: notification.body });
-  }, []);
-  const openNotification = useCallback(async (notification: InboxNotification) => {
-    router.push(notificationHref(notification.type));
-    if (notification.readAt) return;
-    try {
-      await markNotificationRead(notification.id);
-      setNotifications((current) => current.map((item) => item.id === notification.id ? { ...item, readAt: new Date().toISOString() } : item));
-      setUnreadNotificationCount((count) => Math.max(0, count - 1));
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not mark the notification as read.");
-    }
-  }, [router]);
+    await queryClient.invalidateQueries({ queryKey: inboxKey });
+  }, [queryClient, inboxKey]);
+  const receiveNotification = useCallback(
+    (notification: InboxNotification) => {
+      let added = false;
+      queryClient.setQueryData<NotificationInbox>(inboxKey, (current) => {
+        const items = current?.items ?? [];
+        if (items.some((item) => item.id === notification.id)) return current;
+        added = true;
+        return {
+          items: [notification, ...items].slice(0, 20),
+          unreadCount: (current?.unreadCount ?? 0) + (notification.readAt ? 0 : 1),
+        };
+      });
+      if (added) toast(notification.title, { description: notification.body });
+    },
+    [queryClient, inboxKey],
+  );
+  const openNotification = useCallback(
+    async (notification: InboxNotification) => {
+      router.push(notificationHref(notification.type));
+      if (notification.readAt) return;
+      try {
+        await markNotificationRead(notification.id);
+        queryClient.setQueryData<NotificationInbox>(inboxKey, (current) =>
+          current
+            ? {
+                items: current.items.map((item) => (item.id === notification.id ? { ...item, readAt: new Date().toISOString() } : item)),
+                unreadCount: Math.max(0, current.unreadCount - 1),
+              }
+            : current,
+        );
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Could not mark the notification as read.");
+      }
+    },
+    [router, queryClient, inboxKey],
+  );
   // Admin pages live in the name menu, not the top bar.
   const adminLinks = navChildrenFor(user, ACCOUNT_MENU);
-  useEffect(() => {
-    listApprovals()
-      .then((list) => setWaiting(list.filter((r) => canDecide(r, user.role)).length))
-      .catch(() => setWaiting(0));
-    listNotifications(user)
-      .then(setNotices)
-      .catch(() => setNotices([]));
-    // The socket also syncs on connect; this covers a socket that cannot connect.
-    if (!MOCK_AUTH) refreshNotifications().catch(() => undefined);
-    // Refreshed on every page change, so finished work drops off the list.
-  }, [user.id, user.name, user.role, pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="min-h-screen bg-background">
