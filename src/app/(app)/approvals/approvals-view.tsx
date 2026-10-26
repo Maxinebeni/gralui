@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AlarmClock, CheckCircle2, CornerUpLeft, Inbox } from "lucide-react";
 import { PageHeader, SlideOver } from "@/components/gral/shell";
@@ -10,7 +10,7 @@ import { ApprovalPanel } from "@/components/gral/approval-panel";
 import { Td, Th } from "@/components/gral/claim-list";
 import { CardHeader, Chip, FloatCard, SegmentedTabs, StatTile, TextLink } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
-import { listApprovals } from "@/lib/api";
+import { useApprovals, useRefresh } from "@/lib/queries";
 import { SUBJECT_LABEL, canDecide, statusLabel, statusTone } from "@/lib/approvals";
 import { useCurrentUser } from "@/lib/auth-context";
 import { approvalPermissions } from "@/lib/permissions";
@@ -28,14 +28,13 @@ export function ApprovalsView() {
   const { seesAllRequests } = approvalPermissions(user.role);
   const tabs: Tab[] = seesAllRequests ? [...BASE_TABS, "All"] : [...BASE_TABS];
 
-  const [requests, setRequests] = useState<ApprovalRequest[]>([]);
   const [tab, setTab] = useState<Tab>("Waiting for me");
   // Date requested filter; applies to every tab and the counts.
   const [range, setRange] = useState<DateRange>("all");
-  const reload = useCallback(() => {
-    listApprovals().then(setRequests);
-  }, []);
-  useEffect(reload, [reload]);
+  // Shared with the bell, so opening this page after the bell loaded is instant.
+  const { data: requests = [] } = useApprovals(user.role);
+  const refresh = useRefresh();
+  const reload = () => refresh("approvals");
 
   // Requests this person may see: their own, ones they can decide, or all for oversight roles.
   const visible = useMemo(

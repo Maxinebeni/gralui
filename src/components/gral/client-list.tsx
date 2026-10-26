@@ -5,14 +5,14 @@
 // data + search + filter tabs, the search box, the table, and the profile
 // slide-over (whose open client lives in the URL as ?client=CLT-001).
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Search } from "lucide-react";
 import { ClientFile } from "@/components/gral/client-file";
 import { ClientFormPanel } from "@/components/gral/client-form";
 import { SlideOver } from "@/components/gral/shell";
 import { Chip, NotRecorded, Person, Recorded, TextLink } from "@/components/gral/ui";
-import { listClients } from "@/lib/api";
+import { useClients, useRefresh } from "@/lib/queries";
 import type { Client } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -23,47 +23,15 @@ export type ClientTab = (typeof CLIENT_TABS)[number];
 export function useClientList() {
   const [tab, setTab] = useState<ClientTab>("All");
   const [query, setQuery] = useState("");
-  const [allClients, setAllClients] = useState<Client[]>([]);
-  const [matches, setMatches] = useState<Client[]>([]);
+  const book = useClients("");
+  const search = useClients(query);
+  const allClients = book.data ?? [];
+  const matches = search.data ?? [];
   // True while the table's rows are loading, so the table can say
   // "Loading clients…" instead of "No clients match this filter".
-  const [loading, setLoading] = useState(true);
-  // Bumped after a client is added or edited, so the lists load again.
-  const [version, setVersion] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    listClients()
-      .then((r) => {
-        if (!cancelled) setAllClients(r);
-      })
-      .catch(() => {
-        if (!cancelled) setAllClients([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [version]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    listClients(query)
-      .then((r) => {
-        if (!cancelled) setMatches(r);
-      })
-      .catch(() => {
-        if (!cancelled) setMatches([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [query, version]);
-
-  const reload = useCallback(() => setVersion((v) => v + 1), []);
+  const loading = search.isFetching;
+  const refresh = useRefresh();
+  const reload = useCallback(() => refresh("clients"), [refresh]);
 
   const rows = useMemo(() => {
     if (tab === "KYC Pending") return matches.filter((c) => !c.kyc);

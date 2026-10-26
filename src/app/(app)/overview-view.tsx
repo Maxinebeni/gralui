@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
@@ -31,21 +32,19 @@ import {
 import { cn } from "@/lib/utils";
 import { formatRwf, timeAgo } from "@/lib/format";
 import {
-  getClaimMonthly,
+  activityFrom,
+  claimsPerMonth,
   getClaimSteps,
-  listApprovals,
-  listClaimsSummary,
-  listClients,
-  listActivity,
-  listLeads,
-  listRenewals,
+  toClaimSummary,
 } from "@/lib/api";
+import { useApprovals, useClaims, useClients, useLeads, useRenewals } from "@/lib/queries";
+import { isClosed } from "@/lib/claims";
 import { canDecide } from "@/lib/approvals";
 import { leadHealth, trackHealth } from "@/lib/onboarding";
 import { useCurrentUser } from "@/lib/auth-context";
 import { canAccessPath } from "@/lib/permissions";
 import { currentMilestone, daysOverdue, daysToExpiry, renewalHealth } from "@/lib/renewals";
-import type { ActivityItem, ClaimMonth, ClaimStep, Client, ClientClaim, Lead, PolicyTrack, RenewalCase, Role } from "@/lib/types";
+import type { ActivityItem, Client, ClientClaim, Lead, PolicyTrack, RenewalCase, Role } from "@/lib/types";
 
 type Tile = { icon: LucideIcon; label: string; value: string; delta?: string; tone?: "up" | "down"; href: string };
 
@@ -196,45 +195,23 @@ export function OverviewView() {
   };
   const { claims: canClaims, renewals: canRenewals, clients: canClients, leads: canLeads, approvals: canApprovals } = access;
 
-  const [claims, setClaims] = useState<ClientClaim[]>([]);
-  const [steps, setSteps] = useState<ClaimStep[]>([]);
-  const [monthly, setMonthly] = useState<ClaimMonth[]>([]);
-  const [clients, setClients] = useState<Client[]>([]);
-  const [renewals, setRenewals] = useState<RenewalCase[]>([]);
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [tracks, setTracks] = useState<PolicyTrack[]>([]);
-  const [waiting, setWaiting] = useState(0);
-  const [activity, setActivity] = useState<ActivityItem[]>([]);
+  // Everything comes from the shared lists, so the pages behind these cards open at once.
+  const claimsQuery = useClaims(canClaims);
+  const clientsQuery = useClients("", canClients);
+  const renewalsQuery = useRenewals(canRenewals);
+  const leadsQuery = useLeads(canLeads);
+  const approvalsQuery = useApprovals(role, canApprovals);
+  const { data: steps = [] } = useQuery({ queryKey: ["claimSteps"], queryFn: () => getClaimSteps(), enabled: canClaims, staleTime: Infinity });
 
-  useEffect(() => {
-    if (canClaims) {
-      listClaimsSummary().then(setClaims);
-      getClaimSteps().then(setSteps);
-      getClaimMonthly().then(setMonthly);
-    } else {
-      setClaims([]);
-      setMonthly([]);
-    }
-    if (canClients) listClients().then(setClients);
-    else setClients([]);
-    if (canRenewals) listRenewals().then(setRenewals);
-    else setRenewals([]);
-    if (canLeads) {
-      listLeads()
-        .then((r) => {
-          setLeads(r.leads);
-          setTracks(r.tracks);
-        })
-        .catch(() => setLeads([]));
-    } else {
-      setLeads([]);
-      setTracks([]);
-    }
-    if (canApprovals) listApprovals().then((list) => setWaiting(list.filter((r) => canDecide(r, role)).length));
-    else setWaiting(0);
-    if (canClaims || canRenewals) listActivity({ claims: canClaims, renewals: canRenewals }).then((a) => setActivity(a.slice(0, 5)));
-    else setActivity([]);
-  }, [canClaims, canClients, canRenewals, canLeads, canApprovals, role]);
+  const allClaims = useMemo(() => (canClaims ? (claimsQuery.data ?? []) : []), [canClaims, claimsQuery.data]);
+  const claims: ClientClaim[] = useMemo(() => allClaims.filter((c) => !isClosed(c)).map(toClaimSummary), [allClaims]);
+  const monthly = useMemo(() => claimsPerMonth(allClaims), [allClaims]);
+  const clients: Client[] = canClients ? (clientsQuery.data ?? []) : [];
+  const renewals: RenewalCase[] = useMemo(() => (canRenewals ? (renewalsQuery.data ?? []) : []), [canRenewals, renewalsQuery.data]);
+  const leads: Lead[] = canLeads ? (leadsQuery.data?.leads ?? []) : [];
+  const tracks: PolicyTrack[] = canLeads ? (leadsQuery.data?.tracks ?? []) : [];
+  const waiting = canApprovals ? (approvalsQuery.data ?? []).filter((r) => canDecide(r, role)).length : 0;
+  const activity: ActivityItem[] = useMemo(() => activityFrom(allClaims, renewals).slice(0, 5), [allClaims, renewals]);
 
   const now = new Date();
   const firstName = user.name.split(" ")[0];

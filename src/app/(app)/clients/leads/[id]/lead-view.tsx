@@ -7,6 +7,8 @@ import { OnboardingCaseView } from "@/components/gral/onboarding-case";
 import { getLead, getTrack, type LeadDetail, type TrackDetail } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { primaryTrack } from "@/lib/onboarding";
+import type { Lead, PolicyTrack } from "@/lib/types";
+import { useRefresh } from "@/lib/queries";
 
 export function LeadView({ caseId }: { caseId: string }) {
   const router = useRouter();
@@ -34,6 +36,21 @@ export function LeadView({ caseId }: { caseId: string }) {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  // A step done here hands work to someone else, so the bell refreshes too.
+  const refresh = useRefresh();
+  // Show what the backend sent back at once; the full reload (history, other
+  // policies, KYC) follows in the background.
+  const changed = (saved?: Lead | PolicyTrack) => {
+    if (saved && "stage" in saved) {
+      setTrack((prev) => (prev && prev.track.id === saved.id ? { ...prev, track: saved } : prev));
+      setDetail((prev) => (prev ? { ...prev, tracks: prev.tracks.map((x) => (x.id === saved.id ? saved : x)) } : prev));
+    } else if (saved) {
+      setDetail((prev) => (prev ? { ...prev, lead: saved } : prev));
+    }
+    void reload();
+    refresh("leads", "approvals");
+  };
 
   const selectTrack = (id: string) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -64,5 +81,5 @@ export function LeadView({ caseId }: { caseId: string }) {
       </div>
     );
   }
-  return <OnboardingCaseView detail={detail} track={track} onSelectTrack={selectTrack} onChanged={reload} />;
+  return <OnboardingCaseView detail={detail} track={track} onSelectTrack={selectTrack} onChanged={changed} />;
 }

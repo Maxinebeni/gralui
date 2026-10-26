@@ -1359,12 +1359,12 @@ function approvalTask(r: ApprovalRequest): WorkTask | null {
 /**
  * What the bell shows: approvals waiting for this person's decision and their
  * own open tasks, soonest due first. With the backend, only the backend's own
- * tasks count; sample tasks never notify a real user.
+ * tasks count; sample tasks never notify a real user. Built from approvals and
+ * tasks the caller already has, so nothing is fetched twice.
  */
 export type Notice = { key: string; title: string; detail?: string; href: string; due: string };
 
-export async function listNotifications(user: SessionUser): Promise<Notice[]> {
-  const [approvals, tasks] = await Promise.all([listApprovals().catch(() => []), listTasks().catch(() => [])]);
+export function buildNotices(approvals: ApprovalRequest[], tasks: WorkTask[], user: SessionUser): Notice[] {
   const decide: Notice[] = approvals
     .filter((r) => canDecide(r, user.role))
     .map((r) => ({
@@ -1390,8 +1390,9 @@ export async function listNotifications(user: SessionUser): Promise<Notice[]> {
   return [...decide, ...work].sort((a, b) => a.due.localeCompare(b.due));
 }
 
-export async function listTasks(): Promise<WorkTask[]> {
-  const approvals = await listApprovals();
+/** Pass the approvals when they are already loaded, so they are not fetched twice. */
+export async function listTasks(loadedApprovals?: ApprovalRequest[]): Promise<WorkTask[]> {
+  const approvals = loadedApprovals ?? (await listApprovals());
   const pendingRenewals = new Set(approvals.filter((a) => a.subjectType === "RENEWAL" && a.status === "PENDING").map((a) => a.subjectId));
   const system = [
     ...CLAIMS.map(claimTask),
@@ -2559,10 +2560,10 @@ function commandEnvelope(version?: number, reason?: string) {
   return { commandId: crypto.randomUUID(), expectedVersion: version, ...(reason ? { reason } : {}) };
 }
 
-/** A date from a date box as an instant the backend accepts (never in the future). */
-function instantFrom(date: string): string {
+/** A date from a form as the instant the backend wants; "today" is a minute ago. Pass one clock when several dates must line up. */
+function instantFrom(date: string, now = Date.now()): string {
   if (date.length > 10) return date;
-  if (date >= todayIso()) return new Date(Date.now() - 60_000).toISOString();
+  if (date >= todayIso()) return new Date(now - 60_000).toISOString();
   return `${date}T09:00:00Z`;
 }
 
@@ -2608,9 +2609,10 @@ async function onboardingProblem(res: Response, fallback: string): Promise<strin
   if (res.status === 401) return "Your session has ended. Please sign in again.";
   if (res.status === 403) return "You do not have permission to do this.";
   if (res.status === 404) return "This record could not be found.";
+  // A generic 400 with field names is more useful than "Invalid request".
+  if (res.status === 400 && problem.fields?.length) return `Please check these fields: ${problem.fields.join(", ")}.`;
   if (problem.code && ONBOARDING_MESSAGES[problem.code]) return ONBOARDING_MESSAGES[problem.code]!;
   if (problem.code) return blockerText(problem.code);
-  if (res.status === 400 && problem.fields?.length) return `Please check these fields: ${problem.fields.join(", ")}.`;
   if (problem.title && problem.title !== "Bad Request") return problem.title;
   return fallback;
 }
@@ -2995,24 +2997,22 @@ export type AssessmentInput = {
 
 /** Step 2: the meeting and needs assessment, with the pre-meeting request, the summary and the client's confirmation. */
 export async function recordAssessment(lead: Lead, input: AssessmentInput): Promise<Lead> {
+  // The backend checks the order: request on or before the meeting, summary on
+  // or after it, confirmation on or after the summary.
+  if (input.request.occurredAt > input.meetingAt) throw new Error("The pre-meeting request must be sent on or before the meeting date.");
+  if (input.summary.occurredAt < input.meetingAt) throw new Error("The meeting summary must be written on or after the meeting date.");
+  if (input.confirmation.occurredAt < input.summary.occurredAt) throw new Error("The client's confirmation must be on or after the summary date.");
+  // Dates on the same day get the same time, so their order holds.
+  const clock = Date.now();
+  const meetingAt = instantFrom(input.meetingAt, clock);
+  const at = (date: string) => ({ occurredAt: instantFrom(date, clock) });
   const subject = { type: "LEAD" as const, id: lead.id };
-  const [requestUp, summaryUp, confirmationUp] = await Promise.all([
-    uploadProof(subject, input.request, "PRE_MEETING_REQUEST"),
-    uploadProof(subject, input.summary, "MEETING_SUMMARY"),
-    uploadProof(subject, input.confirmation, "MEETING_CONFIRMATION"),
+  const [request, summary, confirmation] = await Promise.all([
+    uploadProof(subject, { ...input.request, ...at(input.request.occurredAt) }, "PRE_MEETING_REQUEST"),
+    uploadProof(subject, { ...input.summary, ...at(input.summary.occurredAt) }, "MEETING_SUMMARY"),
+    uploadProof(subject, { ...input.confirmation, ...at(input.confirmation.occurredAt) }, "MEETING_CONFIRMATION"),
   ]);
-  // The back end expects the story in order: request, meeting, summary, confirmation.
-  const pickedDay = input.meetingAt.slice(0, 10);
-  const isToday = pickedDay >= todayIso();
-  const endMs = Date.now() - 60_000;
-  const when = (step: number) =>
-    isToday
-      ? new Date(endMs - (3 - step) * 10_000).toISOString()
-      : `${pickedDay}T${String(9 + step).padStart(2, "0")}:00:00Z`;
-  const request = { ...requestUp, occurredAt: when(0) };
-  const summary = { ...summaryUp, occurredAt: when(2) };
-  const confirmation = { ...confirmationUp, occurredAt: when(3) };
-  const fields = { meetingAt: when(1), needs: input.needs.trim(), assets: input.assets.trim(), employeeCount: input.employeeCount, existingCover: input.existingCover.trim() };
+  const fields = { meetingAt, needs: input.needs.trim(), assets: input.assets.trim(), employeeCount: input.employeeCount, existingCover: input.existingCover.trim() };
   if (MOCK_AUTH) {
     return demoLeadCommand(lead, "LEAD_ASSESSED", (l) => {
       if (!l.confirmed || !l.ownerId) throw new Error(ONBOARDING_MESSAGES.LEAD_NOT_CONFIRMED);
@@ -3367,7 +3367,6 @@ export async function submitKycReview(review: KycReview): Promise<KycReview> {
   if (MOCK_AUTH) {
     return demoKycCommand(review, "KYC_SUBMITTED", (r) => {
       if (r.items.some((i) => i.required && !i.documentId)) throw new Error(ONBOARDING_MESSAGES.KYC_DOCUMENTS_INCOMPLETE);
-      if (!r.screeningResult) throw new Error("Record the sanctions and watchlist screening first.");
       return { status: "SUBMITTED" };
     });
   }
@@ -3863,7 +3862,7 @@ export async function listClaimsSummary(): Promise<ClientClaim[]> {
   return (await listClaims()).filter((c) => !isClosed(c)).map(toClaimSummary);
 }
 
-function toClaimSummary(c: Claim): ClientClaim {
+export function toClaimSummary(c: Claim): ClientClaim {
   const sla = claimSla(c);
   return {
     id: c.id,
@@ -4294,6 +4293,11 @@ export async function listActivity(modules: { claims: boolean; renewals: boolean
     modules.claims ? listClaims().catch(() => []) : Promise.resolve([]),
     modules.renewals ? listRenewals() : Promise.resolve([]),
   ]);
+  return activityFrom(claims, renewals);
+}
+
+/** The activity in claims and renewals that are already loaded, newest first. */
+export function activityFrom(claims: Claim[], renewals: RenewalCase[]): ActivityItem[] {
   const items: ActivityItem[] = [
     ...claims.flatMap((c) =>
       c.history.map((e) => ({

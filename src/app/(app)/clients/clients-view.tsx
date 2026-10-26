@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, BadgeCheck, FileWarning, Plus, Users } from "lucide-react";
+import { AlertTriangle, BadgeCheck, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader } from "@/components/gral/shell";
@@ -76,26 +76,11 @@ export function ClientsView() {
         }
       />
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_340px]">
-        <StatTile icon={Users} label="Total Clients" value={String(allClients.length)} delta="6.1%" />
-        <StatTile icon={BadgeCheck} label="KYC Complete" value={String(kycComplete)} delta="3.2%" delay={60} />
-        <StatTile
-          icon={FileWarning}
-          label="KYC Pending"
-          value={String(allClients.length - kycComplete)}
-          delta="2.0%"
-          tone="down"
-          delay={120}
-        />
-        <StatTile
-          icon={AlertTriangle}
-          label="Non-Compliant Flags"
-          value={String(flags)}
-          delta="1.0%"
-          tone="down"
-          delay={180}
-        />
-        <div className="hidden xl:block" />
+      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatTile label="Total Clients" value={String(allClients.length)} />
+        <StatTile label="KYC Complete" value={String(kycComplete)} delay={60} />
+        <StatTile label="KYC Pending" value={String(allClients.length - kycComplete)} delay={120} />
+        <StatTile label="Non-Compliant Flags" value={String(flags)} delay={180} />
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">

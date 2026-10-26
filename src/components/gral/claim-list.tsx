@@ -3,14 +3,14 @@
 // Pieces shared by the Claims Queue and All Claims pages: loading the claims,
 // the ?claim= deep link, the tab filters and the claims table.
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Search } from "lucide-react";
 import { ClaimDetailPanel } from "@/components/gral/claim-detail";
 import { Chip, FloatCard, Person, PriorityPill } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
-import { listClaims } from "@/lib/api";
+import { useClaims as useClaimsQuery, useRefresh } from "@/lib/queries";
 import {
   claimSla,
   daysOpen,
@@ -63,16 +63,10 @@ export function filterClaims(claims: Claim[], tab: ClaimTab) {
 }
 
 export function useClaims() {
-  const [claims, setClaims] = useState<Claim[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const reload = useCallback(() => {
-    listClaims().then((list) => {
-      setClaims(list);
-      setLoaded(true);
-    });
-  }, []);
-  useEffect(reload, [reload]);
-  return { claims, loaded, reload };
+  const query = useClaimsQuery();
+  const refresh = useRefresh();
+  const reload = useCallback(() => refresh("claims"), [refresh]);
+  return { claims: query.data ?? [], loaded: !query.isPending, reload };
 }
 
 /** The open claim follows the URL (?claim=CLM-...), so it can be linked to. */

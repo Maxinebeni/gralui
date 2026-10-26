@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useAssignees, useClaims, useRefresh, useRenewals, useTasks } from "@/lib/queries";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AlarmClock, CalendarDays, CheckCircle2, ListTodo, Plus, X } from "lucide-react";
@@ -13,10 +14,6 @@ import { cn } from "@/lib/utils";
 import {
   completeTask,
   createTask,
-  listAssignees,
-  listClaims,
-  listRenewals,
-  listTasks,
   reassignTask,
   type NewTaskInput,
 } from "@/lib/api";
@@ -67,18 +64,13 @@ export function MyWorkView() {
   const { managesTeamWork } = taskPermissions(user.role);
   const tabs: Tab[] = managesTeamWork ? ["Mine", "Overdue", "Next 5 days", "Team", "Done"] : ["Mine", "Overdue", "Next 5 days", "Done"];
 
-  const [tasks, setTasks] = useState<WorkTask[]>([]);
-  const [assignees, setAssignees] = useState<string[]>([]);
+  const { data: tasks = [] } = useTasks(user.role);
+  const { data: assignees = [] } = useAssignees();
   const [tab, setTab] = useState<Tab>("Mine");
   const [newOpen, setNewOpen] = useState(false);
 
-  const reload = useCallback(() => {
-    listTasks().then(setTasks);
-  }, []);
-  useEffect(() => {
-    reload();
-    listAssignees().then(setAssignees);
-  }, [reload]);
+  const refresh = useRefresh();
+  const reload = useCallback(() => refresh("tasks"), [refresh]);
 
   // Workflow tasks are done on the record itself, so the row opens it.
   const opensRecord = (t: WorkTask) =>
@@ -402,7 +394,23 @@ function NewTaskForm({
   onClose: () => void;
   onCreated: () => void;
 }) {
-  const [records, setRecords] = useState<RecordOption[]>([]);
+  const { data: claims = [] } = useClaims();
+  const { data: renewals = [] } = useRenewals();
+  const records: RecordOption[] = useMemo(
+    () => [
+      ...claims.map((c) => ({
+        value: `CLAIM:${c.id}`,
+        label: `${c.id} · ${c.client}`,
+        input: { resourceType: "CLAIM" as const, resourceId: c.id, resourceRef: c.id, client: c.client },
+      })),
+      ...renewals.map((r) => ({
+        value: `RENEWAL:${r.id}`,
+        label: `${r.id} · ${r.client} · ${r.classOfInsurance}`,
+        input: { resourceType: "RENEWAL" as const, resourceId: r.id, resourceRef: r.id, client: r.client },
+      })),
+    ],
+    [claims, renewals],
+  );
   const [title, setTitle] = useState("");
   const [detail, setDetail] = useState("");
   const [record, setRecord] = useState("");
@@ -411,22 +419,6 @@ function NewTaskForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const options = assignees.includes(userName) ? assignees : [userName, ...assignees];
 
-  useEffect(() => {
-    Promise.all([listClaims(), listRenewals()]).then(([claims, renewals]) =>
-      setRecords([
-        ...claims.map((c) => ({
-          value: `CLAIM:${c.id}`,
-          label: `${c.id} · ${c.client}`,
-          input: { resourceType: "CLAIM" as const, resourceId: c.id, resourceRef: c.id, client: c.client },
-        })),
-        ...renewals.map((r) => ({
-          value: `RENEWAL:${r.id}`,
-          label: `${r.id} · ${r.client} · ${r.classOfInsurance}`,
-          input: { resourceType: "RENEWAL" as const, resourceId: r.id, resourceRef: r.id, client: r.client },
-        })),
-      ]),
-    );
-  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();

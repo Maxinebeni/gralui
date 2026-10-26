@@ -40,7 +40,7 @@ import {
 } from "@/lib/onboarding";
 import { onboardingPermissions } from "@/lib/permissions";
 import { todayIso } from "@/lib/renewals";
-import type { Client, Lead } from "@/lib/types";
+import type { Client, Lead, PolicyTrack } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { CenteredModal, PageHeader } from "./shell";
 import { ActionForm, Blockers, EvidenceField, HealthChip, HistoryList, ProofList, SelectInput, TextInput, dateOf } from "./onboarding-ui";
@@ -55,7 +55,7 @@ const PROOF_LABELS: Record<string, string> = {
 
 type Perms = ReturnType<typeof onboardingPermissions>;
 
-export function AssignForm({ lead, onDone, onCancel }: { lead: Lead; onDone: () => void; onCancel?: () => void }) {
+export function AssignForm({ lead, onDone, onCancel }: { lead: Lead; onDone: (saved?: Lead | PolicyTrack) => void; onCancel?: () => void }) {
   const [options, setOptions] = useState<ChoiceOption[]>([]);
   const [ownerId, setOwnerId] = useState(lead.ownerId ?? "");
   const [reason, setReason] = useState("");
@@ -70,8 +70,7 @@ export function AssignForm({ lead, onDone, onCancel }: { lead: Lead; onDone: () 
       onSubmit={async () => {
         if (!ownerId) throw new Error("Choose the Accounts Executive.");
         if (!reason.trim()) throw new Error("Give a reason for this assignment.");
-        await assignLead(lead, ownerId, reason);
-        onDone();
+        onDone(await assignLead(lead, ownerId, reason));
       }}
     >
       <SelectInput id="lead-owner" label="Accounts Executive" value={ownerId} onChange={setOwnerId} placeholder="Select a person" options={options.map((o) => ({ value: o.id, label: o.name }))} wide />
@@ -80,7 +79,7 @@ export function AssignForm({ lead, onDone, onCancel }: { lead: Lead; onDone: () 
   );
 }
 
-export function ResponseForm({ lead, onDone }: { lead: Lead; onDone: () => void }) {
+export function ResponseForm({ lead, onDone }: { lead: Lead; onDone: (saved?: Lead | PolicyTrack) => void }) {
   const [evidence, setEvidence] = useState<EvidenceInput | null>(null);
   return (
     <ActionForm
@@ -88,8 +87,7 @@ export function ResponseForm({ lead, onDone }: { lead: Lead; onDone: () => void 
       success="First response recorded."
       onSubmit={async () => {
         if (!evidence) throw new Error("Attach the email or call note.");
-        await recordLeadResponse(lead, evidence);
-        onDone();
+        onDone(await recordLeadResponse(lead, evidence));
       }}
     >
       <EvidenceField label="Proof of the first response" destination={`First response · ${lead.name}`} value={evidence} onChange={setEvidence} dateLabel="Responded on" withNote />
@@ -97,7 +95,7 @@ export function ResponseForm({ lead, onDone }: { lead: Lead; onDone: () => void 
   );
 }
 
-export function AssessmentForm({ lead, onDone }: { lead: Lead; onDone: () => void }) {
+export function AssessmentForm({ lead, onDone }: { lead: Lead; onDone: (saved?: Lead | PolicyTrack) => void }) {
   const [meetingAt, setMeetingAt] = useState(todayIso());
   const [needs, setNeeds] = useState("");
   const [assets, setAssets] = useState("");
@@ -113,17 +111,18 @@ export function AssessmentForm({ lead, onDone }: { lead: Lead; onDone: () => voi
       onSubmit={async () => {
         if (!needs.trim() || !assets.trim() || !existingCover.trim()) throw new Error("Fill in the needs, the assets and the existing cover.");
         if (!request || !summary || !confirmation) throw new Error("Attach the pre-meeting request, the meeting summary and the client's confirmation.");
-        await recordAssessment(lead, {
-          meetingAt,
-          needs,
-          assets,
-          existingCover,
-          employeeCount: employees ? Number(employees) : undefined,
-          request,
-          summary,
-          confirmation,
-        });
-        onDone();
+        onDone(
+          await recordAssessment(lead, {
+            meetingAt,
+            needs,
+            assets,
+            existingCover,
+            employeeCount: employees ? Number(employees) : undefined,
+            request,
+            summary,
+            confirmation,
+          }),
+        );
       }}
     >
       <TextInput id="as-meeting" label="Meeting date" type="date" max={todayIso()} value={meetingAt} onChange={setMeetingAt} />
@@ -138,7 +137,7 @@ export function AssessmentForm({ lead, onDone }: { lead: Lead; onDone: () => voi
   );
 }
 
-export function ClientForm({ lead, onDone }: { lead: Lead; onDone: () => void }) {
+export function ClientForm({ lead, onDone }: { lead: Lead; onDone: (saved?: Lead | PolicyTrack) => void }) {
   const [mode, setMode] = useState<"new" | "existing">("new");
   const types = PROSPECT_TYPES.filter((t) => t.leadType === lead.type);
   const [v, setV] = useState({
@@ -185,8 +184,7 @@ export function ClientForm({ lead, onDone }: { lead: Lead; onDone: () => void })
           onSubmit={async () => {
             const missing = (["registeredName", "sector", "address", "contactName", "jobTitle", "email", "phone"] as const).filter((k) => !v[k].trim());
             if (missing.length) throw new Error("Fill in every field. The client record needs them all.");
-            await openProspect(lead, { ...v, duplicateReason: v.duplicateReason.trim() || undefined });
-            onDone();
+            onDone(await openProspect(lead, { ...v, duplicateReason: v.duplicateReason.trim() || undefined }));
           }}
         >
           <TextInput id="pr-name" label="Registered name" value={v.registeredName} onChange={set("registeredName")} wide />
@@ -206,8 +204,7 @@ export function ClientForm({ lead, onDone }: { lead: Lead; onDone: () => void })
           onSubmit={async () => {
             const client = clients.find((c) => c.id === clientId);
             if (!client) throw new Error("Choose the client.");
-            await linkLeadClient(lead, client);
-            onDone();
+            onDone(await linkLeadClient(lead, client));
           }}
         >
           <SelectInput id="pr-existing" label="Client" value={clientId} onChange={setClientId} placeholder="Select a client" options={clients.map((c) => ({ value: c.id, label: `${c.name} (${c.id})` }))} wide />
@@ -217,7 +214,7 @@ export function ClientForm({ lead, onDone }: { lead: Lead; onDone: () => void })
   );
 }
 
-export function StartTrackForm({ lead, onDone, onCancel }: { lead: Lead; onDone: () => void; onCancel: () => void }) {
+export function StartTrackForm({ lead, onDone, onCancel }: { lead: Lead; onDone: (saved?: Lead | PolicyTrack) => void; onCancel: () => void }) {
   const [products, setProducts] = useState<ChoiceOption[]>([]);
   const [productsLoaded, setProductsLoaded] = useState(false);
   const [productId, setProductId] = useState("");
@@ -234,8 +231,7 @@ export function StartTrackForm({ lead, onDone, onCancel }: { lead: Lead; onDone:
       onCancel={onCancel}
       onSubmit={async () => {
         if (!productId) throw new Error("Choose the product.");
-        await startTrack(lead, { productId, underwritingRole, property });
-        onDone();
+        onDone(await startTrack(lead, { productId, underwritingRole, property }));
       }}
     >
       <SelectInput id="tr-product" label="Product" value={productId} onChange={setProductId} placeholder="Select a product" options={products.map((p) => ({ value: p.id, label: p.name }))} wide />
@@ -259,7 +255,7 @@ export function StartTrackForm({ lead, onDone, onCancel }: { lead: Lead; onDone:
 }
 
 /** "Close lead" in the page header; the outcome and reason are asked in a pop-up. */
-export function CloseLead({ lead, onChanged }: { lead: Lead; onChanged: () => void }) {
+export function CloseLead({ lead, onChanged }: { lead: Lead; onChanged: (saved?: Lead) => void }) {
   const [open, setOpen] = useState(false);
   const [disposition, setDisposition] = useState<"CLOSED_LOST" | "CANCELLED">("CLOSED_LOST");
   const [reason, setReason] = useState("");
@@ -277,9 +273,9 @@ export function CloseLead({ lead, onChanged }: { lead: Lead; onChanged: () => vo
               success="Lead closed."
               onCancel={() => setOpen(false)}
               onSubmit={async () => {
-                await closeLead(lead, disposition, reason);
+                const saved = await closeLead(lead, disposition, reason);
                 setOpen(false);
-                onChanged();
+                onChanged(saved);
               }}
             >
               <SelectInput

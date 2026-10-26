@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { PageHeader } from "@/components/gral/shell";
 import { CardHeader, Chip, FloatCard, Person, SegmentedTabs } from "@/components/gral/ui";
-import { listActivity } from "@/lib/api";
+import { activityFrom } from "@/lib/api";
+import { useClaims, useRenewals } from "@/lib/queries";
 import { useCurrentUser } from "@/lib/auth-context";
 import { timeAgo } from "@/lib/format";
 import { canAccessPath } from "@/lib/permissions";
@@ -16,12 +17,14 @@ export function ActivityView() {
   const renewals = canAccessPath(user, "/renewals");
   const tabs = ["All", ...(claims ? ["Claims"] : []), ...(renewals ? ["Renewals"] : [])] as const;
 
-  const [items, setItems] = useState<ActivityItem[] | null>(null);
+  const claimsQuery = useClaims(claims);
+  const renewalsQuery = useRenewals(renewals);
+  const loaded = (!claims || !claimsQuery.isPending) && (!renewals || !renewalsQuery.isPending);
+  const items: ActivityItem[] | null = useMemo(
+    () => (loaded ? activityFrom(claims ? (claimsQuery.data ?? []) : [], renewals ? (renewalsQuery.data ?? []) : []) : null),
+    [loaded, claims, renewals, claimsQuery.data, renewalsQuery.data],
+  );
   const [tab, setTab] = useState<string>("All");
-
-  useEffect(() => {
-    listActivity({ claims, renewals }).then(setItems);
-  }, [claims, renewals]);
 
   const rows = useMemo(() => (items ?? []).filter((a) => tab === "All" || a.module === tab), [items, tab]);
 
