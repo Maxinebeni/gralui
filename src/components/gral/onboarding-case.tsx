@@ -56,7 +56,7 @@ export function OnboardingCaseView({
   /** The policy track shown in steps 3 to 11, with its history. */
   track: TrackDetail | null;
   onSelectTrack: (id: string) => void;
-  onChanged: () => void;
+  onChanged: (saved?: Lead | PolicyTrack) => void;
 }) {
   const { user } = useCurrentUser();
   const perms = onboardingPermissions(user);
@@ -82,8 +82,7 @@ export function OnboardingCaseView({
   const insurerName = (id: string) => options.insurers.find((i) => i.id === id)?.name ?? id;
   const run: TrackRun = async (input) => {
     if (!t) return;
-    await runTrackAction(t, input);
-    onChanged();
+    onChanged(await runTrackAction(t, input));
   };
   const stateOf = (n: number): StepState => {
     if (current === null || n < current) return "done";
@@ -132,9 +131,9 @@ export function OnboardingCaseView({
           <div className="mb-4">
             <StartTrackForm
               lead={l}
-              onDone={() => {
+              onDone={(saved) => {
                 setAdding(false);
-                onChanged();
+                onChanged(saved);
               }}
               onCancel={() => setAdding(false)}
             />
@@ -381,7 +380,7 @@ function StepDetail({
   options: TrackOptions;
   insurerName: (id: string) => string;
   run: TrackRun;
-  onChanged: () => void;
+  onChanged: (saved?: Lead | PolicyTrack) => void;
   onSelect: (n: number) => void;
 }) {
   const step = JOURNEY_STEPS[n - 1]!;
@@ -492,8 +491,7 @@ function StepDetail({
                     </div>
                   }
                   onSubmit={async () => {
-                    await confirmLead(l);
-                    onChanged();
+                    onChanged(await confirmLead(l));
                   }}
                 />
               ) : (
