@@ -93,6 +93,8 @@ export type Client = {
   contact?: ClientContact;
   activePolicies: number;
   kyc: boolean;
+  /** Backend gate status returned by GET /clients/{clientId}/kyc-summary. */
+  kycGateStatus?: string;
   policiesOk: boolean;
   claimsOk: boolean;
   correspondenceOk: boolean;

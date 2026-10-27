@@ -181,7 +181,7 @@ export function OnboardingCaseView({
               <p className="text-sm font-semibold">Onboarding complete</p>
               {t.policyId ? (
                 <Link
-                  href={`/policies/${encodeURIComponent(t.policyId)}`}
+                  href={`/policies/${encodeURIComponent(t.policyId)}?ref=${encodeURIComponent(t.policyId)}`}
                   className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary underline underline-offset-2"
                 >
                   Open the policy <ExternalLink className="size-3" />

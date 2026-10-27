@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { InvalidLinkError, acceptInvitation, confirmPasswordReset } from "@/lib/api";
 import { Dot, NavyButton } from "./ui";
+import { PasswordInput } from "./password-input";
 
 // Backend rule (IdentityRecoveryService): 15+ characters, at most 72 bytes,
 // used exactly as typed (no trimming).
@@ -140,9 +141,8 @@ export function SetPasswordForm({ mode }: { mode: "reset" | "invitation" }) {
                 <label className="text-xs font-medium text-muted-foreground" htmlFor="new-password">
                   New password
                 </label>
-                <input
+                <PasswordInput
                   id="new-password"
-                  type="password"
                   autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -153,9 +153,8 @@ export function SetPasswordForm({ mode }: { mode: "reset" | "invitation" }) {
                 <label className="text-xs font-medium text-muted-foreground" htmlFor="confirm-password">
                   Confirm new password
                 </label>
-                <input
+                <PasswordInput
                   id="confirm-password"
-                  type="password"
                   autoComplete="new-password"
                   value={confirm}
                   onChange={(e) => setConfirm(e.target.value)}

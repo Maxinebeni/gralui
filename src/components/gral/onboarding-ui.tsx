@@ -2,16 +2,17 @@
 
 // Small pieces shared by the lead, policy track and KYC pages.
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { FileText, Paperclip } from "lucide-react";
 import { toast } from "sonner";
-import type { EvidenceInput } from "@/lib/api";
+import { listDocuments, type EvidenceInput } from "@/lib/api";
 import { blockerText, type Health } from "@/lib/onboarding";
 import { formatDate, todayIso } from "@/lib/renewals";
-import type { CommandHistory } from "@/lib/types";
+import type { CommandHistory, DocumentSubject, StoredDocument } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { inputClass } from "./client-form";
 import { FilePickButton } from "./documents";
+import { DocumentPreviewButton } from "./document-preview";
 import { Chip, Dot, NavyButton, OutlineButton } from "./ui";
 
 /** "2026-10-23T09:00:00Z" as "23 Oct 2026". */
@@ -279,16 +280,35 @@ export function HistoryList({ items }: { items: CommandHistory[] }) {
 }
 
 /** A list of proof documents already recorded. */
-export function ProofList({ items, labels }: { items: { purpose: string; fileName?: string; occurredAt: string }[]; labels?: Record<string, string> }) {
+export function ProofList({ items, labels, subject }: {
+  items: { purpose: string; fileName?: string; documentId?: string; documentVersion?: number; occurredAt: string }[];
+  labels?: Record<string, string>;
+  subject?: DocumentSubject;
+}) {
+  const [documents, setDocuments] = useState<StoredDocument[] | null>(null);
+  useEffect(() => {
+    if (!subject) {
+      setDocuments(null);
+      return;
+    }
+    let active = true;
+    listDocuments(subject).then((loaded) => { if (active) setDocuments(loaded); }).catch(() => { if (active) setDocuments([]); });
+    return () => { active = false; };
+  }, [subject?.type, subject?.id]);
+
   if (!items.length) return null;
   return (
     <ul className="space-y-1">
       {items.map((p) => (
-        <li key={`${p.purpose}-${p.occurredAt}`} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <li key={`${p.purpose}-${p.occurredAt}`} className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
           <FileText className="size-3 shrink-0 text-primary" />
           <span className="font-medium text-foreground">{labels?.[p.purpose] ?? p.purpose.replace(/_/g, " ").toLowerCase()}</span>
           {p.fileName ? <span className="truncate">· {p.fileName}</span> : null}
           <span>· {dateOf(p.occurredAt)}</span>
+          {subject && p.documentId && documents ? (() => {
+            const doc = documents.find((candidate) => candidate.id === p.documentId);
+            return doc ? <DocumentPreviewButton subject={subject} document={{ ...doc, version: p.documentVersion ?? doc.version }} /> : <span className="text-subtle">Preview unavailable</span>;
+          })() : subject && p.documentId ? <span className="text-subtle">Loading preview…</span> : null}
         </li>
       ))}
     </ul>

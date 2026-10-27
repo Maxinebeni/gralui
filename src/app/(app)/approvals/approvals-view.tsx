@@ -118,8 +118,9 @@ export function ApprovalsView() {
                 return (
                   <tr key={r.id} className="cursor-pointer hover:bg-pale/50" onClick={() => setOpen(r)}>
                     <Td>
-                      <div className="text-xs font-medium whitespace-nowrap">{r.id}</div>
-                      <div className="max-w-[240px] truncate text-[11px] text-muted-foreground">{r.title}</div>
+                      <div className="text-xs font-medium whitespace-nowrap">{r.title}</div>
+                      <div className="max-w-[240px] truncate text-[11px] text-muted-foreground">{r.subjectRef}</div>
+                      <div className="mt-0.5 max-w-[240px] truncate text-[9px] text-subtle" title={r.id}>Request ID: {r.id}</div>
                     </Td>
                     <Td>
                       <Chip tone="sky">{SUBJECT_LABEL[r.subjectType]}</Chip>

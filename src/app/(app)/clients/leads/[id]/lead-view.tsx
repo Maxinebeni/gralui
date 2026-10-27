@@ -49,7 +49,7 @@ export function LeadView({ caseId }: { caseId: string }) {
       setDetail((prev) => (prev ? { ...prev, lead: saved } : prev));
     }
     void reload();
-    refresh("leads", "approvals");
+    refresh("leads", "approvals", ...(saved && "clientId" in saved && saved.clientId ? ["clients" as const] : []));
   };
 
   const selectTrack = (id: string) => {
