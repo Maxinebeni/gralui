@@ -221,6 +221,10 @@ function DecisionForm({
   const tabs = choices.map((c) => DECISION_LABEL[c]);
 
   async function submit() {
+    if (!comment.trim()) {
+      toast.error("Enter a comment explaining your decision.");
+      return;
+    }
     setSaving(true);
     try {
       await decideApproval(r.id, { decision, comment, expectedVersion: r.version }, { name: userName, role });
@@ -256,7 +260,7 @@ function DecisionForm({
         value={comment}
         onChange={(e) => setComment(e.target.value)}
         rows={3}
-        placeholder={decision === "APPROVE" ? "Comment (optional)" : "Reason (required)"}
+        placeholder="Comment (required)"
         aria-label="Decision comment"
         className={cn(INPUT, "mt-3")}
       />

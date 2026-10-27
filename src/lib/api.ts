@@ -1110,7 +1110,7 @@ export async function decideApproval(
   }
   if (!canDecide(r, actor.role)) throw new Error("This request is not waiting for your decision.");
   const comment = input.comment.trim();
-  if (input.decision !== "APPROVE" && !comment) throw new Error("Say why, so the requester knows what to change.");
+  if (!comment) throw new Error("Enter a comment explaining your decision.");
 
   // Claim settlements: the claim records the sign-off.
   if (r.subjectType === "CLAIM_SETTLEMENT") {
@@ -1687,7 +1687,7 @@ async function listBackendApprovals(): Promise<ApprovalRequest[]> {
 async function decideBackendApproval(id: string, input: DecisionInput): Promise<ApprovalRequest> {
   const known = BACKEND_APPROVALS.get(id)!;
   const comment = input.comment.trim();
-  if (input.decision !== "APPROVE" && !comment) throw new Error("Say why, so the requester knows what to change.");
+  if (!comment) throw new Error("Enter a comment explaining your decision.");
   if (input.decision === "APPROVE" && known.evidenceRequired && known.evidence.length === 0) {
     throw new Error("Attach the written or signed evidence first.");
   }
