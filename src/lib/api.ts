@@ -379,15 +379,28 @@ export async function listClients(query = ""): Promise<Client[]> {
       // Unchanged ones come from the cache. One that fails is shown from its summary.
       return await mapLimited(page.items, 4, async (s) => {
         const cached = CLIENT_CACHE.get(s.reference);
+        let client: Client;
         if (cached && cached.uuid === s.id && cached.version === s.version && !SUMMARY_ONLY.has(s.reference)) {
-          return cached;
+          client = cached;
+        } else {
+          try {
+            client = toClient(await fetchClientViewWithRetry(s.id), managers);
+          } catch (err) {
+            console.warn(`Showing ${s.reference} from the list only:`, err);
+            client = clientFromSummary(s, managers);
+          }
         }
+        let kycGateStatus = "NOT_STARTED";
         try {
-          return toClient(await fetchClientViewWithRetry(s.id), managers);
+          const kyc = await readOnboarding<KycGate>(`/api/v1/clients/${s.id}/kyc-summary`, "Could not load the KYC summary.");
+          kycGateStatus = kyc?.gateStatus ?? "NOT_STARTED";
         } catch (err) {
-          console.warn(`Showing ${s.reference} from the list only:`, err);
-          return clientFromSummary(s, managers);
+          console.warn(`Could not load KYC summary for ${s.reference}:`, err);
+          kycGateStatus = "UNAVAILABLE";
         }
+        client.kycGateStatus = kycGateStatus;
+        client.kyc = client.kycGateStatus === "READY";
+        return client;
       });
     } catch (err) {
       console.warn(err);
@@ -1582,7 +1595,19 @@ function approvalStatus(code: string): ApprovalRequest["status"] {
 async function toBackendApproval(h: BackendApprovalHistory, inInbox = false): Promise<ApprovalRequest> {
   const v = h.request;
   const status = approvalStatus(v.status);
-  const subject = subjectReference(v.subjectType, v.subjectId);
+  let subject = subjectReference(v.subjectType, v.subjectId);
+  let onboardingTrack: TrackDetail | null = null;
+  if (v.subjectType.toUpperCase() === "ONBOARDING") {
+    onboardingTrack = await getTrack(v.subjectId).catch(() => null);
+    if (onboardingTrack) {
+      const clientName = onboardingTrack.lead?.clientName ?? onboardingTrack.lead?.name;
+      subject = {
+        ref: [clientName, onboardingTrack.track.productName].filter(Boolean).join(" · ") || subject.ref,
+        client: clientName,
+        clientId: onboardingTrack.track.clientId,
+      };
+    }
+  }
   const steps: ApprovalStep[] = await Promise.all(
     [...h.steps]
       .sort((a, b) => a.number - b.number)
@@ -1630,6 +1655,8 @@ async function toBackendApproval(h: BackendApprovalHistory, inInbox = false): Pr
     summary: `Approval requested in the system for ${subject.ref}.`,
     clientId: subject.clientId,
     client: subject.client,
+    amount: onboardingTrack?.track.recommendation?.annualCommissionRwf,
+    amountLabel: onboardingTrack?.track.recommendation ? "Annual commission" : undefined,
     policyVersion: v.policyVersion !== undefined ? `Policy v${v.policyVersion}` : "Backend policy",
     requestedBy: (await personName(v.initiatedBy)) ?? "Requested in the system",
     requestedAt,
