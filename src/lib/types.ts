@@ -282,6 +282,8 @@ export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED" | "RETURNED";
 export type ApprovalDecision = "APPROVE" | "REJECT" | "RETURN";
  
 export type ApprovalStep = {
+  requiredPermission?: string;
+  evidencePurpose?: string;
   order: number;
   /** Role that must decide this step, e.g. "Technical Director". */
   role: string;
@@ -297,6 +299,9 @@ export type ApprovalStep = {
 export type EvidenceRef = { name: string; documentId?: string; version?: number };
  
 export type ApprovalRequest = {
+  action?: string;
+  currentStepNumber?: number;
+  boardEvidence?: { documentId: string; version: number }[] | null;
   id: string; // e.g. APR-2026-014
   subjectType: ApprovalSubjectType;
   /** ID of the record being approved (renewal, claim, client or policy). */
@@ -641,6 +646,7 @@ export type KycTemplate = { code: string; version: number; clientType: LeadType;
 
 /** A KYC review of one client. */
 export type KycReview = {
+  reviewerId?: string;
   id: string;
   clientId: string;
   version: number;

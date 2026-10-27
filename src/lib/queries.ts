@@ -51,7 +51,7 @@ export function useRefresh() {
   const queryClient = useQueryClient();
   return useCallback(
     (...lists: ListName[]) => {
-      for (const name of new Set<ListName>([...lists, "tasks"])) void queryClient.invalidateQueries({ queryKey: [name] });
+      for (const name of new Set([...lists, "tasks", "inbox"])) void queryClient.invalidateQueries({ queryKey: [name] });
     },
     [queryClient],
   );

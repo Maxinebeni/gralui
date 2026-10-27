@@ -4,6 +4,7 @@
 // CRM Manager can assign the Accounts Executive straight away; otherwise it is
 // done from the lead. The Technical Department is told by the system.
 
+import { CommandAttempt } from "@/lib/command-attempt";
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { toast } from "sonner";
@@ -51,6 +52,9 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
   });
   const [errors, setErrors] = useState<Partial<Record<keyof Values, string>>>({});
   const [saving, setSaving] = useState(false);
+  const [attempt] = useState(() => new CommandAttempt());
+  const [uncertain, setUncertain] = useState(false);
+  useEffect(() => () => attempt.clear(), [attempt, user.id, user.role]);
 
   useEffect(() => {
     if (canAssignLead) onboardingOptions().then((o) => setExecutives(o.accountExecutives));
@@ -63,6 +67,7 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (saving) return;
     const found: Partial<Record<keyof Values, string>> = {};
     if (v.name.trim().length < 2) found.name = v.type === "INDIVIDUAL" ? "Enter the person's full name." : "Enter the company name.";
     if (!v.industry.trim()) found.industry = "Choose the industry.";
@@ -88,7 +93,7 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
         receivedAt: v.receivedAt,
         ownerId: v.ownerId || undefined,
         assignmentReason: v.ownerId ? v.assignmentReason : undefined,
-      });
+      }, attempt);
       toast.success(
         created.ownerId
           ? `${created.name} registered. The first response is due within 24 hours.`
@@ -97,6 +102,8 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
       onCreated(created);
       onClose();
     } catch (err) {
+      setUncertain(attempt.uncertain);
+      if (!attempt.uncertain) attempt.clear();
       toast.error(err instanceof Error ? err.message : "Could not register the lead.");
     } finally {
       setSaving(false);
@@ -119,7 +126,7 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
         </button>
       </div>
 
-      <div className="flex-1 space-y-6 px-6 py-5">
+      <fieldset disabled={saving || uncertain} className="min-w-0 flex-1 space-y-6 px-6 py-5">
         <Section title="Prospect">
           <Field id="leadType" label="Company or individual">
             <select id="leadType" value={v.type} onChange={(e) => set("type", e.target.value as LeadType)} className={inputClass()}>
@@ -184,9 +191,10 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
             </>
           ) : null}
         </Section>
-      </div>
+      </fieldset>
 
       <div className="sticky bottom-0 flex justify-end gap-2 border-t border-border bg-card px-6 py-4">
+        {uncertain ? <div className="space-y-2"><p role="alert" className="text-xs text-warning">The result is uncertain. Retry the same submission or refresh before editing.</p><OutlineButton onClick={() => window.location.reload()}>Refresh current state</OutlineButton></div> : null}
         <OutlineButton onClick={onClose} className="px-4 py-2 text-sm">
           Cancel
         </OutlineButton>

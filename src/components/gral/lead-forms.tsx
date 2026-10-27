@@ -5,46 +5,24 @@
 // KYC, and the lead's history.
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { ProspectClientForm } from "./prospect-client-form";
 
 import {
   assignLead,
   closeLead,
-  confirmLead,
-  linkLeadClient,
-  listClients,
   onboardingOptions,
-  openProspect,
   recordAssessment,
   recordLeadResponse,
   startTrack,
   type ChoiceOption,
   type EvidenceInput,
-  type LeadDetail,
 } from "@/lib/api";
-import { useCurrentUser } from "@/lib/auth-context";
-import {
-  KYC_STATUS_LABEL,
-  LEAD_STATUS_LABEL,
-  LEAD_STEPS,
-  PROSPECT_TYPES,
-  TRACK_STATUS_LABEL,
-  leadHealth,
-  leadReady,
-  leadStepDone,
-  nextLeadStep,
-  openMilestone,
-  stageOf,
-  trackHealth,
-  type LeadStepKey,
-} from "@/lib/onboarding";
 import { onboardingPermissions } from "@/lib/permissions";
 import { todayIso } from "@/lib/renewals";
-import type { Client, Lead, PolicyTrack } from "@/lib/types";
-import { cn } from "@/lib/utils";
-import { CenteredModal, PageHeader } from "./shell";
-import { ActionForm, Blockers, EvidenceField, HealthChip, HistoryList, ProofList, SelectInput, TextInput, dateOf } from "./onboarding-ui";
-import { Chip, FloatCard, OutlineButton, Person } from "./ui";
+import type { Lead, PolicyTrack } from "@/lib/types";
+import { ActionForm, EvidenceField, SelectInput, TextInput } from "./onboarding-ui";
+import { CenteredModal } from "./shell";
+import { OutlineButton } from "./ui";
 
 const PROOF_LABELS: Record<string, string> = {
   LEAD_RESPONSE: "First response",
@@ -55,7 +33,7 @@ const PROOF_LABELS: Record<string, string> = {
 
 type Perms = ReturnType<typeof onboardingPermissions>;
 
-export function AssignForm({ lead, onDone, onCancel }: { lead: Lead; onDone: (saved?: Lead | PolicyTrack) => void; onCancel?: () => void }) {
+export function AssignForm({ lead, onDone, onCancel }: { lead: Lead; onDone: (saved?: Lead | PolicyTrack) => void | Promise<void>; onCancel?: () => void }) {
   const [options, setOptions] = useState<ChoiceOption[]>([]);
   const [ownerId, setOwnerId] = useState(lead.ownerId ?? "");
   const [reason, setReason] = useState("");
@@ -67,10 +45,10 @@ export function AssignForm({ lead, onDone, onCancel }: { lead: Lead; onDone: (sa
       submitLabel="Assign"
       success="Accounts Executive assigned."
       onCancel={onCancel}
-      onSubmit={async () => {
+      onSubmit={async (attempt) => {
         if (!ownerId) throw new Error("Choose the Accounts Executive.");
         if (!reason.trim()) throw new Error("Give a reason for this assignment.");
-        onDone(await assignLead(lead, ownerId, reason));
+        await onDone(await assignLead(lead, ownerId, reason, attempt));
       }}
     >
       <SelectInput id="lead-owner" label="Accounts Executive" value={ownerId} onChange={setOwnerId} placeholder="Select a person" options={options.map((o) => ({ value: o.id, label: o.name }))} wide />
@@ -85,9 +63,9 @@ export function ResponseForm({ lead, onDone }: { lead: Lead; onDone: (saved?: Le
     <ActionForm
       submitLabel="Record the response"
       success="First response recorded."
-      onSubmit={async () => {
+      onSubmit={async (attempt) => {
         if (!evidence) throw new Error("Attach the email or call note.");
-        onDone(await recordLeadResponse(lead, evidence));
+        await onDone(await recordLeadResponse(lead, evidence, attempt));
       }}
     >
       <EvidenceField label="Proof of the first response" destination={`First response · ${lead.name}`} value={evidence} onChange={setEvidence} dateLabel="Responded on" withNote />
@@ -108,10 +86,10 @@ export function AssessmentForm({ lead, onDone }: { lead: Lead; onDone: (saved?: 
     <ActionForm
       submitLabel="Record the needs assessment"
       success="Needs assessment recorded."
-      onSubmit={async () => {
+      onSubmit={async (attempt) => {
         if (!needs.trim() || !assets.trim() || !existingCover.trim()) throw new Error("Fill in the needs, the assets and the existing cover.");
         if (!request || !summary || !confirmation) throw new Error("Attach the pre-meeting request, the meeting summary and the client's confirmation.");
-        onDone(
+        await onDone(
           await recordAssessment(lead, {
             meetingAt,
             needs,
@@ -121,7 +99,7 @@ export function AssessmentForm({ lead, onDone }: { lead: Lead; onDone: (saved?: 
             request,
             summary,
             confirmation,
-          }),
+          }, attempt),
         );
       }}
     >
@@ -137,84 +115,9 @@ export function AssessmentForm({ lead, onDone }: { lead: Lead; onDone: (saved?: 
   );
 }
 
-export function ClientForm({ lead, onDone }: { lead: Lead; onDone: (saved?: Lead | PolicyTrack) => void }) {
-  const [mode, setMode] = useState<"new" | "existing">("new");
-  const types = PROSPECT_TYPES.filter((t) => t.leadType === lead.type);
-  const [v, setV] = useState({
-    registeredName: lead.name,
-    clientType: types[0]?.code ?? "CORPORATE",
-    sector: lead.industry,
-    address: "",
-    contactName: lead.contactName,
-    jobTitle: "",
-    email: lead.email ?? "",
-    phone: lead.phone ?? "",
-    duplicateReason: "",
-  });
-  const [clients, setClients] = useState<Client[]>([]);
-  const [clientId, setClientId] = useState("");
-  useEffect(() => {
-    if (mode === "existing") listClients().then(setClients).catch(() => setClients([]));
-  }, [mode]);
-  const set = (k: keyof typeof v) => (value: string) => setV((x) => ({ ...x, [k]: value }));
+export function ClientForm({ lead, onDone }: { lead: Lead; onDone: (saved?: Lead | PolicyTrack) => void | Promise<void> }) { return <ProspectClientForm lead={lead} onDone={onDone} />; }
 
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap gap-2">
-        {(
-          [
-            ["new", "Open a new prospect client"],
-            ["existing", "GRAL already has this client"],
-          ] as const
-        ).map(([m, label]) => (
-          <button
-            key={m}
-            type="button"
-            onClick={() => setMode(m)}
-            className={cn("rounded-full border px-3 py-1 text-xs", mode === m ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card hover:bg-secondary")}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      {mode === "new" ? (
-        <ActionForm
-          submitLabel="Open the prospect client"
-          success="Prospect client opened."
-          onSubmit={async () => {
-            const missing = (["registeredName", "sector", "address", "contactName", "jobTitle", "email", "phone"] as const).filter((k) => !v[k].trim());
-            if (missing.length) throw new Error("Fill in every field. The client record needs them all.");
-            onDone(await openProspect(lead, { ...v, duplicateReason: v.duplicateReason.trim() || undefined }));
-          }}
-        >
-          <TextInput id="pr-name" label="Registered name" value={v.registeredName} onChange={set("registeredName")} wide />
-          <SelectInput id="pr-type" label="Client type" value={v.clientType} onChange={set("clientType")} options={types.map((t) => ({ value: t.code, label: t.label }))} />
-          <TextInput id="pr-sector" label="Sector" value={v.sector} onChange={set("sector")} />
-          <TextInput id="pr-address" label="Address" value={v.address} onChange={set("address")} wide />
-          <TextInput id="pr-contact" label="Contact person" value={v.contactName} onChange={set("contactName")} />
-          <TextInput id="pr-title" label="Job title" value={v.jobTitle} onChange={set("jobTitle")} />
-          <TextInput id="pr-email" label="Email" type="email" value={v.email} onChange={set("email")} />
-          <TextInput id="pr-phone" label="Phone" value={v.phone} onChange={set("phone")} />
-          <TextInput id="pr-dup" label="Duplicate reason (optional)" value={v.duplicateReason} onChange={set("duplicateReason")} wide />
-        </ActionForm>
-      ) : (
-        <ActionForm
-          submitLabel="Link the client"
-          success="Client linked."
-          onSubmit={async () => {
-            const client = clients.find((c) => c.id === clientId);
-            if (!client) throw new Error("Choose the client.");
-            onDone(await linkLeadClient(lead, client));
-          }}
-        >
-          <SelectInput id="pr-existing" label="Client" value={clientId} onChange={setClientId} placeholder="Select a client" options={clients.map((c) => ({ value: c.id, label: `${c.name} (${c.id})` }))} wide />
-        </ActionForm>
-      )}
-    </div>
-  );
-}
-
-export function StartTrackForm({ lead, onDone, onCancel }: { lead: Lead; onDone: (saved?: Lead | PolicyTrack) => void; onCancel: () => void }) {
+export function StartTrackForm({ lead, onDone, onCancel }: { lead: Lead; onDone: (saved?: Lead | PolicyTrack) => void | Promise<void>; onCancel: () => void }) {
   const [products, setProducts] = useState<ChoiceOption[]>([]);
   const [productsLoaded, setProductsLoaded] = useState(false);
   const [productId, setProductId] = useState("");
@@ -229,9 +132,9 @@ export function StartTrackForm({ lead, onDone, onCancel }: { lead: Lead; onDone:
       submitLabel="Start the track"
       success="Policy track started. Step 3 checks the client's KYC."
       onCancel={onCancel}
-      onSubmit={async () => {
+      onSubmit={async (attempt) => {
         if (!productId) throw new Error("Choose the product.");
-        onDone(await startTrack(lead, { productId, underwritingRole, property }));
+        await onDone(await startTrack(lead, { productId, underwritingRole, property }, attempt));
       }}
     >
       <SelectInput id="tr-product" label="Product" value={productId} onChange={setProductId} placeholder="Select a product" options={products.map((p) => ({ value: p.id, label: p.name }))} wide />
@@ -272,8 +175,8 @@ export function CloseLead({ lead, onChanged }: { lead: Lead; onChanged: (saved?:
               submitLabel="Close lead"
               success="Lead closed."
               onCancel={() => setOpen(false)}
-              onSubmit={async () => {
-                const saved = await closeLead(lead, disposition, reason);
+              onSubmit={async (attempt) => {
+                const saved = await closeLead(lead, disposition, reason, attempt);
                 setOpen(false);
                 onChanged(saved);
               }}

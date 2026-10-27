@@ -359,6 +359,7 @@ function review(id: string, clientId: string, clientName: string, status: KycRev
     clientName,
     version: 1,
     status,
+    reviewerId: status === "DRAFT" ? undefined : "Risk & Compliance Manager",
     templateCode: template.code,
     templateVersion: template.version,
     items,

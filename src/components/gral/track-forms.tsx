@@ -5,35 +5,34 @@
 // The backend decides which actions are allowed (availableActions) and what is
 // blocking; this page shows them and builds each action's form.
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import Link from "next/link";
-import { ExternalLink } from "lucide-react";
-import { insurersForProduct, onboardingOptions, runTrackAction, type ChoiceOption, type EvidenceInput, type TrackActionInput, type TrackDetail } from "@/lib/api";
-import { addWorkingDays } from "@/lib/claims";
 import { amountInWords, parseAmount } from "@/lib/amounts";
+import { insurersForProduct, type ChoiceOption, type EvidenceInput, type TrackActionInput } from "@/lib/api";
+import { useCurrentUser } from "@/lib/auth-context";
+import { addWorkingDays } from "@/lib/claims";
+import { CommandAttempt } from "@/lib/command-attempt";
 import { formatRwf } from "@/lib/format";
-import {
-  ACTION_LABEL,
-  KYC_STATUS_LABEL,
-  TIER_LABEL,
-  TRACK_PHASES,
-  TRACK_STAGES,
-  TRACK_STATUS_LABEL,
-  blockerText,
-  commissionTier,
-  openMilestone,
-  phaseOf,
-  stageOf,
-  trackHealth,
-} from "@/lib/onboarding";
+import { ACTION_LABEL, KYC_STATUS_LABEL, TIER_LABEL, commissionTier } from "@/lib/onboarding";
+import { onboardingPermissions } from "@/lib/permissions";
 import { todayIso } from "@/lib/renewals";
 import type { PolicyTerms, PolicyTrack } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { ExternalLink } from "lucide-react";
+import Link from "next/link";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AmountInput } from "./amount-input";
-import { PageHeader } from "./shell";
-import { ActionForm, Blockers, EvidenceField, HealthChip, HistoryList, Label, ProofList, SelectInput, TextInput, dateOf } from "./onboarding-ui";
-import { Chip, FloatCard, OutlineButton } from "./ui";
+import { BoardApprovalForm } from "./board-approval-form";
 import { inputClass } from "./client-form";
+import {
+  ActionForm,
+  EvidenceField,
+  Label,
+  ProofList,
+  SelectInput,
+  TextInput,
+  dateOf,
+} from "./onboarding-ui";
+import { DeadlineForm, SingleSourceRequest, SingleSourceStatus, TrackAssignmentForm } from "./track-workflow-actions";
+import { Chip, FloatCard, OutlineButton } from "./ui";
 
 const PROOF_LABELS: Record<string, string> = {
   RISK_SURVEY: "Risk survey report",
@@ -66,7 +65,7 @@ export const STAGE_ACTIONS: Record<number, string[]> = {
   10: ["CONFIRM_PLACEMENT", "SCHEDULE", "TECHNICAL_VERIFICATION", "VERIFY", "CONVERT"],
   11: ["WELCOME"],
 };
-const SIDE_ACTIONS = ["LICENSE", "REVISE", "ASSIGN", "ON_HOLD", "RESUME", "CLOSE"];
+const SIDE_ACTIONS = ["LICENSE", "REVISE", "ASSIGN", "ON_HOLD", "RESUME", "CLOSE", "DEADLINE"];
 
 export type TrackOptions = { products: ChoiceOption[]; insurers: ChoiceOption[]; accountExecutives: ChoiceOption[] };
 export type TrackRun = (input: TrackActionInput) => Promise<void>;
@@ -86,7 +85,7 @@ export function StageRecord({ track: t, n, insurerName }: { track: PolicyTrack; 
             Client&apos;s KYC: <span className="font-medium">{KYC_STATUS_LABEL[t.kyc?.status ?? "NOT_STARTED"]}</span>
             {t.kyc?.missingRequirements.length ? ` · missing ${t.kyc.missingRequirements.join(", ")}` : ""}
           </p>
-          <Link href={`/clients/kyc/${encodeURIComponent(t.kyc?.caseId ?? t.clientId)}`} className="inline-flex items-center gap-1 font-medium text-primary underline underline-offset-2">
+          <Link href={`/clients/kyc/${encodeURIComponent(t.kyc?.caseId ?? t.clientId)}${t.kyc?.caseId ? "" : "?mode=client"}`} className="inline-flex items-center gap-1 font-medium text-primary underline underline-offset-2">
             Open the client&apos;s KYC review <ExternalLink className="size-3" />
           </Link>
         </>,
@@ -271,7 +270,7 @@ function ActionFormFor({
   track: t,
   options,
   insurerName,
-  run,
+  run: execute,
   leadName,
   title,
   onCancel,
@@ -285,14 +284,18 @@ function ActionFormFor({
   title: string;
   onCancel?: () => void;
 }) {
+  const [attempt] = useState(() => new CommandAttempt());
+  const run: TrackRun = (input) => execute({ ...input, attempt: input.attempt ?? attempt });
+
   const [evidence, setEvidence] = useState<EvidenceInput | null>(null);
   const [reason, setReason] = useState("");
   const destination = (what: string) => `${what} · ${leadName} · ${t.productName}`;
 
+  if (action === "RECORD_BOARD_EVIDENCE") return <BoardApprovalForm track={t} run={run} />;
   const simple = SIMPLE_PROOF[action];
   if (simple) {
     return (
-      <ActionForm title={title} submitLabel={title} success={simple.success} onCancel={onCancel} onSubmit={() => run({ action, evidence: evidence ? { main: evidence } : undefined })}>
+      <ActionForm attempt={attempt} title={title} submitLabel={title} success={simple.success} onCancel={onCancel} onSubmit={() => run({ action, evidence: evidence ? { main: evidence } : undefined })}>
         <EvidenceField label={simple.label} destination={destination(simple.label)} value={evidence} onChange={setEvidence} dateLabel={simple.dateLabel} withNote />
       </ActionForm>
     );
@@ -301,13 +304,13 @@ function ActionFormFor({
   switch (action) {
     case "QUALIFY_KYC":
       return (
-        <ActionForm title={title} submitLabel="Confirm and continue" success="KYC confirmed. The risk survey is next." onCancel={onCancel} onSubmit={() => run({ action })} />
+        <ActionForm attempt={attempt} title={title} submitLabel="Confirm and continue" success="KYC confirmed. The risk survey is next." onCancel={onCancel} onSubmit={() => run({ action })} />
       );
     case "SURVEY":
       return <SurveyForm title={title} run={run} destination={destination("Risk survey report")} onCancel={onCancel} />;
     case "SURVEY_NOT_APPLICABLE":
       return (
-        <ActionForm title={title} submitLabel={title} success="Recorded. The programme is next." onCancel={onCancel} onSubmit={() => run({ action, reason })}>
+        <ActionForm attempt={attempt} title={title} submitLabel={title} success="Recorded. The programme is next." onCancel={onCancel} onSubmit={() => run({ action, reason })}>
           <TextInput id="sna-reason" label="Reason" value={reason} onChange={setReason} wide />
         </ActionForm>
       );
@@ -316,17 +319,7 @@ function ActionFormFor({
     case "RFQ":
       return <RfqForm title={title} track={t} options={options} run={run} destination={destination("Requests for quotations")} onCancel={onCancel} />;
     case "SINGLE_SOURCE":
-      return (
-        <ActionForm
-          title={title}
-          submitLabel="Send for approval"
-          success="Single-source exception sent for approval."
-          onCancel={onCancel}
-          onSubmit={() => run({ action, evidence: evidence ? { main: evidence } : undefined })}
-        >
-          <EvidenceField label="Written justification" destination={destination("Single-source justification")} value={evidence} onChange={setEvidence} withNote />
-        </ActionForm>
-      );
+      return <SingleSourceRequest track={t} run={run} />;
     case "INSURER_RESPONSE":
       return <InsurerResponseForm title={title} track={t} insurerName={insurerName} run={run} onCancel={onCancel} />;
     case "QUOTE":
@@ -336,14 +329,14 @@ function ActionFormFor({
     case "REQUEST_APPROVAL": {
       const tier = t.recommendation?.tier ?? "STANDARD";
       return (
-        <ActionForm title={title} intro={TIER_LABEL[tier] ?? tier} submitLabel="Send for approval" success="Sent for internal approval." onCancel={onCancel} onSubmit={() => run({ action })} />
+        <ActionForm attempt={attempt} title={title} intro={TIER_LABEL[tier] ?? tier} submitLabel="Send for approval" success="Sent for internal approval." onCancel={onCancel} onSubmit={() => run({ action })} />
       );
     }
     case "SCHEDULE":
       return <ScheduleForm title={title} track={t} options={options} run={run} leadName={leadName} destination={destination("Policy schedule")} onCancel={onCancel} />;
     case "VERIFY":
       return (
-        <ActionForm title={title} submitLabel="Verify the schedule" success="Schedule verified. The track can now be converted into the client's policy." onCancel={onCancel} onSubmit={() => run({ action })} />
+        <ActionForm attempt={attempt} title={title} submitLabel="Verify the schedule" success="Schedule verified. The track can now be converted into the client's policy." onCancel={onCancel} onSubmit={() => run({ action })} />
       );
     case "CONVERT":
       return <ConvertForm title={title} track={t} run={run} onCancel={onCancel} />;
@@ -354,12 +347,15 @@ function ActionFormFor({
   }
 }
 
-function SurveyForm({ title, run, destination, onCancel }: { title: string; run: TrackRun; destination: string; onCancel?: () => void }) {
+function SurveyForm({ title, run: execute, destination, onCancel }: { title: string; run: TrackRun; destination: string; onCancel?: () => void }) {
+  const [attempt] = useState(() => new CommandAttempt());
+  const run: TrackRun = (input) => execute({ ...input, attempt: input.attempt ?? attempt });
+
   const [grade, setGrade] = useState("");
   const [findings, setFindings] = useState("");
   const [evidence, setEvidence] = useState<EvidenceInput | null>(null);
   return (
-    <ActionForm
+    <ActionForm attempt={attempt}
       title={title}
       submitLabel={title}
       success="Risk survey recorded. The programme is due within 3 working days."
@@ -376,11 +372,14 @@ function SurveyForm({ title, run, destination, onCancel }: { title: string; run:
   );
 }
 
-function ProgramForm({ title, run, destination, onCancel }: { title: string; run: TrackRun; destination: string; onCancel?: () => void }) {
+function ProgramForm({ title, run: execute, destination, onCancel }: { title: string; run: TrackRun; destination: string; onCancel?: () => void }) {
+  const [attempt] = useState(() => new CommandAttempt());
+  const run: TrackRun = (input) => execute({ ...input, attempt: input.attempt ?? attempt });
+
   const [terms, setTerms] = useState("");
   const [evidence, setEvidence] = useState<EvidenceInput | null>(null);
   return (
-    <ActionForm
+    <ActionForm attempt={attempt}
       title={title}
       submitLabel={title}
       success="Programme recorded. The requests for quotations are due within 24 hours."
@@ -396,12 +395,15 @@ function ProgramForm({ title, run, destination, onCancel }: { title: string; run
   );
 }
 
-function RfqForm({ title, track: t, options, run, destination, onCancel }: { title: string; track: PolicyTrack; options: TrackOptions; run: TrackRun; destination: string; onCancel?: () => void }) {
+function RfqForm({ title, track: t, options, run: execute, destination, onCancel }: { title: string; track: PolicyTrack; options: TrackOptions; run: TrackRun; destination: string; onCancel?: () => void }) {
+  const [attempt] = useState(() => new CommandAttempt());
+  const run: TrackRun = (input) => execute({ ...input, attempt: input.attempt ?? attempt });
+
   const [chosen, setChosen] = useState<string[]>([]);
   const [responseDue, setResponseDue] = useState(addWorkingDays(todayIso(), 3));
   const [evidence, setEvidence] = useState<EvidenceInput | null>(null);
   const [productInsurers, setProductInsurers] = useState<ChoiceOption[] | null>(null);
-  const exception = !!t.approvalRequests.SINGLE_SOURCE;
+  const [exception, setException] = useState(false);
   useEffect(() => {
     let current = true;
     setProductInsurers(null);
@@ -417,7 +419,7 @@ function RfqForm({ title, track: t, options, run, destination, onCancel }: { tit
     return () => { current = false; };
   }, [t.productId, options.insurers]);
   return (
-    <ActionForm
+    <ActionForm attempt={attempt}
       title={title}
       submitLabel="Record the requests"
       success="Requests for quotations recorded."
@@ -427,6 +429,7 @@ function RfqForm({ title, track: t, options, run, destination, onCancel }: { tit
         return run({ action: "RFQ", fields: { insurerIds: chosen, responseDue }, evidence: evidence ? { main: evidence } : undefined });
       }}
     >
+      <SingleSourceStatus track={t} onApproved={setException} />
       <fieldset className="sm:col-span-2">
         <Label>Insurers asked ({chosen.length} chosen)</Label>
         <div className="mt-1.5 grid max-h-56 gap-1 overflow-y-auto rounded-xl border border-border p-2 sm:grid-cols-2">
@@ -445,13 +448,16 @@ function RfqForm({ title, track: t, options, run, destination, onCancel }: { tit
   );
 }
 
-function InsurerResponseForm({ title, track: t, insurerName, run, onCancel }: { title: string; track: PolicyTrack; insurerName: (id: string) => string; run: TrackRun; onCancel?: () => void }) {
+function InsurerResponseForm({ title, track: t, insurerName, run: execute, onCancel }: { title: string; track: PolicyTrack; insurerName: (id: string) => string; run: TrackRun; onCancel?: () => void }) {
+  const [attempt] = useState(() => new CommandAttempt());
+  const run: TrackRun = (input) => execute({ ...input, attempt: input.attempt ?? attempt });
+
   const waiting = t.invitations.filter((i) => !i.response);
   const [insurerId, setInsurerId] = useState(waiting[0]?.insurerId ?? "");
   const [outcome, setOutcome] = useState("DECLINED");
   const [detail, setDetail] = useState("");
   return (
-    <ActionForm
+    <ActionForm attempt={attempt}
       title={title}
       submitLabel="Record"
       success="Recorded."
@@ -542,7 +548,10 @@ function termsFrom(d: TermsDraft, productId: string): PolicyTerms {
   };
 }
 
-function QuoteForm({ title, track: t, options, run, leadName, destination, onCancel }: { title: string; track: PolicyTrack; options: TrackOptions; run: TrackRun; leadName: string; destination: string; onCancel?: () => void }) {
+function QuoteForm({ title, track: t, options, run: execute, leadName, destination, onCancel }: { title: string; track: PolicyTrack; options: TrackOptions; run: TrackRun; leadName: string; destination: string; onCancel?: () => void }) {
+  const [attempt] = useState(() => new CommandAttempt());
+  const run: TrackRun = (input) => execute({ ...input, attempt: input.attempt ?? attempt });
+
   const invited = new Set(t.invitations.map((i) => i.insurerId));
   const firstWaiting = t.invitations.find((i) => !i.response)?.insurerId ?? "";
   const [draft, setDraft] = useState<TermsDraft>({ ...draftFrom(undefined, leadName), insurerId: firstWaiting });
@@ -550,7 +559,7 @@ function QuoteForm({ title, track: t, options, run, leadName, destination, onCan
   const [evidence, setEvidence] = useState<EvidenceInput | null>(null);
   const narrowed = useMemo(() => ({ ...options, insurers: invited.size ? options.insurers.filter((i) => invited.has(i.id)) : options.insurers }), [options, invited]);
   return (
-    <ActionForm
+    <ActionForm attempt={attempt}
       title={title}
       submitLabel="Record the quote"
       success="Quote recorded."
@@ -564,7 +573,10 @@ function QuoteForm({ title, track: t, options, run, leadName, destination, onCan
   );
 }
 
-function RecommendForm({ title, track: t, insurerName, run, destination, onCancel }: { title: string; track: PolicyTrack; insurerName: (id: string) => string; run: TrackRun; destination: string; onCancel?: () => void }) {
+function RecommendForm({ title, track: t, insurerName, run: execute, destination, onCancel }: { title: string; track: PolicyTrack; insurerName: (id: string) => string; run: TrackRun; destination: string; onCancel?: () => void }) {
+  const [attempt] = useState(() => new CommandAttempt());
+  const run: TrackRun = (input) => execute({ ...input, attempt: input.attempt ?? attempt });
+
   const [quoteId, setQuoteId] = useState(t.quotes[0]?.id ?? "");
   const quote = t.quotes.find((q) => q.id === quoteId);
   const suggested = quote ? Math.round(quote.terms.netPremium * quote.terms.commissionRate) : 0;
@@ -582,7 +594,7 @@ function RecommendForm({ title, track: t, insurerName, run, destination, onCance
   const amount = parseAmount(commission);
   const tier = amount > 0 ? commissionTier(amount) : null;
   return (
-    <ActionForm
+    <ActionForm attempt={attempt}
       title={title}
       submitLabel={title}
       success="Recommendation recorded. It now needs internal approval."
@@ -612,14 +624,17 @@ function RecommendForm({ title, track: t, insurerName, run, destination, onCance
   );
 }
 
-function ScheduleForm({ title, track: t, options, run, leadName, destination, onCancel }: { title: string; track: PolicyTrack; options: TrackOptions; run: TrackRun; leadName: string; destination: string; onCancel?: () => void }) {
+function ScheduleForm({ title, track: t, options, run: execute, leadName, destination, onCancel }: { title: string; track: PolicyTrack; options: TrackOptions; run: TrackRun; leadName: string; destination: string; onCancel?: () => void }) {
+  const [attempt] = useState(() => new CommandAttempt());
+  const run: TrackRun = (input) => execute({ ...input, attempt: input.attempt ?? attempt });
+
   const accepted = t.quotes.find((q) => q.id === t.recommendation?.quoteId)?.terms;
   const [draft, setDraft] = useState<TermsDraft>(draftFrom(t.observedSchedule ?? accepted, leadName));
   const [policyNumber, setPolicyNumber] = useState("");
   const [discrepancies, setDiscrepancies] = useState(t.discrepancies.join("\n"));
   const [evidence, setEvidence] = useState<EvidenceInput | null>(null);
   return (
-    <ActionForm
+    <ActionForm attempt={attempt}
       title={title}
       submitLabel="Record the schedule"
       success="Schedule recorded."
@@ -640,10 +655,13 @@ function ScheduleForm({ title, track: t, options, run, leadName, destination, on
   );
 }
 
-function ConvertForm({ title, track: t, run, onCancel }: { title: string; track: PolicyTrack; run: TrackRun; onCancel?: () => void }) {
+function ConvertForm({ title, track: t, run: execute, onCancel }: { title: string; track: PolicyTrack; run: TrackRun; onCancel?: () => void }) {
+  const [attempt] = useState(() => new CommandAttempt());
+  const run: TrackRun = (input) => execute({ ...input, attempt: input.attempt ?? attempt });
+
   const [paid, setPaid] = useState("0");
   return (
-    <ActionForm
+    <ActionForm attempt={attempt}
       title={title}
       submitLabel="Convert into the policy"
       success="Converted. The policy is on the client file; the welcome letter is due within 2 working days."
@@ -662,12 +680,15 @@ function ConvertForm({ title, track: t, run, onCancel }: { title: string; track:
   );
 }
 
-function WelcomeForm({ title, run, destination, onCancel }: { title: string; run: TrackRun; destination: (what: string) => string; onCancel?: () => void }) {
+function WelcomeForm({ title, run: execute, destination, onCancel }: { title: string; run: TrackRun; destination: (what: string) => string; onCancel?: () => void }) {
+  const [attempt] = useState(() => new CommandAttempt());
+  const run: TrackRun = (input) => execute({ ...input, attempt: input.attempt ?? attempt });
+
   const [letter, setLetter] = useState<EvidenceInput | null>(null);
   const [delivery, setDelivery] = useState<EvidenceInput | null>(null);
   const [checklist, setChecklist] = useState<EvidenceInput | null>(null);
   return (
-    <ActionForm
+    <ActionForm attempt={attempt}
       title={title}
       submitLabel={title}
       success="Welcome and filing complete. This policy track is done."
@@ -687,7 +708,9 @@ function WelcomeForm({ title, run, destination, onCancel }: { title: string; run
 /* Actions not tied to one step */
 
 export function OtherActions({ track: t, options, insurerName, run }: { track: PolicyTrack; options: TrackOptions; insurerName: (id: string) => string; run: TrackRun }) {
-  const available = SIDE_ACTIONS.filter((a) => t.availableActions.includes(a));
+  const { user } = useCurrentUser();
+  const perms = onboardingPermissions(user);
+  const available = SIDE_ACTIONS.filter((a) => t.availableActions.includes(a) || (a === "DEADLINE" && perms.canAdjustDeadline && ["OPEN", "ON_HOLD"].includes(t.status)));
   const [open, setOpen] = useState<string | null>(null);
   if (!available.length) return null;
   return (
@@ -709,9 +732,11 @@ export function OtherActions({ track: t, options, insurerName, run }: { track: P
   );
 }
 
-function SideForm({ action, track: t, options, run, onCancel }: { action: string; track: PolicyTrack; options: TrackOptions; insurerName: (id: string) => string; run: TrackRun; onCancel: () => void }) {
+function SideForm({ action, track: t, options, run: execute, onCancel }: { action: string; track: PolicyTrack; options: TrackOptions; insurerName: (id: string) => string; run: TrackRun; onCancel: () => void }) {
+  const [attempt] = useState(() => new CommandAttempt());
+  const run: TrackRun = (input) => execute({ ...input, attempt: input.attempt ?? attempt });
+
   const [reason, setReason] = useState("");
-  const [assignee, setAssignee] = useState("");
   const [disposition, setDisposition] = useState("CLOSED_LOST");
   const [insurerId, setInsurerId] = useState("");
   const [validUntil, setValidUntil] = useState("");
@@ -721,7 +746,7 @@ function SideForm({ action, track: t, options, run, onCancel }: { action: string
   switch (action) {
     case "LICENSE":
       return (
-        <ActionForm title="Insurer licence check" submitLabel="Record the check" success="Licence check recorded." onCancel={onCancel} onSubmit={() => {
+        <ActionForm attempt={attempt} title="Insurer licence check" submitLabel="Record the check" success="Licence check recorded." onCancel={onCancel} onSubmit={() => {
           if (!insurerId || !validUntil) throw new Error("Choose the insurer and the licence's end date.");
           if (!source.trim()) throw new Error("Enter the source where you checked the licence.");
           if (!evidence) throw new Error("Attach the insurer licence or register extract.");
@@ -735,30 +760,23 @@ function SideForm({ action, track: t, options, run, onCancel }: { action: string
       );
     case "REVISE":
       return (
-        <ActionForm title="Revise the recommendation" submitLabel="Revise" success="Recommendation reopened for revision." onCancel={onCancel} onSubmit={() => run({ action, reason })}>
+        <ActionForm attempt={attempt} title="Revise the recommendation" submitLabel="Revise" success="Recommendation reopened for revision." onCancel={onCancel} onSubmit={() => run({ action, reason })}>
           <TextInput id="rv-reason" label="Reason" value={reason} onChange={setReason} wide />
         </ActionForm>
       );
-    case "ASSIGN":
-      return (
-        <ActionForm title="Change the Accounts Executive" submitLabel="Assign" success="Assignment changed." onCancel={onCancel} onSubmit={() => {
-          if (!assignee) throw new Error("Choose the person.");
-          return run({ action, fields: { responsibility: "OWNER", assigneeId: assignee } });
-        }}>
-          <SelectInput id="as-person" label="Accounts Executive" value={assignee} onChange={setAssignee} placeholder="Select a person" options={options.accountExecutives.map((p) => ({ value: p.id, label: p.name }))} wide />
-        </ActionForm>
-      );
+    case "DEADLINE": return <DeadlineForm track={t} run={run} />;
+    case "ASSIGN": return <TrackAssignmentForm track={t} run={run} />;
     case "ON_HOLD":
       return (
-        <ActionForm title="Put on hold" submitLabel="Put on hold" success="Put on hold." onCancel={onCancel} onSubmit={() => run({ action, reason })}>
+        <ActionForm attempt={attempt} title="Put on hold" submitLabel="Put on hold" success="Put on hold." onCancel={onCancel} onSubmit={() => run({ action, reason })}>
           <TextInput id="oh-reason" label="Reason" value={reason} onChange={setReason} wide />
         </ActionForm>
       );
     case "RESUME":
-      return <ActionForm title="Resume" submitLabel="Resume" success="Resumed." onCancel={onCancel} onSubmit={() => run({ action, reason: reason || "Resumed" })} />;
+      return <ActionForm attempt={attempt} title="Resume" submitLabel="Resume" success="Resumed." onCancel={onCancel} onSubmit={() => run({ action, reason: reason || "Resumed" })} />;
     case "CLOSE":
       return (
-        <ActionForm title="Close this track" submitLabel="Close the track" success="Track closed." onCancel={onCancel} onSubmit={() => run({ action, reason, fields: { disposition } })}>
+        <ActionForm attempt={attempt} title="Close this track" submitLabel="Close the track" success="Track closed." onCancel={onCancel} onSubmit={() => run({ action, reason, fields: { disposition } })}>
           <SelectInput id="ct-disp" label="Outcome" value={disposition} onChange={setDisposition} options={[{ value: "CLOSED_LOST", label: "Lost: the client declined or went elsewhere" }, { value: "CANCELLED", label: "Cancelled: started by mistake" }]} wide />
           <TextInput id="ct-reason" label="Reason" value={reason} onChange={setReason} wide />
         </ActionForm>

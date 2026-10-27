@@ -5,13 +5,13 @@
 // screening, and the Risk & Compliance Manager's decision with the signed KYC
 // Approval Form. One review is shared by all of the client's policy tracks.
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
-import { ArrowLeft, Check, Plus, Trash2 } from "lucide-react";
 import {
+  DEMO_REVIEWER,
+  MOCK_AUTH,
   attachKycDocument,
   decideKycReview,
   escalateKycReview,
+  getOnboardingClient,
   listKycTemplates,
   recordKycScreening,
   saveKycTemplate,
@@ -20,16 +20,37 @@ import {
   type EvidenceInput,
 } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
+import { addWorkingDays } from "@/lib/claims";
 import { KYC_STATUS_LABEL, SUGGESTED_KYC_REQUIREMENTS } from "@/lib/onboarding";
 import { onboardingPermissions } from "@/lib/permissions";
-import { addWorkingDays } from "@/lib/claims";
+import { useRefresh } from "@/lib/queries";
 import { todayIso } from "@/lib/renewals";
-import type { CommandHistory, KycRequirement, KycReview, KycTemplate, LeadType, Proof } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import type {
+  CommandHistory,
+  KycRequirement,
+  KycReview,
+  KycTemplate,
+  LeadType,
+  Proof,
+} from "@/lib/types";
+import { ArrowLeft, Check, Plus, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { inputClass } from "./client-form";
 import { DocumentPreviewButton } from "./document-preview";
+import { KycReviewerAssignment } from "./kyc-reviewer-assignment";
+import {
+  ActionForm,
+  Blockers,
+  EvidenceField,
+  HistoryList,
+  Label,
+  SelectInput,
+  TextInput,
+  dateOf,
+} from "./onboarding-ui";
 import { PageHeader } from "./shell";
-import { ActionForm, EvidenceField, HistoryList, Label, SelectInput, TextInput, dateOf } from "./onboarding-ui";
 import { Chip, Dot, FloatCard, OutlineButton, SegmentedTabs } from "./ui";
 
 const EVIDENCE_LABELS: Record<string, string> = { SCREENING: "Screening record", KYC_APPROVAL: "Signed KYC Approval Form", KYC_ESCALATION: "Escalation note" };
@@ -38,9 +59,16 @@ function statusTone(status: string) {
   return status === "APPROVED" ? "success" : status === "REJECTED" ? "danger" : status === "SUBMITTED" ? "warning" : "neutral";
 }
 
-export function KycReviewPage({ review: r, history, onChanged }: { review: KycReview; history: CommandHistory[]; onChanged: () => void }) {
+export function KycReviewPage({ review: r, history, onChanged }: { review: KycReview; history: CommandHistory[]; onChanged: () => void | Promise<void> }) {
   const { user } = useCurrentUser();
   const perms = onboardingPermissions(user);
+  const refresh = useRefresh();
+  const changed = async () => { refresh("leads", "clients", "approvals"); await onChanged(); };
+  const router = useRouter();
+  const [starting, setStarting] = useState(false);
+  const assigned = !!r.reviewerId && (r.reviewerId === user.id || (MOCK_AUTH && r.reviewerId === DEMO_REVIEWER && user.role === "Risk & Compliance Manager"));
+  const stale = r.blockers.some((b) => ["KYC_IDENTITY_CHANGED", "KYC_TEMPLATE_CHANGED"].includes(b));
+  if (starting) return <div className="space-y-3"><OutlineButton onClick={() => setStarting(false)}>Back to the previous review</OutlineButton><StartKycReview clientId={r.clientId} clientName={r.clientName} reviews={[r]} onStarted={(next) => router.push(`/clients/kyc/${encodeURIComponent(next.id)}`)} /></div>;
   const editable = r.status === "DRAFT" || r.status === "RETURNED";
   const received = r.items.filter((i) => i.documentId).length;
   const deadline = r.revisedDueAt ?? r.dueAt;
@@ -69,13 +97,16 @@ export function KycReviewPage({ review: r, history, onChanged }: { review: KycRe
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
         <div className="min-w-0 space-y-4">
+          <KycReviewerAssignment review={r} onChanged={changed} />
+          <Blockers codes={r.blockers.filter((b) => b !== "KYC_APPROVAL_REQUIRED")} />
+          {perms.canPrepareKyc && (r.status === "REJECTED" || (r.status === "APPROVED" && stale)) ? <FloatCard className="space-y-3 p-5"><p className="text-sm">A new KYC review is required before this client can proceed with onboarding.</p><OutlineButton onClick={() => setStarting(true)}>Start a new KYC review</OutlineButton></FloatCard> : null}
           <FloatCard className="p-4 sm:p-5" delay={100}>
             <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
               Checklist
             </h2>
             <ul className="mt-3 space-y-2">
               {r.items.map((item) => (
-                <ChecklistRow key={item.code} review={r} item={item} canFile={editable && perms.canPrepareKyc} onChanged={onChanged} />
+                <ChecklistRow key={item.code} review={r} item={item} canFile={editable && perms.canPrepareKyc} onChanged={changed} />
               ))}
             </ul>
           </FloatCard>
@@ -92,9 +123,9 @@ export function KycReviewPage({ review: r, history, onChanged }: { review: KycRe
             ) : (
               <p className="mt-2 text-xs text-muted-foreground">Not recorded yet.</p>
             )}
-            {perms.canScreenKyc && (editable || r.status === "SUBMITTED") ? (
+            {assigned && perms.canScreenKyc && (editable || r.status === "SUBMITTED") ? (
               <div className="mt-3">
-                <ScreeningForm review={r} onChanged={onChanged} />
+                <ScreeningForm review={r} onChanged={changed} />
               </div>
             ) : null}
           </FloatCard>
@@ -102,17 +133,19 @@ export function KycReviewPage({ review: r, history, onChanged }: { review: KycRe
           {editable && perms.canPrepareKyc ? (
             <ActionForm
               title="Send for the compliance decision"
+              disabled={!r.reviewerId || r.items.some((i) => i.required && !i.documentId)}
+              disabledReason={!r.reviewerId ? "The CRM Manager or MD must assign a compliance reviewer first." : r.items.some((i) => i.required && !i.documentId) ? "File all required documents before submitting." : undefined}
               submitLabel="Send for decision"
               success="Sent to the Risk & Compliance Manager."
-              onSubmit={async () => {
-                await submitKycReview(r);
-                onChanged();
+              onSubmit={async (attempt) => {
+                await submitKycReview(r, attempt);
+                await changed();
               }}
             />
           ) : null}
 
-          {r.status === "SUBMITTED" && perms.canDecideKyc ? <DecisionForm review={r} onChanged={onChanged} /> : null}
-          {overdue && perms.canDecideKyc ? <EscalationForm review={r} onChanged={onChanged} /> : null}
+          {assigned && r.status === "SUBMITTED" && perms.canDecideKyc ? <DecisionForm review={r} onChanged={changed} /> : null}
+          {assigned && r.status === "SUBMITTED" && overdue && perms.canDecideKyc ? <EscalationForm review={r} onChanged={changed} /> : null}
         </div>
 
         <div className="min-w-0 space-y-4">
@@ -136,7 +169,7 @@ export function KycReviewPage({ review: r, history, onChanged }: { review: KycRe
           </FloatCard>
           <FloatCard className="p-5" delay={200}>
             <h2 className="text-base font-semibold tracking-tight">History</h2>
-            <HistoryList items={history} />
+            <HistoryList items={history} resource={{ type: "KYC", id: r.id }} />
           </FloatCard>
         </div>
       </div>
@@ -144,7 +177,7 @@ export function KycReviewPage({ review: r, history, onChanged }: { review: KycRe
   );
 }
 
-function ChecklistRow({ review, item, canFile, onChanged }: { review: KycReview; item: KycReview["items"][number]; canFile: boolean; onChanged: () => void }) {
+function ChecklistRow({ review, item, canFile, onChanged }: { review: KycReview; item: KycReview["items"][number]; canFile: boolean; onChanged: () => void | Promise<void> }) {
   const [filing, setFiling] = useState(false);
   const [evidence, setEvidence] = useState<EvidenceInput | null>(null);
   const proof = review.evidence.find((e) => e.purpose === item.code);
@@ -188,11 +221,11 @@ function ChecklistRow({ review, item, canFile, onChanged }: { review: KycReview;
             submitLabel="File it"
             success={`${item.label} filed.`}
             onCancel={() => setFiling(false)}
-            onSubmit={async () => {
+            onSubmit={async (attempt) => {
               if (!evidence) throw new Error("Attach the document.");
-              await attachKycDocument(review, item.code, evidence);
+              await attachKycDocument(review, item.code, evidence, attempt);
               setFiling(false);
-              onChanged();
+              await onChanged();
             }}
           >
             <EvidenceField label={item.label} destination={`${item.label} · KYC for ${review.clientName ?? "the client"}`} value={evidence} onChange={setEvidence} dateLabel="Actually received on" />
@@ -223,7 +256,7 @@ function KycProofPreview({ reviewId, proof, label }: { reviewId: string; proof: 
   );
 }
 
-function ScreeningForm({ review, onChanged }: { review: KycReview; onChanged: () => void }) {
+function ScreeningForm({ review, onChanged }: { review: KycReview; onChanged: () => void | Promise<void> }) {
   const [result, setResult] = useState<"CLEAR" | "REVIEW_REQUIRED" | "REJECTED">("CLEAR");
   const [notes, setNotes] = useState("");
   const [evidence, setEvidence] = useState<EvidenceInput | null>(null);
@@ -231,10 +264,10 @@ function ScreeningForm({ review, onChanged }: { review: KycReview; onChanged: ()
     <ActionForm
       submitLabel={review.screeningResult ? "Record a new screening" : "Record the screening"}
       success="Screening recorded."
-      onSubmit={async () => {
+      onSubmit={async (attempt) => {
         if (!evidence) throw new Error("Attach the screening record.");
-        await recordKycScreening(review, { result, notes, evidence });
-        onChanged();
+        await recordKycScreening(review, { result, notes, evidence }, attempt);
+        await onChanged();
       }}
     >
       <SelectInput
@@ -255,7 +288,7 @@ function ScreeningForm({ review, onChanged }: { review: KycReview; onChanged: ()
   );
 }
 
-function DecisionForm({ review, onChanged }: { review: KycReview; onChanged: () => void }) {
+function DecisionForm({ review, onChanged }: { review: KycReview; onChanged: () => void | Promise<void> }) {
   const choices = ["Approve", "Return", "Reject"] as const;
   const [choice, setChoice] = useState<(typeof choices)[number]>("Approve");
   const [reason, setReason] = useState("");
@@ -269,9 +302,9 @@ function DecisionForm({ review, onChanged }: { review: KycReview; onChanged: () 
       }
       submitLabel={choice}
       success={choice === "Approve" ? "KYC approved. Quotations can go ahead." : choice === "Return" ? "Returned for changes." : "KYC rejected."}
-      onSubmit={async () => {
-        await decideKycReview(review, { decision, reason, evidence: evidence ?? undefined });
-        onChanged();
+      onSubmit={async (attempt) => {
+        await decideKycReview(review, { decision, reason, evidence: evidence ?? undefined }, attempt);
+        await onChanged();
       }}
     >
       <TextInput id="kd-reason" label="Reason" value={reason} onChange={setReason} wide />
@@ -280,7 +313,7 @@ function DecisionForm({ review, onChanged }: { review: KycReview; onChanged: () 
   );
 }
 
-function EscalationForm({ review, onChanged }: { review: KycReview; onChanged: () => void }) {
+function EscalationForm({ review, onChanged }: { review: KycReview; onChanged: () => void | Promise<void> }) {
   const [revised, setRevised] = useState(addWorkingDays(todayIso(), 2));
   const [reason, setReason] = useState("");
   const [evidence, setEvidence] = useState<EvidenceInput | null>(null);
@@ -289,10 +322,10 @@ function EscalationForm({ review, onChanged }: { review: KycReview; onChanged: (
       title="Escalate the late review"
       submitLabel="Escalate"
       success="Escalated with a revised date."
-      onSubmit={async () => {
+      onSubmit={async (attempt) => {
         if (!evidence) throw new Error("Attach the written escalation.");
-        await escalateKycReview(review, { evidence, revisedDueAt: revised, reason });
-        onChanged();
+        await escalateKycReview(review, { evidence, revisedDueAt: revised, reason }, attempt);
+        await onChanged();
       }}
     >
       <TextInput id="ke-date" label="Revised decision date" type="date" min={todayIso()} value={revised} onChange={setRevised} />
@@ -306,17 +339,23 @@ function EscalationForm({ review, onChanged }: { review: KycReview; onChanged: (
 
 export function StartKycReview({ clientId, clientName, reviews, onStarted }: { clientId: string; clientName?: string; reviews: KycReview[]; onStarted: (r: KycReview) => void }) {
   const { user } = useCurrentUser();
+  const refresh = useRefresh();
   const perms = onboardingPermissions(user);
   const [templates, setTemplates] = useState<KycTemplate[] | null>(null);
+  const [allTemplates, setAllTemplates] = useState<KycTemplate[]>([]);
   const [code, setCode] = useState("");
   const [editing, setEditing] = useState(false);
+  const [templateError, setTemplateError] = useState<string | null>(null);
   const load = () =>
-    listKycTemplates()
-      .then((t) => {
+    Promise.all([listKycTemplates(), perms.canPrepareKyc ? getOnboardingClient(clientId) : Promise.resolve(null)])
+      .then(([all, client]) => {
+        const t = client ? all.filter((t) => t.clientType === client.clientType) : all;
+        setAllTemplates(all);
+        setTemplateError(null);
         setTemplates(t);
         setCode((c) => c || t[0]?.code || "");
       })
-      .catch(() => setTemplates([]));
+      .catch((e) => setTemplateError(e instanceof Error ? e.message : "Could not load checklists."));
   useEffect(() => {
     load();
   }, []);
@@ -329,7 +368,7 @@ export function StartKycReview({ clientId, clientName, reviews, onStarted }: { c
       <PageHeader title={`KYC · ${clientName ?? "Client"}`} subtitle="No open KYC review for this client" />
       <div className="mt-5 grid gap-4 xl:grid-cols-[1fr_340px]">
         <div className="min-w-0 space-y-4">
-          {templates === null ? (
+          {templateError ? <FloatCard className="space-y-2 p-5"><p role="alert" className="text-xs text-danger">{templateError}</p><OutlineButton onClick={load}>Try again</OutlineButton></FloatCard> : templates === null ? (
             <p className="text-sm text-muted-foreground">Loading GRAL&apos;s checklists…</p>
           ) : templates.length === 0 ? (
             <FloatCard className="p-5">
@@ -344,9 +383,11 @@ export function StartKycReview({ clientId, clientName, reviews, onStarted }: { c
               title="Start the KYC review"
               submitLabel="Start the review"
               success="KYC review started."
-              onSubmit={async () => {
+              onSubmit={async (attempt) => {
                 if (!code) throw new Error("Choose the checklist.");
-                onStarted(await startKycReview(clientId, code));
+                const started = await startKycReview(clientId, code, attempt);
+                refresh("leads", "clients", "approvals");
+                onStarted(started);
               }}
             >
               <SelectInput id="kyc-template" label="Checklist" value={code} onChange={setCode} options={templates.map((t) => ({ value: t.code, label: `${t.code} · ${t.clientType === "INDIVIDUAL" ? "Individuals" : "Companies"} · ${t.requirements.length} documents (version ${t.version})` }))} wide />
@@ -360,7 +401,7 @@ export function StartKycReview({ clientId, clientName, reviews, onStarted }: { c
           {perms.canEditKycChecklists ? (
             editing ? (
               <ChecklistEditor
-                templates={templates ?? []}
+                templates={allTemplates}
                 onDone={() => {
                   setEditing(false);
                   load();
@@ -399,6 +440,7 @@ export function StartKycReview({ clientId, clientName, reviews, onStarted }: { c
 
 /** Set up or change GRAL's checklist for a client type. Each save is a new version; old reviews keep theirs. */
 function ChecklistEditor({ templates, onDone, onCancel }: { templates: KycTemplate[]; onDone: () => void; onCancel: () => void }) {
+  const refresh = useRefresh();
   const [clientType, setClientType] = useState<LeadType>("CORPORATE");
   const existing = templates.find((t) => t.clientType === clientType);
   const [code, setCode] = useState(existing?.code ?? "CORPORATE_STANDARD");
@@ -419,9 +461,10 @@ function ChecklistEditor({ templates, onDone, onCancel }: { templates: KycTempla
       submitLabel="Save the checklist"
       success="Checklist saved."
       onCancel={onCancel}
-      onSubmit={async () => {
+      onSubmit={async (attempt) => {
         const clean = items.filter((i) => i.label.trim()).map((i) => ({ ...i, label: i.label.trim(), code: i.code.trim() || i.label.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_") }));
-        await saveKycTemplate(code.trim(), { clientType, requirements: clean, reason }, existing?.version ?? 0);
+        await saveKycTemplate(code.trim(), { clientType, requirements: clean, reason }, templates.find((t) => t.code === code.trim())?.version ?? 0);
+        refresh("leads", "clients", "approvals");
         onDone();
       }}
     >

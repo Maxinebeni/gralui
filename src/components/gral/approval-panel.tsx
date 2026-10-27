@@ -3,19 +3,20 @@
 // Decision panel for one approval request (APR-02 to APR-04): what is being
 // approved, the ordered steps, the evidence, the decision form and the history.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Check, FileText, Paperclip, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
-import { addApprovalEvidence, decideApproval, resubmitApproval, uploadDocument } from "@/lib/api";
+import { addApprovalEvidence, decideApproval, resubmitApproval, uploadDocument, getTrack } from "@/lib/api";
+import { BoardApprovalForm, isBoardStep } from "./board-approval-form";
 import { SUBJECT_LABEL, approveBlocker, canDecide, currentStep, statusLabel, statusTone } from "@/lib/approvals";
 import { useCurrentUser } from "@/lib/auth-context";
 import { recordHref } from "@/lib/links";
 import { canAccessPath } from "@/lib/permissions";
 import { formatDate } from "@/lib/renewals";
-import type { ApprovalDecision, ApprovalRequest, ApprovalStep } from "@/lib/types";
+import type { ApprovalDecision, ApprovalRequest, ApprovalStep, PolicyTrack } from "@/lib/types";
 import { FilePickButton } from "./documents";
 import { Chip, Dot, NavyButton, SegmentedTabs } from "./ui";
 
@@ -38,6 +39,14 @@ export function ApprovalPanel({
   const isClaim = r.subjectType === "CLAIM_SETTLEMENT";
   const open = r.status === "PENDING";
   const step = currentStep(r);
+  const board = isBoardStep(r);
+  const [track, setTrack] = useState<PolicyTrack | null>(null);
+  const [trackError, setTrackError] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    if (board) getTrack(r.subjectId).then((d) => { if (active) { setTrack(d?.track ?? null); setTrackError(d ? null : "The policy track is unavailable."); } }).catch((e) => { if (active) setTrackError(e instanceof Error ? e.message : "Could not load the policy track."); });
+    return () => { active = false; };
+  }, [board, r.subjectId, r.version]);
 
   async function attach(file: File) {
     try {
@@ -110,7 +119,7 @@ export function ApprovalPanel({
             <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
               Evidence{r.evidenceRequired ? " (required)" : ""}
             </h3>
-            {open && !isClaim ? (
+            {open && !isClaim && !board ? (
               <FilePickButton onFile={attach} destination={`Evidence for ${r.id} · ${r.title}`}>
                 <Paperclip className="size-3.5" /> Attach
               </FilePickButton>
@@ -132,8 +141,9 @@ export function ApprovalPanel({
           </div>
         </section>
 
+        {board && user.role === "MD" ? trackError ? <p role="alert" className="text-xs text-danger">{trackError}</p> : track && !track.boardApproval ? <BoardApprovalForm track={track} onChanged={onChanged} /> : !track ? <p className="text-xs text-muted-foreground">Loading Board recording…</p> : null : null}
         {decides ? (
-          <DecisionForm request={r} isClaim={isClaim} userName={user.name} role={user.role} onChanged={onChanged} />
+          <DecisionForm request={r} isClaim={isClaim} board={board} userName={user.name} role={user.role} onChanged={onChanged} />
         ) : open && step ? (
           <p className="rounded-xl border border-border px-3 py-2.5 text-xs text-muted-foreground">
             Waiting for the {step.role === "Board" ? "MD to record the Board's decision" : step.role}. You can follow it here.
@@ -184,7 +194,7 @@ function StepRow({ step: s }: { step: ApprovalStep }) {
     <li className={cn("rounded-xl border px-3 py-2.5", s.status === "PENDING" ? "border-sky/40 bg-pale" : "border-border")}>
       <div className="flex items-center justify-between gap-3">
         <span className="flex items-center gap-2 text-xs font-medium">
-          {icon} {s.order}. {s.role}
+            {icon} {s.order}. {s.requiredPermission === "ONBOARDING_BOARD_EVIDENCE" ? "Board decision recorded by MD" : s.role}
           {s.informOnly ? <span className="font-normal text-subtle">(informed)</span> : null}
         </span>
         <span className="text-[11px] text-muted-foreground">{label}</span>
@@ -206,15 +216,17 @@ function DecisionForm({
   userName,
   role,
   onChanged,
+  board = false,
 }: {
   request: ApprovalRequest;
   isClaim: boolean;
   userName: string;
   role: string;
   onChanged: () => void;
+  board?: boolean;
 }) {
-  const choices: ApprovalDecision[] = isClaim ? ["APPROVE", "RETURN"] : ["APPROVE", "RETURN", "REJECT"];
-  const [decision, setDecision] = useState<ApprovalDecision>("APPROVE");
+  const choices: ApprovalDecision[] = board ? ["RETURN", "REJECT"] : isClaim ? ["APPROVE", "RETURN"] : ["APPROVE", "RETURN", "REJECT"];
+  const [decision, setDecision] = useState<ApprovalDecision>(board ? "RETURN" : "APPROVE");
   const [comment, setComment] = useState("");
   const [saving, setSaving] = useState(false);
   const blocker = decision === "APPROVE" ? approveBlocker(r) : null;
