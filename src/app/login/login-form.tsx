@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { NavyButton, OutlineButton } from "@/components/gral/ui";
+import { PasswordInput } from "@/components/gral/password-input";
 import { useAuth } from "@/lib/auth-context";
 
 export function LoginForm() {
@@ -82,9 +83,8 @@ export function LoginForm() {
             <label className="text-xs font-medium text-muted-foreground" htmlFor="password">
               Password
             </label>
-            <input
+            <PasswordInput
               id="password"
-              type="password"
               autoComplete="current-password"
               value={password}
               onChange={(e) => {
