@@ -124,7 +124,7 @@ export function ClientsTable({
                 </Td>
                 <Td className="text-xs">{c.activePolicies}</Td>
                 <Td>
-                  <StatusDot ok={c.kyc} />
+                  <StatusDot ok={c.kyc} title={c.kycGateStatus ? `KYC: ${c.kycGateStatus}` : undefined} />
                 </Td>
                 <Td>
                   <StatusDot ok={c.policiesOk} />
@@ -233,9 +233,10 @@ export function ClientFileSlideOver({
   );
 }
 
-function StatusDot({ ok }: { ok: boolean }) {
+function StatusDot({ ok, title }: { ok: boolean; title?: string }) {
   return (
     <span
+      title={title}
       className={cn(
         "flex size-5 items-center justify-center rounded-full text-[10px] font-semibold",
         ok ? "bg-success-soft text-success" : "bg-warning-soft text-warning",

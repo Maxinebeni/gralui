@@ -58,10 +58,10 @@ export function ApprovalPanel({
       <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-6 sm:py-5">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-lg font-semibold tracking-tight">{r.id}</span>
+            <span className="text-lg font-semibold tracking-tight">{r.title}</span>
             <Chip tone={statusTone(r) === "warning" ? "warning" : statusTone(r)}>{statusLabel(r)}</Chip>
           </div>
-          <p className="mt-1.5 text-sm text-foreground">{r.title}</p>
+          <p className="mt-1 text-[10px] text-subtle">Request ID: {r.id}</p>
           <p className="mt-1 text-xs text-muted-foreground">
             {SUBJECT_LABEL[r.subjectType]} ·{" "}
             {canAccessPath(user, recordHref(r.subjectType, r.subjectId).split("?")[0]!) ? (
@@ -71,7 +71,7 @@ export function ApprovalPanel({
             ) : (
               r.subjectRef
             )}
-            {r.client ? ` · ${r.client}` : ""}
+            {r.client && !r.subjectRef.includes(r.client) ? ` · ${r.client}` : ""}
           </p>
           {r.amount !== undefined ? (
             <p className="mt-1 text-xs text-muted-foreground">
@@ -221,6 +221,10 @@ function DecisionForm({
   const tabs = choices.map((c) => DECISION_LABEL[c]);
 
   async function submit() {
+    if (!comment.trim()) {
+      toast.error("Enter a comment explaining your decision.");
+      return;
+    }
     setSaving(true);
     try {
       await decideApproval(r.id, { decision, comment, expectedVersion: r.version }, { name: userName, role });
@@ -256,7 +260,7 @@ function DecisionForm({
         value={comment}
         onChange={(e) => setComment(e.target.value)}
         rows={3}
-        placeholder={decision === "APPROVE" ? "Comment (optional)" : "Reason (required)"}
+        placeholder="Comment (required)"
         aria-label="Decision comment"
         className={cn(INPUT, "mt-3")}
       />

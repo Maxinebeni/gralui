@@ -160,7 +160,7 @@ export function StageRecord({ track: t, n, insurerName }: { track: PolicyTrack; 
     case 10:
       return proofs(["PLACEMENT", "PLACEMENT_CONFIRMATION", "SCHEDULE", "POLICY_TECHNICAL_APPROVAL"]).length || t.observedSchedule ? (
         <div className="space-y-2">
-          {block(<ProofList items={proofs(["PLACEMENT", "PLACEMENT_CONFIRMATION", "SCHEDULE", "POLICY_TECHNICAL_APPROVAL"])} labels={PROOF_LABELS} />)}
+          {block(<ProofList items={proofs(["PLACEMENT", "PLACEMENT_CONFIRMATION", "SCHEDULE", "POLICY_TECHNICAL_APPROVAL"])} labels={PROOF_LABELS} subject={{ type: "ONBOARDING", id: t.id }} />)}
           {t.observedSchedule ? <TermsSummary title="Terms on the insurer's schedule" terms={t.observedSchedule} insurerName={insurerName} /> : null}
           {t.discrepancies.length ? (
             <ul className="rounded-xl bg-danger-soft/40 px-3.5 py-2.5 text-xs">
