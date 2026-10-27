@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { NavyButton, OutlineButton } from "@/components/gral/ui";
 import { PasswordInput } from "@/components/gral/password-input";
 import { useAuth } from "@/lib/auth-context";
+import { MOCK_AUTH } from "@/lib/api";
 
 export function LoginForm() {
   const router = useRouter();
@@ -15,11 +16,13 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set once this form signs in, so the effect above does not skip the 2FA step.
+  const signedInHere = useRef(false);
 
   // Already signed in — skip the login screen. Overview is the landing page
   // because every role can see it (not every role has client access).
   useEffect(() => {
-    if (ready && user) router.replace("/");
+    if (ready && user && !signedInHere.current) router.replace("/");
   }, [ready, user, router]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -31,9 +34,12 @@ export function LoginForm() {
     }
     setSubmitting(true);
     try {
+      signedInHere.current = true;
       await signIn(email.trim(), password);
-      router.replace("/");
+      // Demo mode shows the 2FA step; the backend does not send codes yet.
+      router.replace(MOCK_AUTH ? "/verify" : "/");
     } catch (err) {
+      signedInHere.current = false;
       // Show the backend's message (wrong password, no role, server down) on the page.
       const message =
         err instanceof Error && err.message
