@@ -2,8 +2,8 @@
 
 // Small pieces shared by the lead, policy track and KYC pages.
 
-import { useEffect, useState, type ReactNode } from "react";
-import { FileText, Paperclip } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { ChevronDown, ChevronUp, FileText, Paperclip } from "lucide-react";
 import { toast } from "sonner";
 import { listDocuments, loadCommandHistory, type EvidenceInput } from "@/lib/api";
 import { CommandAttempt, OnboardingError } from "@/lib/command-attempt";
@@ -192,6 +192,62 @@ export function EvidenceField({
   );
 }
 
+export type ActionDisclosureControls = {
+  onSuccess: (formId: string) => void;
+  onFailure: (formId: string) => void;
+  onPendingChange: (pending: boolean, formId: string, unmounted?: boolean) => void;
+};
+
+/** Saved summaries stay outside this disclosure. Pending commands cannot be hidden. */
+export function ActionDisclosure({ label, initiallyCollapsed = false, collapseOnSuccess = true, summary, children }: {
+  label: string;
+  initiallyCollapsed?: boolean;
+  collapseOnSuccess?: boolean;
+  summary?: ReactNode;
+  children: (controls: ActionDisclosureControls) => ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(!initiallyCollapsed);
+  const [saved, setSaved] = useState(false);
+  const pendingForms = useRef(new Set<string>());
+  const failedForms = useRef(new Set<string>());
+  const [pending, setPending] = useState(false);
+  const [hasFailure, setHasFailure] = useState(false);
+  const id = useId();
+  const toggle = useRef<HTMLDivElement>(null);
+  const onPendingChange = useCallback((active: boolean, formId: string, unmounted = false) => {
+    if (active && !pendingForms.current.has(formId)) {
+      setSaved(false);
+      failedForms.current.delete(formId);
+    }
+    if (active) pendingForms.current.add(formId); else pendingForms.current.delete(formId);
+    if (unmounted) failedForms.current.delete(formId);
+    setPending(pendingForms.current.size > 0);
+    setHasFailure(failedForms.current.size > 0);
+  }, []);
+  const onSuccess = useCallback((formId: string) => {
+    failedForms.current.delete(formId); setHasFailure(failedForms.current.size > 0); setSaved(true);
+  }, []);
+  const onFailure = useCallback((formId: string) => {
+    failedForms.current.add(formId); setHasFailure(true); setSaved(false);
+  }, []);
+  useEffect(() => {
+    if (saved && !pending && !hasFailure && collapseOnSuccess) {
+      setExpanded(false);
+      toggle.current?.querySelector("button")?.focus();
+    }
+  }, [saved, pending, hasFailure, collapseOnSuccess]);
+  useEffect(() => { if (!initiallyCollapsed) setExpanded(true); }, [initiallyCollapsed]);
+  return <div className="space-y-3">
+    <div ref={toggle}><OutlineButton aria-expanded={expanded} aria-controls={id} disabled={pending}
+      onClick={() => { setSaved(false); setExpanded((value) => !value); }}
+      className="max-w-full justify-start text-left">
+      {expanded ? <ChevronUp aria-hidden="true" className="size-3.5 shrink-0" /> : <ChevronDown aria-hidden="true" className="size-3.5 shrink-0" />}{label}
+    </OutlineButton></div>
+    {summary}
+    <div id={id} hidden={!expanded}>{expanded ? children({ onSuccess, onFailure, onPendingChange }) : null}</div>
+  </div>;
+}
+
 /** A form for one action: its fields, then Save. Errors from the backend are shown on the form. */
 export function ActionForm({
   title,
@@ -205,6 +261,9 @@ export function ActionForm({
   disabledReason,
   attempt: suppliedAttempt,
   onReconcile,
+  onSuccess,
+  onFailure,
+  onPendingChange,
 }: {
   title?: string;
   intro?: ReactNode;
@@ -214,6 +273,9 @@ export function ActionForm({
   disabledReason?: string;
   attempt?: CommandAttempt;
   onReconcile?: () => void | Promise<void>;
+  onSuccess?: ActionDisclosureControls["onSuccess"];
+  onFailure?: ActionDisclosureControls["onFailure"];
+  onPendingChange?: ActionDisclosureControls["onPendingChange"];
   onCancel?: () => void;
   /** Message shown after saving. */
   success: string;
@@ -225,18 +287,24 @@ export function ActionForm({
   const [ownedAttempt] = useState(() => new CommandAttempt());
   const attempt = suppliedAttempt ?? ownedAttempt;
   const { user } = useCurrentUser();
+  const formId = useId();
   useEffect(() => { attempt.clear(); return () => attempt.clear(); }, [attempt, user.id, user.role]);
+  useEffect(() => { onPendingChange?.(busy || attempt.uncertain || needsRefresh, formId); }, [busy, attempt.uncertain, needsRefresh, formId, onPendingChange]);
+  useEffect(() => () => onPendingChange?.(false, formId, true), [formId, onPendingChange]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (disabled || busy || needsRefresh) return;
+    onPendingChange?.(true, formId);
     setBusy(true);
     setError(null);
     try {
       await onSubmit(attempt);
       attempt.clear();
       toast.success(success);
+      onSuccess?.(formId);
     } catch (err) {
+      onFailure?.(formId);
       if (err instanceof OnboardingError && err.code === "STALE_VERSION") setNeedsRefresh(true);
       if (!attempt.uncertain) attempt.clear();
       const message = err instanceof Error ? err.message : "Something went wrong.";
@@ -265,7 +333,7 @@ export function ActionForm({
         </NavyButton>
         {attempt.uncertain || needsRefresh ? <OutlineButton disabled={busy} onClick={async () => { if (onReconcile) { await onReconcile(); attempt.clear(); setNeedsRefresh(false); setError(null); } else window.location.reload(); }}>Refresh current state</OutlineButton> : null}
         {onCancel ? (
-          <OutlineButton onClick={onCancel} className="px-4 py-2 text-sm">
+          <OutlineButton onClick={onCancel} disabled={busy || attempt.uncertain || needsRefresh} className="px-4 py-2 text-sm">
             Cancel
           </OutlineButton>
         ) : null}

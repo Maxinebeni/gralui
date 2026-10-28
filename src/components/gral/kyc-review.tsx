@@ -42,6 +42,7 @@ import { DocumentPreviewButton } from "./document-preview";
 import { KycReviewerAssignment } from "./kyc-reviewer-assignment";
 import {
   ActionForm,
+  ActionDisclosure,
   Blockers,
   EvidenceField,
   HistoryList,
@@ -49,6 +50,7 @@ import {
   SelectInput,
   TextInput,
   dateOf,
+  type ActionDisclosureControls,
 } from "./onboarding-ui";
 import { PageHeader } from "./shell";
 import { Chip, Dot, FloatCard, OutlineButton, SegmentedTabs } from "./ui";
@@ -71,6 +73,9 @@ export function KycReviewPage({ review: r, history, onChanged }: { review: KycRe
   if (starting) return <div className="space-y-3"><OutlineButton onClick={() => setStarting(false)}>Back to the previous review</OutlineButton><StartKycReview clientId={r.clientId} clientName={r.clientName} reviews={[r]} onStarted={(next) => router.push(`/clients/kyc/${encodeURIComponent(next.id)}`)} /></div>;
   const editable = r.status === "DRAFT" || r.status === "RETURNED";
   const received = r.items.filter((i) => i.documentId).length;
+  const required = r.items.filter((i) => i.required);
+  const requiredMissing = required.filter((i) => !i.documentId).length;
+  const checklistComplete = required.length > 0 && requiredMissing === 0;
   const deadline = r.revisedDueAt ?? r.dueAt;
   const overdue = !!deadline && deadline.slice(0, 10) < todayIso() && !["APPROVED", "REJECTED"].includes(r.status);
 
@@ -104,11 +109,14 @@ export function KycReviewPage({ review: r, history, onChanged }: { review: KycRe
             <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
               Checklist
             </h2>
-            <ul className="mt-3 space-y-2">
+            <div className="mt-3"><ActionDisclosure key={`${r.id}:${user.id}:${user.role}`} label={checklistComplete ? "View checklist" : "Checklist documents"} initiallyCollapsed={checklistComplete} collapseOnSuccess={checklistComplete}
+              summary={<p className="text-xs text-muted-foreground">{received} of {r.items.length} documents received. {checklistComplete ? "All required documents received." : `${requiredMissing} required document${requiredMissing === 1 ? "" : "s"} missing.`}</p>}>
+            {(disclosure) => <ul className="space-y-2">
               {r.items.map((item) => (
-                <ChecklistRow key={item.code} review={r} item={item} canFile={editable && perms.canPrepareKyc} onChanged={changed} />
+                <ChecklistRow key={item.code} review={r} item={item} canFile={editable && perms.canPrepareKyc} onChanged={changed} disclosure={disclosure} />
               ))}
-            </ul>
+            </ul>}
+            </ActionDisclosure></div>
           </FloatCard>
 
           <FloatCard className="p-4 sm:p-5" delay={140}>
@@ -125,7 +133,9 @@ export function KycReviewPage({ review: r, history, onChanged }: { review: KycRe
             )}
             {assigned && perms.canScreenKyc && (editable || r.status === "SUBMITTED") ? (
               <div className="mt-3">
-                <ScreeningForm review={r} onChanged={changed} />
+                <ActionDisclosure key={`${r.id}:${user.id}:${user.role}`} label={r.screeningResult ? "Record a new screening" : "Record screening"} initiallyCollapsed={!!r.screeningResult}>
+                  {(disclosure) => <ScreeningForm review={r} onChanged={changed} disclosure={disclosure} />}
+                </ActionDisclosure>
               </div>
             ) : null}
           </FloatCard>
@@ -177,7 +187,7 @@ export function KycReviewPage({ review: r, history, onChanged }: { review: KycRe
   );
 }
 
-function ChecklistRow({ review, item, canFile, onChanged }: { review: KycReview; item: KycReview["items"][number]; canFile: boolean; onChanged: () => void | Promise<void> }) {
+function ChecklistRow({ review, item, canFile, onChanged, disclosure }: { review: KycReview; item: KycReview["items"][number]; canFile: boolean; onChanged: () => void | Promise<void>; disclosure: ActionDisclosureControls }) {
   const [filing, setFiling] = useState(false);
   const [evidence, setEvidence] = useState<EvidenceInput | null>(null);
   const proof = review.evidence.find((e) => e.purpose === item.code);
@@ -220,11 +230,11 @@ function ChecklistRow({ review, item, canFile, onChanged }: { review: KycReview;
           <ActionForm
             submitLabel="File it"
             success={`${item.label} filed.`}
+            {...disclosure} onSuccess={(formId) => { setFiling(false); setEvidence(null); disclosure.onSuccess(formId); }}
             onCancel={() => setFiling(false)}
             onSubmit={async (attempt) => {
               if (!evidence) throw new Error("Attach the document.");
               await attachKycDocument(review, item.code, evidence, attempt);
-              setFiling(false);
               await onChanged();
             }}
           >
@@ -256,14 +266,15 @@ function KycProofPreview({ reviewId, proof, label }: { reviewId: string; proof: 
   );
 }
 
-function ScreeningForm({ review, onChanged }: { review: KycReview; onChanged: () => void | Promise<void> }) {
+function ScreeningForm({ review, onChanged, disclosure }: { review: KycReview; onChanged: () => void | Promise<void>; disclosure: ActionDisclosureControls }) {
   const [result, setResult] = useState<"CLEAR" | "REVIEW_REQUIRED" | "REJECTED">("CLEAR");
   const [notes, setNotes] = useState("");
   const [evidence, setEvidence] = useState<EvidenceInput | null>(null);
   return (
     <ActionForm
-      submitLabel={review.screeningResult ? "Record a new screening" : "Record the screening"}
+      submitLabel="Record the screening"
       success="Screening recorded."
+      {...disclosure}
       onSubmit={async (attempt) => {
         if (!evidence) throw new Error("Attach the screening record.");
         await recordKycScreening(review, { result, notes, evidence }, attempt);

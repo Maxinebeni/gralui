@@ -57,6 +57,33 @@ Annual commission tiers use explicit RWF observations: below 1,000,000 requires 
 
 Written acceptance does not create coverage. Convert only after verified placement. The result contains policyId, policyPeriodId and renewalId; stage 11 remains open for welcome work. Claims use the exact period and loss-date validation. Coverage dates come from accepted/verified insurer terms, never the acceptance date.
 
+## Specialist assignment lookup
+
+CRM/MD Business users with ONBOARDING_ASSIGN and case access can call
+`GET /api/v1/onboarding-cases/{id}/assignees?responsibility=TECHNICAL&page=0&size=100`
+or use `responsibility=UNDERWRITING`. The response contains `items` (`id`, `fullName`),
+`page`, `size`, `totalElements`, and `totalPages`. Defaults are 0/20; size is 1–100.
+Active eligible candidates are filtered before pagination and ordered by full name,
+then ID. Technical candidates are Technical Directors; underwriting candidates match
+the case's GI/medical role. All need CLIENT_READ, ONBOARDING_READ and TASK_READ.
+Candidates do not need prior restricted-client access. Results are advisory and use
+Cache-Control: no-store; assignment revalidates eligibility.
+
+POST `/api/v1/onboarding-cases/{id}/assignment` keeps its existing JSON shape:
+`command` contains `commandId`, `expectedVersion`, and a required nonblank `reason`;
+`responsibility` and `assigneeId` remain at the top level. OWNER selection must match
+the current client manager; changing the client manager remains a separate command.
+
+License evidence uses the exact case-sensitive purpose `INSURER_LICENSE_` followed
+by the insurer UUID with hyphens removed (lowercase hexadecimal). Document upload,
+replacement, linking, qualification, version listing and download accept that format.
+Do not uppercase the purpose or rewrite existing document links.
+
+The shared task loader should use `assignedToMe=true` for personal work. The query
+`assignedToMe=false` additionally requires TASK_ASSIGN; the default GI role does not
+have that grant and receives 403. Authorized team results exclude hidden subjects
+from both items and totals; listing does not expand resource visibility.
+
 ## KYC
 
 Onboarding policies and editable DEFAULT_INDIVIDUAL / DEFAULT_CORPORATE checklists are
@@ -70,6 +97,21 @@ POST `/api/v1/kyc-cases/{id}/assignment` accepts `commandId`, `expectedVersion`,
 Risk & Compliance reviewer. KycView exposes `reviewerId`. Submission without an eligible
 reviewer conflicts with NO_ELIGIBLE_KYC_REVIEWER; screening and decisions require that
 reviewer. Reassignment replans pending tasks/notices in the same transaction.
+
+GET `/api/v1/kyc-reviewers?page=0&size=20` supplies reviewer choices to CRM/MD Business
+users with KYC_ASSIGN; USER_READ is not required. The response contains `items`
+(`id`, `fullName` only), `page`, `size`, `totalElements` and `totalPages`. Page is
+zero-based, size is 1–100, and defaults are 0/20. Results include only active Business
+Risk & Compliance Managers with CLIENT_READ, KYC_READ, KYC_SCREEN, KYC_DECIDE and
+TASK_READ, ordered by fullName then id. Eligibility filtering precedes pagination;
+no eligible reviewers produces an empty page. Responses use Cache-Control: no-store.
+Candidates need not already see a restricted client; assignment grants the case scope.
+
+Frontend sequence: the AE starts KYC and attaches checklist evidence; CRM/MD lists
+reviewers and assigns the selected ID using the current case version; the AE refreshes
+the case and submits it. Evidence collection does not require an assignment, but
+submission does. Listing is advisory: assignment and submission revalidate current
+eligibility, so refresh choices if assignment returns INVALID_ASSIGNEE.
 
 For restricted prospects, CRM/MD assigns TECHNICAL and UNDERWRITING through the track
 assignment endpoint. Specialists can access their assigned track or KYC case, necessary
@@ -98,8 +140,7 @@ Missing evidence, wrong stages, stale versions and unavailable approval/template
 
 Client/insurer emails, signatures and screening remain manual. The platform records evidence of those actions.
 Live approvals default enabled in every environment. Explicit APPROVAL_LIVE_ENABLED=false
-disables live requests, decisions, actionable inboxes and approval consumption. Four
-onboarding policies are supplied; no renewal policy is seeded. 
+disables live requests, decisions, actionable inboxes and approval consumption. 
 
 ## Review corrections (ADR-028)
 

@@ -24,12 +24,14 @@ import { BoardApprovalForm } from "./board-approval-form";
 import { inputClass } from "./client-form";
 import {
   ActionForm,
+  ActionDisclosure,
   EvidenceField,
   Label,
   ProofList,
   SelectInput,
   TextInput,
   dateOf,
+  type ActionDisclosureControls,
 } from "./onboarding-ui";
 import { DeadlineForm, SingleSourceRequest, SingleSourceStatus, TrackAssignmentForm } from "./track-workflow-actions";
 import { Chip, FloatCard, OutlineButton } from "./ui";
@@ -247,7 +249,17 @@ export function ActionPanel({
   collapsed?: boolean;
 }) {
   const [open, setOpen] = useState(!collapsed);
+  const { user } = useCurrentUser();
   const label = action === "INSURER_RESPONSE" ? "Record a decline or no reply" : (ACTION_LABEL[action] ?? action);
+  if (action === "QUOTE" || action === "INSURER_RESPONSE") {
+    const responses = track.invitations.filter((i) => !i.response);
+    const hasResponse = track.invitations.some((i) => ["DECLINED", "NO_RESPONSE"].includes(i.response ?? ""));
+    const disclosureLabel = action === "QUOTE" ? track.quotes.length ? "Record another quote" : label : hasResponse ? "Record another response" : label;
+    return <ActionDisclosure key={`${track.id}:${action}:${user.id}:${user.role}`} label={disclosureLabel} initiallyCollapsed={!!collapsed || (action === "QUOTE" && track.quotes.length > 0)}
+      summary={<p className="text-xs text-muted-foreground">{responses.length ? `${responses.length} insurer response${responses.length === 1 ? "" : "s"} outstanding: ${responses.map((i) => insurerName(i.insurerId)).join(", ")}.` : "All invited insurers have been accounted for."}</p>}>
+      {(disclosure) => <ActionFormFor action={action} track={track} options={options} insurerName={insurerName} run={run} leadName={leadName} title={label} disclosure={disclosure} />}
+    </ActionDisclosure>;
+  }
   if (!open) {
     return <OutlineButton onClick={() => setOpen(true)}>{label}</OutlineButton>;
   }
@@ -274,6 +286,7 @@ function ActionFormFor({
   leadName,
   title,
   onCancel,
+  disclosure,
 }: {
   action: string;
   track: PolicyTrack;
@@ -283,6 +296,7 @@ function ActionFormFor({
   leadName: string;
   title: string;
   onCancel?: () => void;
+  disclosure?: ActionDisclosureControls;
 }) {
   const [attempt] = useState(() => new CommandAttempt());
   const run: TrackRun = (input) => execute({ ...input, attempt: input.attempt ?? attempt });
@@ -321,9 +335,9 @@ function ActionFormFor({
     case "SINGLE_SOURCE":
       return <SingleSourceRequest track={t} run={run} />;
     case "INSURER_RESPONSE":
-      return <InsurerResponseForm title={title} track={t} insurerName={insurerName} run={run} onCancel={onCancel} />;
+      return <InsurerResponseForm title={title} track={t} insurerName={insurerName} run={run} onCancel={onCancel} disclosure={disclosure} />;
     case "QUOTE":
-      return <QuoteForm title={title} track={t} options={options} run={run} leadName={leadName} destination={destination("Quote")} onCancel={onCancel} />;
+      return <QuoteForm title={title} track={t} options={options} run={run} leadName={leadName} destination={destination("Quote")} onCancel={onCancel} disclosure={disclosure} />;
     case "RECOMMEND":
       return <RecommendForm title={title} track={t} insurerName={insurerName} run={run} destination={destination("Recommendation report")} onCancel={onCancel} />;
     case "REQUEST_APPROVAL": {
@@ -448,7 +462,7 @@ function RfqForm({ title, track: t, options, run: execute, destination, onCancel
   );
 }
 
-function InsurerResponseForm({ title, track: t, insurerName, run: execute, onCancel }: { title: string; track: PolicyTrack; insurerName: (id: string) => string; run: TrackRun; onCancel?: () => void }) {
+function InsurerResponseForm({ title, track: t, insurerName, run: execute, onCancel, disclosure }: { title: string; track: PolicyTrack; insurerName: (id: string) => string; run: TrackRun; onCancel?: () => void; disclosure?: ActionDisclosureControls }) {
   const [attempt] = useState(() => new CommandAttempt());
   const run: TrackRun = (input) => execute({ ...input, attempt: input.attempt ?? attempt });
 
@@ -461,6 +475,7 @@ function InsurerResponseForm({ title, track: t, insurerName, run: execute, onCan
       title={title}
       submitLabel="Record"
       success="Recorded."
+      {...disclosure}
       onCancel={onCancel}
       onSubmit={() => {
         if (!detail.trim()) throw new Error("Add what the insurer said, or how you followed up.");
@@ -548,7 +563,7 @@ function termsFrom(d: TermsDraft, productId: string): PolicyTerms {
   };
 }
 
-function QuoteForm({ title, track: t, options, run: execute, leadName, destination, onCancel }: { title: string; track: PolicyTrack; options: TrackOptions; run: TrackRun; leadName: string; destination: string; onCancel?: () => void }) {
+function QuoteForm({ title, track: t, options, run: execute, leadName, destination, onCancel, disclosure }: { title: string; track: PolicyTrack; options: TrackOptions; run: TrackRun; leadName: string; destination: string; onCancel?: () => void; disclosure?: ActionDisclosureControls }) {
   const [attempt] = useState(() => new CommandAttempt());
   const run: TrackRun = (input) => execute({ ...input, attempt: input.attempt ?? attempt });
 
@@ -563,6 +578,7 @@ function QuoteForm({ title, track: t, options, run: execute, leadName, destinati
       title={title}
       submitLabel="Record the quote"
       success="Quote recorded."
+      {...disclosure}
       onCancel={onCancel}
       onSubmit={() => run({ action: "QUOTE", fields: { terms: termsFrom(draft, t.productId), insurerReference: reference.trim() || undefined }, evidence: evidence ? { main: evidence } : undefined })}
     >

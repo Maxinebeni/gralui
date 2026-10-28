@@ -48,8 +48,8 @@ export function TrackWorkspace({ detail, onChanged }: { detail: TrackDetail; onC
         {handoff?.summary ? <p className="text-sm font-medium">{handoff.summary}</p> : null}
         {selected === t.stage ? <Blockers codes={t.blockers} /> : null}
         {handoff && !actions.length ? <p className="text-xs text-muted-foreground">{handoff.waiting}</p> : null}
-        {actions.map((action) => <ActionPanel key={`${action}:${t.version}`} action={action} track={t} options={options} insurerName={insurerName} run={run} leadName={detail.lead?.clientName ?? detail.lead?.name ?? ""} />)}
-        {selected === 7 && t.stage === 7 && t.availableActions.includes("QUOTE") && t.invitations.some((i) => !i.response) ? <ActionPanel action="INSURER_RESPONSE" track={t} options={options} insurerName={insurerName} run={run} leadName="" collapsed /> : null}
+        {actions.map((action) => <ActionPanel key={`${t.id}:${action}`} action={action} track={t} options={options} insurerName={insurerName} run={run} leadName={detail.lead?.clientName ?? detail.lead?.name ?? ""} />)}
+        {selected === 7 && t.stage === 7 && t.availableActions.includes("QUOTE") && t.invitations.some((i) => !i.response) ? <ActionPanel key={`${t.id}:INSURER_RESPONSE`} action="INSURER_RESPONSE" track={t} options={options} insurerName={insurerName} run={run} leadName="" collapsed /> : null}
         {selected === t.stage && [6, 7].includes(selected) ? <SingleSourceRequest track={t} run={run} /> : null}
       </FloatCard>
       <div className="min-w-0 space-y-4"><OtherActions track={t} options={options} insurerName={insurerName} run={run} /><FloatCard className="p-5"><h2 className="text-base font-semibold">Track history</h2><HistoryList items={detail.history} resource={{ type: "ONBOARDING", id: t.id }} /></FloatCard></div>

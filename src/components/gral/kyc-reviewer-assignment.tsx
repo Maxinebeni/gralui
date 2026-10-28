@@ -6,7 +6,7 @@ import { useCurrentUser } from "@/lib/auth-context";
 import { onboardingPermissions } from "@/lib/permissions";
 import { useRefresh } from "@/lib/queries";
 import type { KycReview } from "@/lib/types";
-import { ActionForm, SelectInput, TextInput } from "./onboarding-ui";
+import { ActionDisclosure, ActionForm, SelectInput, TextInput } from "./onboarding-ui";
 import { Chip, FloatCard, OutlineButton } from "./ui";
 
 export function KycReviewerAssignment({ review, caseId, onChanged }: { review?: KycReview; caseId?: string; onChanged?: () => void | Promise<void> }) {
@@ -37,18 +37,20 @@ export function KycReviewerAssignment({ review, caseId, onChanged }: { review?: 
     {!current && !caseId ? <p className="mt-2 text-xs text-muted-foreground">Start the KYC checklist before assigning its reviewer.</p> : null}
     {error ? <div className="mt-3 space-y-2"><p role="alert" className="text-xs text-danger">{error}</p><OutlineButton onClick={() => void load()}>Try again</OutlineButton></div> : null}
     {canAssignKyc && active && !error ? <div className="mt-3">
-      <ActionForm title={current.reviewerId ? "Reassign the review" : "Assign the review"} submitLabel="Assign reviewer" success="Compliance reviewer assigned." disabled={!choices?.length}
+      <ActionDisclosure key={`${current.id}:${user.id}:${user.role}`} label={current.reviewerId ? "Reassign reviewer" : "Assign the review"} initiallyCollapsed={!!current.reviewerId}>
+      {(disclosure) => <ActionForm title={current.reviewerId ? "Reassign the review" : "Assign the review"} submitLabel="Assign reviewer" success="Compliance reviewer assigned." disabled={!choices?.length}
+        {...disclosure} onSuccess={(formId) => { setReason(""); setAssignee(""); disclosure.onSuccess(formId); }}
         disabledReason={choices === null ? "Loading eligible reviewers…" : choices.length === 0 ? "No eligible compliance reviewers are available. Ask an administrator to check staff eligibility." : undefined}
         onSubmit={async (attempt) => {
           const saved = await assignKycReviewer(current, assignee, reason, attempt);
-          setCurrent(saved); setReason("");
           refresh("leads", "approvals");
           await onChanged?.();
-          if (!review && caseId) setCurrent((await getKycReview(caseId))?.review);
+          setCurrent(!review && caseId ? (await getKycReview(caseId))?.review : saved);
         }}>
         <SelectInput id={`reviewer-${current.id}`} label="Eligible compliance reviewer" value={assignee} onChange={setAssignee} placeholder="Select a reviewer" options={(choices ?? []).map((p) => ({ value: p.id, label: p.fullName }))} wide />
         <TextInput id={`reviewer-reason-${current.id}`} label="Reason for assignment" value={reason} onChange={setReason} multiline wide />
-      </ActionForm>
+      </ActionForm>}
+      </ActionDisclosure>
     </div> : null}
   </FloatCard>;
 }

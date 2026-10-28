@@ -529,10 +529,10 @@ function StepDetail({
             {n === 2 && l.assessed && !l.clientId ? perms.canAssessLead ? <ClientForm lead={l} onDone={onChanged} /> : <Waiting who="Accounts Executive" /> : null}
             {n === 3 && !t ? perms.canStartTrack ? <StartTrackForm lead={l} onDone={onChanged} onCancel={() => undefined} /> : <Waiting who="Accounts Executive" /> : null}
             {actions.map((a) => (
-              <ActionPanel key={a} action={a} track={t!} options={options} insurerName={insurerName} run={run} leadName={l.name} />
+              <ActionPanel key={`${t!.id}:${a}`} action={a} track={t!} options={options} insurerName={insurerName} run={run} leadName={l.name} />
             ))}
             {onTrack && n === 7 && t!.availableActions.includes("QUOTE") && t!.invitations.some((i) => !i.response) ? (
-              <ActionPanel action="INSURER_RESPONSE" track={t!} options={options} insurerName={insurerName} run={run} leadName={l.name} collapsed />
+              <ActionPanel key={`${t!.id}:INSURER_RESPONSE`} action="INSURER_RESPONSE" track={t!} options={options} insurerName={insurerName} run={run} leadName={l.name} collapsed />
             ) : null}
             {onTrack &&
             (n === 6 || (n === 7 && t!.blockers.includes("SINGLE_SOURCE_APPROVAL_REQUIRED"))) &&
