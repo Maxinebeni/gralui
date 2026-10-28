@@ -138,6 +138,11 @@ export function navChildrenFor(user: SessionUser, parentHref: string) {
 
 /** Whether the user may open a given path (matches the menu item that owns it). */
 export function canAccessPath(user: SessionUser, pathname: string) {
+  if (pathname.startsWith("/clients/leads/tracks/") || pathname.startsWith("/clients/kyc/")) {
+    if (isAdministrationAccount(user)) return false;
+    if (usesBackendPermissions(user)) return hasPermission(user, "CLIENT_READ") && hasPermission(user, pathname.startsWith("/clients/kyc/") ? "KYC_READ" : "ONBOARDING_READ");
+    return ONBOARDING_ROLES.includes(user.role);
+  }
   const owner = Object.keys(PAGE_OWNERS).find((p) => pathname.startsWith(p));
   if (owner) pathname = PAGE_OWNERS[owner]!;
   const item = [...NAV_ITEMS]
@@ -296,6 +301,8 @@ const ONBOARDING_DEMO_GRANTS: Record<string, readonly Role[]> = {
   LEAD_CLOSE: ["CRM Manager", "Commercial Director", "MD"],
   ONBOARDING_START: ["Accounts Executive", "CRM Manager"],
   KYC_READ: ["Accounts Executive", "CRM Manager", "Risk & Compliance Manager", "MD"],
+  KYC_ASSIGN: ["CRM Manager", "MD"],
+  ONBOARDING_DEADLINE_ADJUST: ["CRM Manager"],
   KYC_PREPARE: ["Accounts Executive", "CRM Manager"],
   KYC_SCREEN: ["Risk & Compliance Manager"],
   KYC_DECIDE: ["Risk & Compliance Manager"],
@@ -351,6 +358,9 @@ export function onboardingPermissions(user: SessionUser) {
     canCloseLead: can("LEAD_CLOSE"),
     canStartTrack: can("ONBOARDING_START"),
     canReadKyc: can("KYC_READ"),
+    canAssignKyc: can("KYC_ASSIGN"),
+    canAssignTrack: can("ONBOARDING_ASSIGN"),
+    canAdjustDeadline: can("ONBOARDING_DEADLINE_ADJUST"),
     canPrepareKyc: can("KYC_PREPARE"),
     canScreenKyc: can("KYC_SCREEN"),
     canDecideKyc: can("KYC_DECIDE"),

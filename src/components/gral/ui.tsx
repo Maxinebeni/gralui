@@ -1,5 +1,5 @@
 import { ChevronDown, type LucideIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ReactNode, ButtonHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/format";
 
@@ -206,27 +206,8 @@ export function NavyButton({
   );
 }
 
-export function OutlineButton({
-  children,
-  onClick,
-  className,
-}: {
-  children: ReactNode;
-  onClick?: () => void;
-  className?: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-full border border-border bg-card px-3.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary sm:min-h-0",
-        className,
-      )}
-    >
-      {children}
-    </button>
-  );
+export function OutlineButton({ children, className, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return <button type="button" {...props} className={cn("inline-flex min-h-9 items-center justify-center gap-1.5 rounded-full border border-border bg-card px-3.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0", className)}>{children}</button>;
 }
 
 export function TextLink({ children, onClick }: { children: ReactNode; onClick?: () => void }) {

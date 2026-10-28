@@ -34,7 +34,7 @@ export function ApprovalsView() {
   // Shared with the bell, so opening this page after the bell loaded is instant.
   const { data: requests = [] } = useApprovals(user.role);
   const refresh = useRefresh();
-  const reload = () => refresh("approvals");
+  const reload = () => refresh("approvals", "leads", "clients");
 
   // Requests this person may see: their own, ones they can decide, or all for oversight roles.
   const visible = useMemo(

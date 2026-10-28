@@ -41,15 +41,15 @@ export function LeadView({ caseId }: { caseId: string }) {
   const refresh = useRefresh();
   // Show what the backend sent back at once; the full reload (history, other
   // policies, KYC) follows in the background.
-  const changed = (saved?: Lead | PolicyTrack) => {
+  const changed = async (saved?: Lead | PolicyTrack) => {
     if (saved && "stage" in saved) {
       setTrack((prev) => (prev && prev.track.id === saved.id ? { ...prev, track: saved } : prev));
       setDetail((prev) => (prev ? { ...prev, tracks: prev.tracks.map((x) => (x.id === saved.id ? saved : x)) } : prev));
     } else if (saved) {
       setDetail((prev) => (prev ? { ...prev, lead: saved } : prev));
     }
-    void reload();
-    refresh("leads", "approvals", ...(saved && "clientId" in saved && saved.clientId ? ["clients" as const] : []));
+    await reload();
+    refresh("leads", "approvals", "renewals", ...(saved && "clientId" in saved && saved.clientId ? ["clients" as const] : []));
   };
 
   const selectTrack = (id: string) => {

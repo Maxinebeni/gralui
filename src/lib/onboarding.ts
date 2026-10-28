@@ -114,6 +114,45 @@ export function openMilestone(t: PolicyTrack) {
   return t.milestones.find((m) => m.status === "OPEN") ?? null;
 }
 
+/** Responsibility changes within a stage; this describes work, never grants an action. */
+export function trackHandoff(t: PolicyTrack): { owner: string; summary?: string; waiting: string } | null {
+  if (t.status !== "OPEN") return null;
+  const underwriter = t.underwritingRole === "MEDICAL_UNDERWRITING_MANAGER" ? "Medical Underwriting Manager" : "GI Underwriting Manager";
+  const hasBlocker = (code: string) => t.blockers.includes(code);
+  const canAct = (code: string) => t.availableActions.includes(code);
+  const waiting = (owner: string, task: string) => `Waiting for the ${owner} to ${task}.`;
+
+  if (t.stage === 9) {
+    if (hasBlocker("CLIENT_PRESENTATION_REQUIRED") || hasBlocker("WRITTEN_ACCEPTANCE_REQUIRED")) return null;
+    // The open milestone still identifies the handoff when signed evidence is concealed.
+    const accepted = openMilestone(t)?.code === "PLACEMENT" || t.evidence.some((p) => p.purpose === "CLIENT_ACCEPTANCE")
+      || canAct("PLACE") || canAct("PROPERTY_ASSETS") || hasBlocker("PROPERTY_ASSET_LIST_REQUIRED");
+    if (!accepted) return null;
+    const assetsRequired = hasBlocker("PROPERTY_ASSET_LIST_REQUIRED") || canAct("PROPERTY_ASSETS");
+    return {
+      owner: underwriter,
+      summary: "Presentation and acceptance complete.",
+      waiting: waiting(underwriter, assetsRequired ? "record the property's asset list before instructing the insurer" : "instruct the insurer"),
+    };
+  }
+
+  if (t.stage === 10) {
+    // Match the backend's prerequisite order, using blockers even for callers without action permissions.
+    if (hasBlocker("PLACEMENT_CONFIRMATION_REQUIRED") || canAct("CONFIRM_PLACEMENT"))
+      return { owner: underwriter, waiting: waiting(underwriter, "record the insurer's confirmation") };
+    if (hasBlocker("SCHEDULE_TERMS_MISMATCH"))
+      return { owner: underwriter, waiting: waiting(underwriter, "obtain and record a corrected policy schedule") };
+    if (hasBlocker("POLICY_SCHEDULE_REQUIRED") || canAct("SCHEDULE"))
+      return { owner: underwriter, waiting: waiting(underwriter, "record the insurer's policy schedule") };
+    if (hasBlocker("TECHNICAL_VERIFICATION_REQUIRED") || canAct("TECHNICAL_VERIFICATION"))
+      return { owner: "Technical Director", waiting: waiting("Technical Director", "check the policy schedule") };
+    if (hasBlocker("POLICY_VERIFICATION_REQUIRED") || canAct("VERIFY"))
+      return { owner: underwriter, waiting: waiting(underwriter, "complete the final schedule verification") };
+    return { owner: underwriter, waiting: waiting(underwriter, canAct("CONVERT") || t.observedSchedule ? "convert the verified placement into the client's policy" : "complete placement and verification") };
+  }
+  return null;
+}
+
 export type Health = "done" | "overdue" | "due-soon" | "on-track" | "held" | "closed";
 
 export function trackHealth(t: PolicyTrack): Health {
@@ -154,6 +193,8 @@ const BLOCKERS: Record<string, string> = {
   RETURNED: "The Risk & Compliance Manager returned the KYC review for changes.",
   REJECTED: "The client's KYC review was rejected.",
   KYC_REVIEW_OVERDUE: "The KYC review is past its 3-working-day deadline.",
+  NO_ELIGIBLE_KYC_REVIEWER: "Ask the CRM Manager or MD to assign an eligible compliance reviewer.",
+  KYC_APPROVAL_REQUIRED: "A current approved KYC review is required.",
   KYC_NOT_READY: "The client's KYC is not approved yet.",
   KYC_IDENTITY_CHANGED: "The client's details changed after KYC approval, so a new KYC review is needed.",
   KYC_TEMPLATE_CHANGED: "GRAL's KYC checklist changed after approval, so a new KYC review is needed.",
@@ -187,6 +228,7 @@ export function blockerText(code: string) {
 
 /** Button and form titles for the backend's action codes. */
 export const ACTION_LABEL: Record<string, string> = {
+  DEADLINE: "Adjust deadline",
   QUALIFY_KYC: "Confirm KYC is approved",
   SURVEY: "Record the risk survey",
   SURVEY_NOT_APPLICABLE: "Survey not applicable",

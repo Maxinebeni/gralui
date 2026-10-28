@@ -1,26 +1,23 @@
 "use client";
-
-// Approvals and My Work link to a policy track by its ID. Its steps are shown on
-// the lead's page, so this opens that page with the track selected.
-
-import { use, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { getTrack } from "@/lib/api";
-
+import { use, useCallback, useEffect, useState } from "react";
+import { getTrack, type TrackDetail } from "@/lib/api";
+import { useCurrentUser } from "@/lib/auth-context";
+import { TrackWorkspace } from "@/components/gral/track-workspace";
+import { OutlineButton } from "@/components/gral/ui";
 export default function TrackPage({ params }: { params: Promise<{ trackId: string }> }) {
   const { trackId } = use(params);
-  const router = useRouter();
-  const [missing, setMissing] = useState(false);
-
-  useEffect(() => {
-    const id = decodeURIComponent(trackId);
-    getTrack(id)
-      .then((d) => {
-        if (d) router.replace(`/clients/leads/${encodeURIComponent(d.track.leadId)}?track=${encodeURIComponent(id)}`);
-        else setMissing(true);
-      })
-      .catch(() => setMissing(true));
-  }, [trackId, router]);
-
-  return <p className="text-sm text-muted-foreground">{missing ? "This policy could not be found." : "Opening…"}</p>;
+  const { user } = useCurrentUser();
+  const [detail, setDetail] = useState<TrackDetail | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const reload = useCallback(async () => {
+    try {
+      const found = await getTrack(trackId);
+      if (!found) throw new Error("This policy track is unavailable under your current access.");
+      setDetail(found); setError(null);
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not load the policy track."); }
+  }, [trackId, user.id, user.role]);
+  useEffect(() => { setDetail(null); void reload(); }, [reload]);
+  if (error) return <div className="space-y-3"><p role="alert" className="text-sm text-danger">{error}</p><OutlineButton onClick={() => void reload()}>Try again</OutlineButton></div>;
+  if (!detail) return <p className="text-sm text-muted-foreground">Loading policy track?</p>;
+  return <TrackWorkspace key={trackId + (user.id ?? user.role)} detail={detail} onChanged={reload} />;
 }

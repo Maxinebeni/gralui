@@ -5,9 +5,6 @@
 // Steps 1 and 2 are the backend's lead; steps 3 to 11 are one policy track.
 // When a lead has several policies, tabs above the tracker switch between them.
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
-import { ArrowLeft, ArrowRight, Check, ExternalLink, Plus } from "lucide-react";
 import { confirmLead, onboardingOptions, runTrackAction, type LeadDetail, type TrackDetail } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import {
@@ -22,15 +19,41 @@ import {
   leadReady,
   leadRef,
   trackHealth,
+  trackHandoff,
 } from "@/lib/onboarding";
 import { onboardingPermissions } from "@/lib/permissions";
 import { todayIso } from "@/lib/renewals";
 import type { Lead, PolicyTrack } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { ArrowLeft, ArrowRight, Check, ExternalLink, Plus } from "lucide-react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { KycReviewerAssignment } from "./kyc-reviewer-assignment";
+import {
+  AssessmentForm,
+  AssignForm,
+  ClientForm,
+  CloseLead,
+  ResponseForm,
+  StartTrackForm,
+} from "./lead-forms";
+import {
+  ActionForm,
+  Blockers,
+  HealthChip,
+  HistoryList,
+  ProofList,
+  dateOf,
+} from "./onboarding-ui";
 import { PageHeader } from "./shell";
-import { AssessmentForm, AssignForm, ClientForm, CloseLead, ResponseForm, StartTrackForm } from "./lead-forms";
-import { ActionForm, Blockers, HealthChip, HistoryList, ProofList, dateOf } from "./onboarding-ui";
-import { ActionPanel, OtherActions, STAGE_ACTIONS, StageRecord, type TrackOptions, type TrackRun } from "./track-forms";
+import {
+  ActionPanel,
+  OtherActions,
+  STAGE_ACTIONS,
+  StageRecord,
+  type TrackOptions,
+  type TrackRun,
+} from "./track-forms";
 import { Chip, FloatCard, OutlineButton, Person } from "./ui";
 
 type StepState = "done" | "current" | "late" | "upcoming";
@@ -56,7 +79,7 @@ export function OnboardingCaseView({
   /** The policy track shown in steps 3 to 11, with its history. */
   track: TrackDetail | null;
   onSelectTrack: (id: string) => void;
-  onChanged: (saved?: Lead | PolicyTrack) => void;
+  onChanged: (saved?: Lead | PolicyTrack) => void | Promise<void>;
 }) {
   const { user } = useCurrentUser();
   const perms = onboardingPermissions(user);
@@ -82,7 +105,7 @@ export function OnboardingCaseView({
   const insurerName = (id: string) => options.insurers.find((i) => i.id === id)?.name ?? id;
   const run: TrackRun = async (input) => {
     if (!t) return;
-    onChanged(await runTrackAction(t, input));
+    await onChanged(await runTrackAction(t, input));
   };
   const stateOf = (n: number): StepState => {
     if (current === null || n < current) return "done";
@@ -90,7 +113,6 @@ export function OnboardingCaseView({
     return journeyHealth(l, t) === "overdue" ? "late" : "current";
   };
   const due = journeyDue(l, t);
-  const history = [...detail.history, ...(track?.history ?? [])].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
   const canAddTrack = perms.canStartTrack && leadReady(l) && l.status !== "CLOSED_LOST" && l.status !== "CANCELLED";
 
   return (
@@ -133,7 +155,7 @@ export function OnboardingCaseView({
               lead={l}
               onDone={(saved) => {
                 setAdding(false);
-                onChanged(saved);
+                return onChanged(saved);
               }}
               onCancel={() => setAdding(false)}
             />
@@ -244,7 +266,8 @@ export function OnboardingCaseView({
 
           <FloatCard className="p-5" delay={200}>
             <h2 className="text-base font-semibold tracking-tight">History</h2>
-            <HistoryList items={history} />
+            <HistoryList items={detail.history} resource={{ type: "LEAD", id: l.id }} />
+              {track ? <HistoryList items={track.history} resource={{ type: "ONBOARDING", id: track.track.id }} /> : null}
           </FloatCard>
         </div>
       </div>
@@ -380,7 +403,7 @@ function StepDetail({
   options: TrackOptions;
   insurerName: (id: string) => string;
   run: TrackRun;
-  onChanged: (saved?: Lead | PolicyTrack) => void;
+  onChanged: (saved?: Lead | PolicyTrack) => void | Promise<void>;
   onSelect: (n: number) => void;
 }) {
   const step = JOURNEY_STEPS[n - 1]!;
@@ -390,10 +413,12 @@ function StepDetail({
   const open = l.status === "OPEN" || l.status === "CONVERTED";
   const onTrack = !!t && n >= 3 && t.stage === n && t.status === "OPEN";
   const actions = active && onTrack ? (STAGE_ACTIONS[n] ?? []).filter((a) => t!.availableActions.includes(a)) : [];
-  const ownerName = step.owner.replace(
+  const handoff = active && onTrack ? trackHandoff(t!) : null;
+  const ownerName = handoff?.owner ?? step.owner.replace(
     "Underwriting Manager",
     t?.underwritingRole === "MEDICAL_UNDERWRITING_MANAGER" ? "Medical Underwriting Manager" : "GI Underwriting Manager",
   );
+  const waitingMessage = handoff?.waiting ?? (!t?.blockers.length ? `Waiting for the ${ownerName}.` : undefined);
 
   return (
     <FloatCard className="overflow-hidden" delay={120}>
@@ -452,8 +477,9 @@ function StepDetail({
             {l.clientName ? <p>Client: {l.clientName}</p> : null}
           </div>
         ) : null}
-        {n === 3 ? <KycBlock lead={l} kyc={kyc} canRead={perms.canReadKyc} /> : null}
+        {n === 3 ? <KycBlock lead={l} kyc={kyc} canRead={perms.canReadKyc} onChanged={onChanged} /> : null}
         {n >= 4 && t && n <= t.stage ? <StageRecord track={t} n={n} insurerName={insurerName} /> : null}
+        {handoff?.summary ? <p className="text-sm font-medium">{handoff.summary}</p> : null}
 
         {active && open ? (
           <div className="space-y-3">
@@ -490,8 +516,8 @@ function StepDetail({
                       </div>
                     </div>
                   }
-                  onSubmit={async () => {
-                    onChanged(await confirmLead(l));
+                  onSubmit={async (attempt) => {
+                    await onChanged(await confirmLead(l, attempt));
                   }}
                 />
               ) : (
@@ -503,10 +529,10 @@ function StepDetail({
             {n === 2 && l.assessed && !l.clientId ? perms.canAssessLead ? <ClientForm lead={l} onDone={onChanged} /> : <Waiting who="Accounts Executive" /> : null}
             {n === 3 && !t ? perms.canStartTrack ? <StartTrackForm lead={l} onDone={onChanged} onCancel={() => undefined} /> : <Waiting who="Accounts Executive" /> : null}
             {actions.map((a) => (
-              <ActionPanel key={a} action={a} track={t!} options={options} insurerName={insurerName} run={run} leadName={l.name} />
+              <ActionPanel key={`${t!.id}:${a}`} action={a} track={t!} options={options} insurerName={insurerName} run={run} leadName={l.name} />
             ))}
             {onTrack && n === 7 && t!.availableActions.includes("QUOTE") && t!.invitations.some((i) => !i.response) ? (
-              <ActionPanel action="INSURER_RESPONSE" track={t!} options={options} insurerName={insurerName} run={run} leadName={l.name} collapsed />
+              <ActionPanel key={`${t!.id}:INSURER_RESPONSE`} action="INSURER_RESPONSE" track={t!} options={options} insurerName={insurerName} run={run} leadName={l.name} collapsed />
             ) : null}
             {onTrack &&
             (n === 6 || (n === 7 && t!.blockers.includes("SINGLE_SOURCE_APPROVAL_REQUIRED"))) &&
@@ -514,7 +540,7 @@ function StepDetail({
             (t!.availableActions.includes("RFQ") || t!.availableActions.includes("QUOTE")) ? (
               <ActionPanel action="SINGLE_SOURCE" track={t!} options={options} insurerName={insurerName} run={run} leadName={l.name} collapsed />
             ) : null}
-            {onTrack && !actions.length && !t!.blockers.length ? <Waiting who={ownerName} /> : null}
+            {onTrack && !actions.length && waitingMessage ? <p className="text-xs text-muted-foreground">{waitingMessage}</p> : null}
           </div>
         ) : null}
       </div>
@@ -553,7 +579,7 @@ function Waiting({ who }: { who: string }) {
 }
 
 /** Step 3: the client's KYC, shared by all of the client's policies. */
-function KycBlock({ lead, kyc, canRead }: { lead: Lead; kyc: LeadDetail["kyc"]; canRead: boolean }) {
+function KycBlock({ lead, kyc, canRead, onChanged }: { lead: Lead; kyc: LeadDetail["kyc"]; canRead: boolean; onChanged: () => void | Promise<void> }) {
   if (!lead.clientId) return null;
   const status = kyc?.status ?? "NOT_STARTED";
   const approved = kyc?.gateStatus === "READY";
@@ -561,6 +587,7 @@ function KycBlock({ lead, kyc, canRead }: { lead: Lead; kyc: LeadDetail["kyc"]; 
   const late = !approved && !!deadline && deadline < todayIso();
   return (
     <div className="space-y-2 rounded-xl bg-secondary/60 px-4 py-3 text-xs">
+      {canRead ? <KycReviewerAssignment caseId={kyc?.caseId} onChanged={onChanged} /> : null}
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium">Client KYC</span>
         <Chip tone={approved ? "success" : status === "REJECTED" || late ? "danger" : status === "NOT_STARTED" ? "neutral" : "warning"}>
@@ -576,7 +603,7 @@ function KycBlock({ lead, kyc, canRead }: { lead: Lead; kyc: LeadDetail["kyc"]; 
       {!approved && kyc?.gateStatus && kyc.gateStatus !== status ? <p className="text-muted-foreground">{blockerText(kyc.gateStatus)}</p> : null}
       {canRead ? (
         <Link
-          href={`/clients/kyc/${encodeURIComponent(kyc?.caseId ?? lead.clientId)}`}
+          href={`/clients/kyc/${encodeURIComponent(kyc?.caseId ?? lead.clientId)}${kyc?.caseId ? "" : "?mode=client"}`}
           className="inline-flex items-center gap-1 font-medium text-primary underline underline-offset-2"
         >
           {kyc?.caseId ? "Open the KYC review" : "Start the KYC review"} <ExternalLink className="size-3" />

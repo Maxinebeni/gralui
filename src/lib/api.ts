@@ -1,3 +1,4 @@
+import { CommandAttempt, OnboardingError, collectPages } from "./command-attempt";
 // Data access for the screens. Every screen goes through these functions,
 // never through mock-data.ts directly.
 //
@@ -1167,7 +1168,7 @@ export async function decideApproval(
   }
 
   const label = { APPROVE: "Approved", REJECT: "Rejected", RETURN: "Returned" }[input.decision];
-  const saved = saveApproval({ ...r, steps, status: requestStatus }, actor.name, `${label} by ${step.role}`);
+  const saved = saveApproval({ ...r, steps, currentStepNumber: steps.find((s) => s.status === "PENDING")?.order ?? r.currentStepNumber, status: requestStatus }, actor.name, `${label} by ${step.role}`);
 
   // A fully approved onboarding request moves its policy track to the presentation step.
   if (saved.subjectType === "NEW_BUSINESS") onTrackApprovalDecided(saved);
@@ -1623,6 +1624,8 @@ async function toBackendApproval(h: BackendApprovalHistory, inInbox = false): Pr
         const mineNow = inInbox && stepStatus === "PENDING" && CURRENT_USER;
         return {
           order: st.number,
+          requiredPermission: st.requiredPermission,
+          evidencePurpose: st.evidencePurpose,
           role: mineNow ? CURRENT_USER!.role : roleName(st.requiredRole),
           status: stepStatus,
           decidedBy: decided ? (await personName(decided.actorId)) ?? "Reviewer" : undefined,
@@ -1642,6 +1645,9 @@ async function toBackendApproval(h: BackendApprovalHistory, inInbox = false): Pr
   const known = BACKEND_APPROVALS.get(v.id);
   return {
     id: v.id,
+    action: v.action,
+    currentStepNumber: v.currentStep,
+    boardEvidence: [...h.decisions].reverse().find((d) => d.step === 2 && d.outcome === "APPROVE")?.evidence,
     // The screens group requests by type; backend types not known here show under KYC.
     subjectType: (v.subjectType.toUpperCase() === "ONBOARDING"
       ? "NEW_BUSINESS"
@@ -2181,7 +2187,7 @@ export async function uploadDocument(subject: DocumentSubject, file: File, optio
     classification: options.classification,
   });
   const res = await apiFetch(`/api/v1/documents?${params}`, { method: "POST", body });
-  if (!res.ok) throw new Error(await documentError(res, "Could not upload the file. Please try again."));
+  if (!res.ok) throw new OnboardingError(await documentError(res, "Could not upload the file. Please try again."), undefined, res.status);
   const view = (await res.json()) as BackendDocumentItem;
   return { ...view, purpose: options.purpose, previous: [] };
 }
@@ -2318,6 +2324,7 @@ async function adminSend<T>(path: string, body: unknown, fallback: string): Prom
 
 function requireReason(reason: string) {
   if (!reason.trim()) throw new Error("Give a reason. It is kept in the audit log.");
+  if (reason.trim().length > 500) throw new Error("Keep the reason within 500 characters.");
 }
 
 /** The signed-in admin's account ID, used for the "not your own account" rule. */
@@ -2583,14 +2590,15 @@ export type ChoiceOption = { id: string; name: string };
 /** A document chosen as proof, with when the thing it proves happened. */
 export type EvidenceInput = { file: File; occurredAt: string; detail?: string };
 
-function commandEnvelope(version?: number, reason?: string) {
-  return { commandId: crypto.randomUUID(), expectedVersion: version, ...(reason ? { reason } : {}) };
+function commandEnvelope(version?: number, reason?: string, attempt?: CommandAttempt) {
+  const create = () => ({ commandId: crypto.randomUUID(), expectedVersion: version, ...(reason ? { reason } : {}) });
+  return attempt ? attempt.value("command", create) : create();
 }
 
-/** A date from a form as the instant the backend wants; "today" is a minute ago. Pass one clock when several dates must line up. */
+/** Convert date-only evidence consistently; today uses one captured clock so consecutive commands retain their order. */
 function instantFrom(date: string, now = Date.now()): string {
   if (date.length > 10) return date;
-  if (date >= todayIso()) return new Date(now - 60_000).toISOString();
+  if (date >= todayIso()) return new Date(now).toISOString();
   return `${date}T09:00:00Z`;
 }
 
@@ -2605,6 +2613,9 @@ const ONBOARDING_MESSAGES: Record<string, string> = {
   CLOSE_POLICY_TRACKS_FIRST: "Close the lead's open policy tracks first.",
   INVALID_STAGE: "This action is not allowed at the current step.",
   INVALID_STATE: "This action is not allowed in the current state.",
+  NO_ELIGIBLE_KYC_REVIEWER: "Ask the CRM Manager or MD to assign an active compliance reviewer before submission.",
+  APPROVER_INELIGIBLE: "Only the assigned compliance reviewer can perform this action. Refresh to check the current assignment.",
+  DUPLICATE_REVIEW_REQUIRED: "Review the current matching clients before creating this prospect.",
   KYC_NOT_READY: "The client's KYC must be approved first.",
   RFQ_ALREADY_DISPATCHED: "The requests for quotations were already sent.",
   RESPONSE_NOT_DUE: "An insurer can be marked as not replying only after its response date.",
@@ -2644,26 +2655,106 @@ async function onboardingProblem(res: Response, fallback: string): Promise<strin
   return fallback;
 }
 
-async function sendOnboarding<T>(method: "POST" | "PUT", path: string, body: unknown, fallback: string): Promise<T> {
-  const res = await apiFetch(path, { method, body: JSON.stringify(body) });
+async function sendOnboarding<T>(method: "POST" | "PUT", path: string, body: unknown, fallback: string, attempt?: CommandAttempt): Promise<T> {
+  const request = attempt ? attempt.value(`request:${path}`, () => JSON.stringify(body)) : JSON.stringify(body);
+  let res: Response;
+  try { res = await apiFetch(path, { method, body: request }); }
+  catch (error) { if (attempt) attempt.uncertain = true; throw error; }
   if (!res.ok) {
-    console.error("[Onboarding API] Backend request failed", {
-      method,
-      path,
-      status: res.status,
-      statusText: res.statusText,
-      responseBody: await res.clone().text(),
-    });
-    throw new Error(await onboardingProblem(res, fallback));
+    if (attempt && res.status >= 500) attempt.uncertain = true;
+    const problem = await readProblem(res.clone());
+    throw new OnboardingError(await onboardingProblem(res, fallback), problem.code, res.status);
   }
-  return (await res.json()) as T;
+  if (res.status === 204) return undefined as T;
+  try { const content = await res.text(); const value = content ? JSON.parse(content) as T : undefined as T; if (attempt) attempt.uncertain = true; return value; }
+  catch (error) { if (attempt) attempt.uncertain = true; throw error; }
 }
 
 async function readOnboarding<T>(path: string, fallback: string): Promise<T | null> {
   const res = await apiFetch(path);
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(await onboardingProblem(res, fallback));
+  if (!res.ok) { const problem = await readProblem(res.clone()); throw new OnboardingError(await onboardingProblem(res, fallback), problem.code, res.status); }
   return (await res.json()) as T;
+}
+
+async function readAllOnboarding<T>(path: string, fallback: string): Promise<T[]> {
+  return collectPages(async (page) => {
+    const result = await readOnboarding<Page<T>>(`${path}${path.includes("?") ? "&" : "?"}page=${page}&size=100`, fallback);
+    if (!result) throw new Error(fallback);
+    return result;
+  });
+}
+
+export type StaffChoice = { id: string; fullName: string };
+export const DEMO_REVIEWER = "Risk & Compliance Manager";
+
+export async function listKycReviewers(): Promise<StaffChoice[]> {
+  if (MOCK_AUTH) return [{ id: DEMO_REVIEWER, fullName: DEMO_REVIEWER }];
+  return readAllOnboarding<StaffChoice>("/api/v1/kyc-reviewers", "Could not load eligible compliance reviewers.");
+}
+
+export async function listTrackAssignees(id: string, responsibility: "TECHNICAL" | "UNDERWRITING"): Promise<StaffChoice[]> {
+  if (MOCK_AUTH) {
+    const t = DEMO_TRACKS.find((t) => t.id === id);
+    const name = responsibility === "TECHNICAL" ? "Technical Director" : t?.underwritingRole === "MEDICAL_UNDERWRITING_MANAGER" ? "Medical Underwriting Manager" : "GI Underwriting Manager";
+    return [{ id: name, fullName: name }];
+  }
+  return readAllOnboarding<StaffChoice>(`/api/v1/onboarding-cases/${id}/assignees?responsibility=${responsibility}`, "Eligible staff could not be loaded. Try again or contact support.");
+}
+
+export async function getOnboardingClient(clientId: string): Promise<{ clientType: LeadType; managerId?: string; name?: string }> {
+  if (MOCK_AUTH) {
+    const lead = DEMO_LEADS.find((l) => l.clientId === clientId);
+    return { clientType: lead?.type ?? "CORPORATE", managerId: lead?.ownerId, name: lead?.clientName };
+  }
+  const client = await readOnboarding<ClientView>(`/api/v1/clients/${clientId}`, "Could not load the client details.");
+  if (!client) throw new Error("The client details are unavailable.");
+  return { clientType: String(client.profile.type) === "INDIVIDUAL" ? "INDIVIDUAL" : "CORPORATE", managerId: client.managerId, name: client.profile.registeredName };
+}
+
+export async function assignKycReviewer(review: KycReview, assigneeId: string, reason: string, attempt?: CommandAttempt): Promise<KycReview> {
+  requireReason(reason);
+  if (!assigneeId) throw new Error("Choose a compliance reviewer.");
+  if (MOCK_AUTH) {
+    if (!["CRM Manager", "MD"].includes(DEMO_ROLE ?? "")) throw new Error("You do not have permission to assign this review.");
+    if (assigneeId !== DEMO_REVIEWER) throw new Error(ONBOARDING_MESSAGES.INVALID_ASSIGNEE);
+    if (!["DRAFT", "SUBMITTED", "RETURNED"].includes(review.status)) throw new Error(ONBOARDING_MESSAGES.INVALID_STATE);
+    const saved = demoKycCommand(review, "KYC_ASSIGNED", () => ({ reviewerId: assigneeId }));
+    const history = DEMO_HISTORY.get(review.id); if (history?.[0]) history[0].reason = reason.trim();
+    return saved;
+  }
+  return sendOnboarding<KycReview>("POST", `/api/v1/kyc-cases/${review.id}/assignment`, { ...commandEnvelope(review.version, reason.trim(), attempt), assigneeId }, "Could not assign the compliance reviewer.", attempt);
+}
+
+export type ProspectDuplicateReview = { fingerprint: string; candidates: { id: string; reference: string; name: string; matches: string[]; managerId?: string }[] };
+
+export async function checkProspectDuplicates(input: ProspectInput): Promise<ProspectDuplicateReview> {
+  if (MOCK_AUTH) {
+    const matches = DEMO_LEADS.filter((l) => l.clientId && l.clientName?.trim().toLowerCase() === input.registeredName.trim().toLowerCase());
+    return { fingerprint: JSON.stringify(input), candidates: matches.map((l) => ({ id: l.clientId!, reference: l.clientId!, name: l.clientName!, matches: ["name"], managerId: l.ownerId })) };
+  }
+  const body = { profile: { registeredName: input.registeredName, type: input.clientType, sector: input.sector, physicalAddress: input.address }, primaryContact: { name: input.contactName, jobTitle: input.jobTitle, email: input.email, phone: input.phone } };
+  let fingerprint = "";
+  const candidates = await collectPages(async (page) => {
+    const result = await sendOnboarding<{ fingerprint: string; candidates: Page<{ client: { id: string; reference: string; registeredName: string; managerId?: string }; matches: string[] }> }>("POST", `/api/v1/clients/duplicate-check?page=${page}&size=100`, body, "Could not review matching clients.");
+    if (fingerprint && fingerprint !== result.fingerprint) throw new Error("Matching clients changed. Review duplicates again.");
+    fingerprint = result.fingerprint;
+    return result.candidates;
+  });
+  return { fingerprint, candidates: candidates.map(({ client, matches }) => ({ id: client.id, reference: client.reference, name: client.registeredName, managerId: client.managerId, matches })) };
+}
+
+export async function getOnboardingApproval(id: string): Promise<ApprovalRequest> {
+  if (MOCK_AUTH) { const r = APPROVALS.find((a) => a.id === id); if (!r) throw new Error("Approval request unavailable."); return r; }
+  return toBackendApproval(await approvalHistory(id));
+}
+
+export async function loadCommandHistory(type: "LEAD" | "ONBOARDING" | "KYC", id: string, page: number): Promise<CommandHistory[]> {
+  if (MOCK_AUTH) return (DEMO_HISTORY.get(id) ?? []).slice(page * 50, (page + 1) * 50);
+  const path = type === "LEAD" ? "leads" : type === "KYC" ? "kyc-cases" : "onboarding-cases";
+  const result = await readOnboarding<Page<CommandHistory> | CommandHistory[]>(`/api/v1/${path}/${id}/history?page=${page}&size=50`, "Could not load more history.");
+  if (!result) throw new Error("History is unavailable.");
+  return toHistory(Array.isArray(result) ? result : result.items);
 }
 
 /** Uploads the proof under its record with the purpose the backend checks, and returns the reference. */
@@ -2672,7 +2763,9 @@ async function uploadProof(
   input: EvidenceInput,
   purpose: string,
   classification: DocumentClassification = "CORRESPONDENCE",
+  attempt?: CommandAttempt,
 ) {
+  const load = async () => {
   const occurredAt = instantFrom(input.occurredAt);
   const detail = input.detail?.trim() || undefined;
   if (MOCK_AUTH) {
@@ -2680,8 +2773,12 @@ async function uploadProof(
     if (problem) throw new Error(problem);
     return { documentId: crypto.randomUUID(), documentVersion: 1, occurredAt, detail, fileName: input.file.name };
   }
-  const doc = await uploadDocument(subject, input.file, { classification, purpose });
+  let doc: StoredDocument;
+  try { doc = await uploadDocument(subject, input.file, { classification, purpose }); }
+  catch (error) { if (attempt && (!(error instanceof OnboardingError) || (error.status ?? 500) >= 500)) attempt.uncertain = true; throw error; }
   return { documentId: doc.id, documentVersion: doc.version, occurredAt, detail, fileName: input.file.name };
+  };
+  return attempt ? attempt.memo(`proof:${subject.type}:${subject.id}:${purpose}`, load) : load();
 }
 
 /* Names and choices */
@@ -2825,7 +2922,7 @@ async function clientNameById(id: string): Promise<string | undefined> {
   const known = allKnownClients().find((c) => c.uuid === id || c.id === id);
   if (known) return known.name;
   const res = await apiFetch(`/api/v1/clients/${id}`).catch(() => null);
-  return res?.ok ? ((await res.json()) as { registeredName?: string; name?: string }).registeredName : undefined;
+  return res?.ok ? ((await res.json()) as ClientView).profile?.registeredName : undefined;
 }
 
 async function toHistory(items: { action: string; actorId?: string; reason?: string; occurredAt: string }[]): Promise<CommandHistory[]> {
@@ -2842,13 +2939,13 @@ export async function listLeads(): Promise<{ leads: Lead[]; tracks: PolicyTrack[
     };
   }
   const [leads, tracks] = await Promise.all([
-    readOnboarding<Page<Lead>>("/api/v1/leads?size=100", "Could not load the leads."),
-    readOnboarding<Page<PolicyTrack>>("/api/v1/onboarding-cases?size=100", "Could not load the policy tracks.").catch(() => null),
+    readAllOnboarding<Lead>("/api/v1/leads", "Could not load the leads."),
+    readAllOnboarding<PolicyTrack>("/api/v1/onboarding-cases", "Could not load the policy tracks."),
   ]);
-  const names = new Map((leads?.items ?? []).map((l) => [l.id, l.name]));
+  const names = new Map(leads.map((l) => [l.id, l.name]));
   return {
-    leads: await Promise.all((leads?.items ?? []).map((l) => decorateLead(l, false))),
-    tracks: await Promise.all((tracks?.items ?? []).map((t) => decorateTrack(t, names.get(t.leadId)))),
+    leads: await Promise.all(leads.map((l) => decorateLead(l, false))),
+    tracks: await Promise.all(tracks.map((t) => decorateTrack(t, names.get(t.leadId)))),
   };
 }
 
@@ -2869,13 +2966,13 @@ export async function getLead(id: string): Promise<LeadDetail | null> {
   if (!raw) return null;
   const [lead, tracks, history, kyc] = await Promise.all([
     decorateLead(raw),
-    readOnboarding<Page<PolicyTrack>>(`/api/v1/leads/${id}/onboarding-cases?size=50`, "Could not load the policy tracks.").catch(() => null),
+    readAllOnboarding<PolicyTrack>(`/api/v1/leads/${id}/onboarding-cases`, "Could not load the policy tracks."),
     readOnboarding<Page<{ action: string; actorId?: string; reason?: string; occurredAt: string }>>(`/api/v1/leads/${id}/history?size=50`, "").catch(() => null),
     raw.clientId ? readOnboarding<KycGate>(`/api/v1/clients/${raw.clientId}/kyc-summary`, "").catch(() => null) : Promise.resolve(null),
   ]);
   return {
     lead,
-    tracks: await Promise.all((tracks?.items ?? []).map((t) => decorateTrack(t, raw.name))),
+    tracks: await Promise.all(tracks.map((t) => decorateTrack(t, raw.name))),
     kyc,
     history: await toHistory(history?.items ?? []),
   };
@@ -2894,7 +2991,7 @@ export async function getTrack(id: string): Promise<TrackDetail | null> {
   if (!raw) return null;
   const [lead, history] = await Promise.all([
     readOnboarding<Lead>(`/api/v1/leads/${raw.leadId}`, "").catch(() => null),
-    readOnboarding<Page<{ action: string; actorId?: string; reason?: string; occurredAt: string }>>(`/api/v1/onboarding-cases/${id}/history?size=50`, "").catch(() => null),
+    readOnboarding<Page<CommandHistory>>(`/api/v1/onboarding-cases/${id}/history?size=50`, "Could not load track history."),
   ]);
   return {
     track: await decorateTrack(raw, lead?.name),
@@ -2923,10 +3020,10 @@ export type NewLeadInput = {
 };
 
 /** Step 1: register the lead, then assign the Accounts Executive if one was chosen. */
-export async function registerLead(input: NewLeadInput): Promise<Lead> {
+export async function registerLead(input: NewLeadInput, attempt?: CommandAttempt): Promise<Lead> {
   if (input.ownerId) requireReason(input.assignmentReason ?? "");
   const body = {
-    commandId: crypto.randomUUID(),
+    commandId: attempt ? attempt.value("registrationId", () => crypto.randomUUID()) : crypto.randomUUID(),
     name: input.name.trim(),
     type: input.type,
     industry: input.industry.trim(),
@@ -2961,7 +3058,7 @@ export async function registerLead(input: NewLeadInput): Promise<Lead> {
     if (input.ownerId) demoLog(created.id, "LEAD_ASSIGNED", input.assignmentReason);
     return demoLeadView(created);
   }
-  let lead = await sendOnboarding<Lead>("POST", "/api/v1/leads", body, "Could not register the lead. Please try again.");
+  let lead = await sendOnboarding<Lead>("POST", "/api/v1/leads", body, "Could not register the lead. Please try again.", attempt);
   if (input.ownerId && input.ownerId !== lead.ownerId) {
     // The lead is saved; a failed assignment is shown on the lead to retry, not undone.
     lead = await assignLead(lead, input.ownerId, input.assignmentReason!).catch(() => lead);
@@ -2980,34 +3077,34 @@ function demoLeadCommand(lead: Lead, action: string, change: (l: Lead) => Partia
   return demoLeadView(updated);
 }
 
-export async function assignLead(lead: Lead, ownerId: string, reason: string): Promise<Lead> {
+export async function assignLead(lead: Lead, ownerId: string, reason: string, attempt?: CommandAttempt): Promise<Lead> {
   requireReason(reason);
   if (MOCK_AUTH) return demoLeadCommand(lead, "LEAD_ASSIGNED", () => ({ ownerId }), reason.trim());
   const path = `/api/v1/leads/${lead.id}/assignment`;
-  const body = { command: commandEnvelope(lead.version, reason.trim()), ownerId };
+  const body = { command: commandEnvelope(lead.version, reason.trim(), attempt), ownerId };
   return decorateLead(
-    await sendOnboarding<Lead>("POST", path, body, "Could not assign the Accounts Executive."),
+    await sendOnboarding<Lead>("POST", path, body, "Could not assign the Accounts Executive.", attempt),
   );
 }
 
-export async function confirmLead(lead: Lead): Promise<Lead> {
+export async function confirmLead(lead: Lead, attempt?: CommandAttempt): Promise<Lead> {
   if (MOCK_AUTH) {
     return demoLeadCommand(lead, "LEAD_CONFIRMED", (l) => {
       if (!l.ownerId) throw new Error(ONBOARDING_MESSAGES.OWNER_REQUIRED);
       return { confirmed: true };
     });
   }
-  return decorateLead(await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/confirm-registration`, commandEnvelope(lead.version), "Could not confirm the registration."));
+  return decorateLead(await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/confirm-registration`, commandEnvelope(lead.version, undefined, attempt), "Could not confirm the registration.", attempt));
 }
 
 /** Step 2, first part: the Accounts Executive's first response, within 24 hours. */
-export async function recordLeadResponse(lead: Lead, evidence: EvidenceInput): Promise<Lead> {
-  const p = await uploadProof({ type: "LEAD", id: lead.id }, evidence, "LEAD_RESPONSE");
+export async function recordLeadResponse(lead: Lead, evidence: EvidenceInput, attempt?: CommandAttempt): Promise<Lead> {
+  const p = await uploadProof({ type: "LEAD", id: lead.id }, evidence, "LEAD_RESPONSE", "CORRESPONDENCE", attempt);
   if (MOCK_AUTH) {
     return demoLeadCommand(lead, "LEAD_RESPONDED", () => ({ respondedAt: p.occurredAt, responseEvidence: { purpose: "LEAD_RESPONSE", ...p } }));
   }
   return decorateLead(
-    await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/record-response`, { command: commandEnvelope(lead.version), ...p, fileName: undefined }, "Could not record the response."),
+    await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/record-response`, { command: commandEnvelope(lead.version, undefined, attempt), ...p, fileName: undefined }, "Could not record the response.", attempt),
   );
 }
 
@@ -3023,7 +3120,7 @@ export type AssessmentInput = {
 };
 
 /** Step 2: the meeting and needs assessment, with the pre-meeting request, the summary and the client's confirmation. */
-export async function recordAssessment(lead: Lead, input: AssessmentInput): Promise<Lead> {
+export async function recordAssessment(lead: Lead, input: AssessmentInput, attempt?: CommandAttempt): Promise<Lead> {
   // The backend checks the order: request on or before the meeting, summary on
   // or after it, confirmation on or after the summary.
   if (input.request.occurredAt > input.meetingAt) throw new Error("The pre-meeting request must be sent on or before the meeting date.");
@@ -3035,9 +3132,9 @@ export async function recordAssessment(lead: Lead, input: AssessmentInput): Prom
   const at = (date: string) => ({ occurredAt: instantFrom(date, clock) });
   const subject = { type: "LEAD" as const, id: lead.id };
   const [request, summary, confirmation] = await Promise.all([
-    uploadProof(subject, { ...input.request, ...at(input.request.occurredAt) }, "PRE_MEETING_REQUEST"),
-    uploadProof(subject, { ...input.summary, ...at(input.summary.occurredAt) }, "MEETING_SUMMARY"),
-    uploadProof(subject, { ...input.confirmation, ...at(input.confirmation.occurredAt) }, "MEETING_CONFIRMATION"),
+    uploadProof(subject, { ...input.request, ...at(input.request.occurredAt) }, "PRE_MEETING_REQUEST", "CORRESPONDENCE", attempt),
+    uploadProof(subject, { ...input.summary, ...at(input.summary.occurredAt) }, "MEETING_SUMMARY", "CORRESPONDENCE", attempt),
+    uploadProof(subject, { ...input.confirmation, ...at(input.confirmation.occurredAt) }, "MEETING_CONFIRMATION", "CORRESPONDENCE", attempt),
   ]);
   const fields = { meetingAt, needs: input.needs.trim(), assets: input.assets.trim(), employeeCount: input.employeeCount, existingCover: input.existingCover.trim() };
   if (MOCK_AUTH) {
@@ -3061,8 +3158,8 @@ export async function recordAssessment(lead: Lead, input: AssessmentInput): Prom
     await sendOnboarding<Lead>(
       "POST",
       `/api/v1/leads/${lead.id}/assessment`,
-      { command: commandEnvelope(lead.version), ...fields, request: strip(request), summary: strip(summary), confirmation: strip(confirmation) },
-      "Could not record the needs assessment.",
+      { command: commandEnvelope(lead.version, undefined, attempt), ...fields, request: strip(request), summary: strip(summary), confirmation: strip(confirmation) },
+      "Could not record the needs assessment.", attempt
     ),
   );
 }
@@ -3078,10 +3175,11 @@ export type ProspectInput = {
   phone: string;
   /** Required when the backend warned about a possible duplicate and the person goes ahead. */
   duplicateReason?: string;
+  reviewFingerprint?: string;
 };
 
 /** Step 2, last part: open the prospect client (a client record that is not insured yet). */
-export async function openProspect(lead: Lead, input: ProspectInput): Promise<Lead> {
+export async function openProspect(lead: Lead, input: ProspectInput, attempt?: CommandAttempt): Promise<Lead> {
   if (MOCK_AUTH) {
     return demoLeadCommand(lead, "LEAD_PROSPECT_CREATED", (l) => {
       if (!l.assessed) throw new Error(ONBOARDING_MESSAGES.LEAD_NOT_READY);
@@ -3090,20 +3188,25 @@ export async function openProspect(lead: Lead, input: ProspectInput): Promise<Le
     });
   }
   return decorateLead(
-    await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/prospect`, { command: commandEnvelope(lead.version), ...input }, "Could not open the prospect client."),
+    await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/prospect`, { command: commandEnvelope(lead.version, undefined, attempt), ...input }, "Could not open the prospect client.", attempt),
   );
 }
 
 /** Or link a client GRAL already has (its account manager must be the lead's Accounts Executive). */
-export async function linkLeadClient(lead: Lead, client: Client): Promise<Lead> {
+export async function linkLeadClient(lead: Lead, client: Client, attempt?: CommandAttempt): Promise<Lead> {
   if (MOCK_AUTH) return demoLeadCommand(lead, "LEAD_CLIENT_LINKED", () => ({ clientId: client.id, clientName: client.name }));
   if (!client.uuid) throw new Error("This client is not on the backend yet.");
   return decorateLead(
-    await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/link-client`, { command: commandEnvelope(lead.version), clientId: client.uuid }, "Could not link the client."),
+    await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/link-client`, { command: commandEnvelope(lead.version, undefined, attempt), clientId: client.uuid }, "Could not link the client.", attempt),
   );
 }
 
-export async function closeLead(lead: Lead, disposition: "CLOSED_LOST" | "CANCELLED", reason: string): Promise<Lead> {
+export async function linkProspectCandidate(lead: Lead, clientId: string, name: string, attempt?: CommandAttempt): Promise<Lead> {
+  if (MOCK_AUTH) return demoLeadCommand(lead, "LEAD_CLIENT_LINKED", () => ({ clientId, clientName: name }));
+  return decorateLead(await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/link-client`, { command: commandEnvelope(lead.version, undefined, attempt), clientId }, "Could not link the client.", attempt));
+}
+
+export async function closeLead(lead: Lead, disposition: "CLOSED_LOST" | "CANCELLED", reason: string, attempt?: CommandAttempt): Promise<Lead> {
   if (!reason.trim()) throw new Error("Say why the lead is being closed.");
   if (MOCK_AUTH) {
     return demoLeadCommand(lead, "LEAD_CLOSED", () => {
@@ -3112,12 +3215,12 @@ export async function closeLead(lead: Lead, disposition: "CLOSED_LOST" | "CANCEL
     });
   }
   return decorateLead(
-    await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/close`, { command: commandEnvelope(lead.version, reason.trim()), disposition }, "Could not close the lead."),
+    await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/close`, { command: commandEnvelope(lead.version, reason.trim(), attempt), disposition }, "Could not close the lead.", attempt),
   );
 }
 
 /** Start a policy track: one policy to place for this lead, moving through steps 3 to 11 on its own. */
-export async function startTrack(lead: Lead, input: { productId: string; underwritingRole: string; property: boolean }): Promise<PolicyTrack> {
+export async function startTrack(lead: Lead, input: { productId: string; underwritingRole: string; property: boolean }, attempt?: CommandAttempt): Promise<PolicyTrack> {
   if (MOCK_AUTH) {
     const l = DEMO_LEADS.find((x) => x.id === lead.id);
     if (!l || !leadReady(l)) throw new Error(ONBOARDING_MESSAGES.LEAD_NOT_READY);
@@ -3154,8 +3257,8 @@ export async function startTrack(lead: Lead, input: { productId: string; underwr
     await sendOnboarding<PolicyTrack>(
       "POST",
       `/api/v1/leads/${lead.id}/onboarding-cases`,
-      { command: commandEnvelope(lead.version), productId: input.productId, underwritingRole: input.underwritingRole, property: input.property },
-      "Could not start the policy track.",
+      { command: commandEnvelope(lead.version, undefined, attempt), productId: input.productId, underwritingRole: input.underwritingRole, property: input.property },
+      "Could not start the policy track.", attempt
     ),
     lead.name,
   );
@@ -3164,6 +3267,8 @@ export async function startTrack(lead: Lead, input: { productId: string; underwr
 /* Steps 3 to 11: a policy track */
 
 export type TrackActionInput = {
+  attempt?: CommandAttempt;
+  existingEvidence?: Record<string, { documentId: string; documentVersion: number; occurredAt: string; detail?: string }>;
   /** An action code from availableActions, or INSURER_RESPONSE / SINGLE_SOURCE / DEADLINE. */
   action: string;
   fields?: Record<string, unknown>;
@@ -3208,12 +3313,19 @@ const TRACK_ROUTES: Record<string, { path: string; purpose?: string; classificat
 export async function runTrackAction(track: PolicyTrack, input: TrackActionInput): Promise<PolicyTrack> {
   const route = TRACK_ROUTES[input.action];
   if (!route) throw new Error("This action is not available here.");
-  const reasonRequired = ["SURVEY_NOT_APPLICABLE", "REVISE", "ON_HOLD", "CLOSE", "DEADLINE"].includes(input.action);
+  if (input.reason && input.reason.trim().length > 500) throw new Error("Keep the reason within 500 characters.");
+  const reasonRequired = ["SURVEY_NOT_APPLICABLE", "REVISE", "ON_HOLD", "CLOSE", "DEADLINE", "ASSIGN"].includes(input.action);
   if (reasonRequired && !input.reason?.trim()) throw new Error("Give the reason. It is kept in the history.");
+  const attempt = input.attempt;
   const subject = { type: "ONBOARDING" as const, id: track.id };
   const f = input.fields ?? {};
   if (input.action === "LICENSE" && (!f.insurerId || !f.validUntil || !String(f.source ?? "").trim() || !input.evidence?.main)) {
     throw new Error("Choose an insurer, enter the licence expiry date and source, and attach the licence evidence file.");
+  }
+  if (input.action === "SINGLE_SOURCE") {
+    const justification = input.evidence?.main?.detail?.trim();
+    if (!justification) throw new Error("Write the justification for the single-source exception.");
+    if (justification.length > 2000) throw new Error("Keep the single-source justification within 2000 characters.");
   }
   const purpose = input.action === "LICENSE" ? `INSURER_LICENSE_${String(f.insurerId ?? "").replace(/-/g, "")}` : route.purpose;
 
@@ -3223,17 +3335,19 @@ export async function runTrackAction(track: PolicyTrack, input: TrackActionInput
     for (const [slot, p] of slots) {
       const e = input.evidence?.[slot];
       if (!e) throw new Error("Attach the welcome letter, the delivery proof and the file checklist.");
-      proofs[slot] = await uploadProof(subject, e, p);
+      proofs[slot] = await uploadProof(subject, e, p, "CORRESPONDENCE", attempt);
     }
+  } else if (purpose && input.existingEvidence?.main) {
+    proofs.main = { ...input.existingEvidence.main, detail: input.existingEvidence.main.detail, fileName: "Existing signed evidence" };
   } else if (purpose) {
     const e = input.evidence?.main;
     if (!e) throw new Error("Attach the document that proves this step.");
-    proofs.main = await uploadProof(subject, e, purpose, route.classification);
+    proofs.main = await uploadProof(subject, e, purpose, route.classification, attempt);
   }
 
   if (MOCK_AUTH) return demoTrackAction(track, input, proofs, purpose);
 
-  const command = commandEnvelope(track.version, input.reason?.trim());
+  const command = commandEnvelope(track.version, input.reason?.trim(), attempt);
   const strip = (p?: Awaited<ReturnType<typeof uploadProof>>) => (p ? { documentId: p.documentId, documentVersion: p.documentVersion, occurredAt: p.occurredAt, detail: p.detail } : undefined);
   let body: unknown;
   switch (route.shape) {
@@ -3257,10 +3371,10 @@ export async function runTrackAction(track: PolicyTrack, input: TrackActionInput
               : input.action === "ASSIGN"
                 ? { command, responsibility: f.responsibility, assigneeId: f.assigneeId }
                 : input.action === "DEADLINE"
-                  ? { command, milestone: f.milestone, dueAt: instantFrom(String(f.dueAt)) }
+                  ? { command, milestone: f.milestone, dueAt: new Date(String(f.dueAt)).toISOString() }
                   : { command, disposition: input.action === "CLOSE" ? (f.disposition ?? "CLOSED_LOST") : input.action };
   }
-  const saved = await sendOnboarding<PolicyTrack>("POST", `/api/v1/onboarding-cases/${track.id}/${route.path}`, body, "Could not save this step.");
+  const saved = await sendOnboarding<PolicyTrack>("POST", `/api/v1/onboarding-cases/${track.id}/${route.path}`, body, "Could not save this step.", attempt);
   return decorateTrack(saved, track.leadName);
 }
 
@@ -3276,7 +3390,7 @@ export async function saveKycTemplate(
   code: string,
   input: { clientType: LeadType; requirements: KycRequirement[]; reason: string },
   expectedVersion?: number,
-): Promise<KycTemplate> {
+): Promise<KycTemplate | void> {
   if (!input.reason.trim()) throw new Error("Say why the checklist is being set up or changed.");
   if (!input.requirements.length) throw new Error("Add at least one document to the checklist.");
   if (MOCK_AUTH) {
@@ -3296,9 +3410,10 @@ export async function getClientKyc(clientId: string): Promise<{ summary: KycGate
   if (MOCK_AUTH) return { summary: demoKycGate(clientId), reviews: DEMO_KYC_REVIEWS.filter((r) => r.clientId === clientId).map(demoKycView) };
   const [summary, reviews] = await Promise.all([
     readOnboarding<KycGate>(`/api/v1/clients/${clientId}/kyc-summary`, "Could not load the KYC summary.").catch(() => null),
-    readOnboarding<Page<KycReview> | KycReview[]>(`/api/v1/clients/${clientId}/kyc-cases?size=20`, "Could not load the KYC reviews.").catch(() => null),
+    readOnboarding<Page<KycReview> | KycReview[]>(`/api/v1/clients/${clientId}/kyc-cases`, "Could not load the KYC reviews."),
   ]);
-  return { summary, reviews: Array.isArray(reviews) ? reviews : (reviews?.items ?? []) };
+  if (!reviews) throw new Error("The client KYC reviews are unavailable under your current access.");
+  return { summary, reviews: Array.isArray(reviews) ? reviews : reviews.items };
 }
 
 export async function getKycReview(id: string): Promise<{ review: KycReview; history: CommandHistory[] } | null> {
@@ -3308,12 +3423,12 @@ export async function getKycReview(id: string): Promise<{ review: KycReview; his
   }
   const review = await readOnboarding<KycReview>(`/api/v1/kyc-cases/${id}`, "Could not load this KYC review.");
   if (!review) return null;
-  const history = await readOnboarding<Page<{ action: string; actorId?: string; occurredAt: string }>>(`/api/v1/kyc-cases/${id}/history?size=50`, "").catch(() => null);
-  return { review: { ...review, clientName: review.clientName ?? (await clientNameById(review.clientId)) }, history: await toHistory(history?.items ?? []) };
+  const history = await readOnboarding<CommandHistory[]>(`/api/v1/kyc-cases/${id}/history?size=50`, "Could not load the review history.");
+  return { review: { ...review, clientName: review.clientName ?? (await clientNameById(review.clientId)) }, history: await toHistory(history ?? []) };
 }
 
-function kycCommand(review: KycReview) {
-  return { commandId: crypto.randomUUID(), expectedVersion: review.version };
+function kycCommand(review: KycReview, attempt?: CommandAttempt) {
+  return commandEnvelope(review.version, undefined, attempt);
 }
 
 function demoKycCommand(review: KycReview, action: string, change: (r: KycReview) => Partial<KycReview>): KycReview {
@@ -3327,7 +3442,7 @@ function demoKycCommand(review: KycReview, action: string, change: (r: KycReview
   return demoKycView(updated);
 }
 
-export async function startKycReview(clientId: string, templateCode: string): Promise<KycReview> {
+export async function startKycReview(clientId: string, templateCode: string, attempt?: CommandAttempt): Promise<KycReview> {
   if (MOCK_AUTH) {
     if (DEMO_KYC_REVIEWS.some((r) => r.clientId === clientId && ["DRAFT", "SUBMITTED", "RETURNED"].includes(r.status))) throw new Error(ONBOARDING_MESSAGES.KYC_REVIEW_ALREADY_OPEN);
     const template = DEMO_KYC_TEMPLATES.find((t) => t.code === templateCode);
@@ -3349,12 +3464,12 @@ export async function startKycReview(clientId: string, templateCode: string): Pr
     demoLog(created.id, "KYC_STARTED");
     return demoKycView(created);
   }
-  return sendOnboarding<KycReview>("POST", "/api/v1/kyc-cases", { commandId: crypto.randomUUID(), clientId, templateCode }, "Could not start the KYC review.");
+  return sendOnboarding<KycReview>("POST", "/api/v1/kyc-cases", { ...commandEnvelope(undefined, undefined, attempt), clientId, templateCode }, "Could not start the KYC review.", attempt);
 }
 
 /** Files one checklist document, with the date it actually arrived (the review clock starts from the last one). */
-export async function attachKycDocument(review: KycReview, code: string, evidence: EvidenceInput): Promise<KycReview> {
-  const p = await uploadProof({ type: "KYC", id: review.id }, evidence, code, "KYC");
+export async function attachKycDocument(review: KycReview, code: string, evidence: EvidenceInput, attempt?: CommandAttempt): Promise<KycReview> {
+  const p = await uploadProof({ type: "KYC", id: review.id }, evidence, code, "KYC", attempt);
   if (MOCK_AUTH) {
     return demoKycCommand(review, "KYC_EVIDENCE", (r) => {
       const items = r.items.map((i) => (i.code === code ? { ...i, documentId: p.documentId, documentVersion: 1 } : i));
@@ -3367,14 +3482,15 @@ export async function attachKycDocument(review: KycReview, code: string, evidenc
   return sendOnboarding<KycReview>(
     "PUT",
     `/api/v1/kyc-cases/${review.id}/requirements/${encodeURIComponent(code)}`,
-    { command: kycCommand(review), documentId: p.documentId, documentVersion: p.documentVersion, receivedAt: p.occurredAt },
-    "Could not file the document.",
+    { command: kycCommand(review, attempt), documentId: p.documentId, documentVersion: p.documentVersion, receivedAt: p.occurredAt },
+    "Could not file the document.", attempt
   );
 }
 
-export async function recordKycScreening(review: KycReview, input: { result: "CLEAR" | "REVIEW_REQUIRED" | "REJECTED"; notes: string; evidence: EvidenceInput }): Promise<KycReview> {
+export async function recordKycScreening(review: KycReview, input: { result: "CLEAR" | "REVIEW_REQUIRED" | "REJECTED"; notes: string; evidence: EvidenceInput }, attempt?: CommandAttempt): Promise<KycReview> {
+  if (MOCK_AUTH && (DEMO_ROLE !== "Risk & Compliance Manager" || review.reviewerId !== DEMO_REVIEWER)) throw new Error(ONBOARDING_MESSAGES.APPROVER_INELIGIBLE);
   if (!input.notes.trim()) throw new Error("Say which lists were checked and what was found.");
-  const p = await uploadProof({ type: "KYC", id: review.id }, input.evidence, "SCREENING", "KYC");
+  const p = await uploadProof({ type: "KYC", id: review.id }, input.evidence, "SCREENING", "KYC", attempt);
   if (MOCK_AUTH) {
     return demoKycCommand(review, "KYC_SCREENED", (r) => ({
       screeningResult: input.result,
@@ -3385,26 +3501,28 @@ export async function recordKycScreening(review: KycReview, input: { result: "CL
   return sendOnboarding<KycReview>(
     "POST",
     `/api/v1/kyc-cases/${review.id}/record-screening`,
-    { command: kycCommand(review), result: input.result, notes: input.notes.trim(), documentId: p.documentId, documentVersion: p.documentVersion },
-    "Could not record the screening.",
+    { command: kycCommand(review, attempt), result: input.result, notes: input.notes.trim(), documentId: p.documentId, documentVersion: p.documentVersion },
+    "Could not record the screening.", attempt
   );
 }
 
-export async function submitKycReview(review: KycReview): Promise<KycReview> {
+export async function submitKycReview(review: KycReview, attempt?: CommandAttempt): Promise<KycReview> {
   if (MOCK_AUTH) {
     return demoKycCommand(review, "KYC_SUBMITTED", (r) => {
+      if (!r.reviewerId) throw new Error(ONBOARDING_MESSAGES.NO_ELIGIBLE_KYC_REVIEWER);
       if (r.items.some((i) => i.required && !i.documentId)) throw new Error(ONBOARDING_MESSAGES.KYC_DOCUMENTS_INCOMPLETE);
       return { status: "SUBMITTED" };
     });
   }
-  return sendOnboarding<KycReview>("POST", `/api/v1/kyc-cases/${review.id}/submit`, kycCommand(review), "Could not send the KYC review.");
+  return sendOnboarding<KycReview>("POST", `/api/v1/kyc-cases/${review.id}/submit`, kycCommand(review, attempt), "Could not send the KYC review.", attempt);
 }
 
 /** The Risk & Compliance Manager's decision. Approval needs a clear screening and the signed KYC Approval Form. */
-export async function decideKycReview(review: KycReview, input: { decision: "APPROVE" | "RETURN" | "REJECT"; reason: string; evidence?: EvidenceInput }): Promise<KycReview> {
+export async function decideKycReview(review: KycReview, input: { decision: "APPROVE" | "RETURN" | "REJECT"; reason: string; evidence?: EvidenceInput }, attempt?: CommandAttempt): Promise<KycReview> {
+  if (MOCK_AUTH && (DEMO_ROLE !== "Risk & Compliance Manager" || review.reviewerId !== DEMO_REVIEWER)) throw new Error(ONBOARDING_MESSAGES.APPROVER_INELIGIBLE);
   if (!input.reason.trim()) throw new Error("Give the reason for the decision.");
   if (input.decision === "APPROVE" && !input.evidence) throw new Error("Attach the signed KYC Approval Form.");
-  const p = input.evidence ? await uploadProof({ type: "KYC", id: review.id }, input.evidence, "KYC_APPROVAL", "APPROVAL_EVIDENCE") : undefined;
+  const p = input.evidence ? await uploadProof({ type: "KYC", id: review.id }, input.evidence, "KYC_APPROVAL", "APPROVAL_EVIDENCE", attempt) : undefined;
   if (MOCK_AUTH) {
     return demoKycCommand(review, "KYC_DECIDED", (r) => {
       if (r.status !== "SUBMITTED") throw new Error("Only a submitted review can be decided.");
@@ -3420,20 +3538,20 @@ export async function decideKycReview(review: KycReview, input: { decision: "APP
     });
   }
   const path = `/api/v1/kyc-cases/${review.id}/decisions`;
-  const body = { command: kycCommand(review), decision: input.decision, reason: input.reason.trim(), documentId: p?.documentId, documentVersion: p?.documentVersion };
+  const body = { command: kycCommand(review, attempt), decision: input.decision, reason: input.reason.trim(), documentId: p?.documentId, documentVersion: p?.documentVersion };
   console.info("[KYC decision request]", { method: "POST", url: `${API_URL}${path}`, body });
-  return sendOnboarding<KycReview>("POST", path, body, "Could not record the decision.");
+  return sendOnboarding<KycReview>("POST", path, body, "Could not record the decision.", attempt);
 }
 
-export async function escalateKycReview(review: KycReview, input: { evidence: EvidenceInput; revisedDueAt: string; reason: string }): Promise<KycReview> {
+export async function escalateKycReview(review: KycReview, input: { evidence: EvidenceInput; revisedDueAt: string; reason: string }, attempt?: CommandAttempt): Promise<KycReview> {
   if (!input.reason.trim()) throw new Error("Give the reason for the delay.");
-  const p = await uploadProof({ type: "KYC", id: review.id }, input.evidence, "KYC_ESCALATION");
+  const p = await uploadProof({ type: "KYC", id: review.id }, input.evidence, "KYC_ESCALATION", "CORRESPONDENCE", attempt);
   if (MOCK_AUTH) return demoKycCommand(review, "KYC_ESCALATED", () => ({ revisedDueAt: `${input.revisedDueAt}T17:00:00Z` }));
   return sendOnboarding<KycReview>(
     "POST",
     `/api/v1/kyc-cases/${review.id}/escalate`,
-    { command: kycCommand(review), documentId: p.documentId, documentVersion: p.documentVersion, revisedDueAt: `${input.revisedDueAt}T17:00:00Z`, reason: input.reason.trim() },
-    "Could not escalate the review.",
+    { command: kycCommand(review, attempt), documentId: p.documentId, documentVersion: p.documentVersion, revisedDueAt: `${input.revisedDueAt}T17:00:00Z`, reason: input.reason.trim() },
+    "Could not escalate the review.", attempt
   );
 }
 
@@ -3469,7 +3587,7 @@ function demoKycGate(clientId: string): KycGate {
     clientId,
     caseId: r.id,
     status: r.status,
-    gateStatus: r.status === "APPROVED" ? "READY" : r.status,
+    gateStatus: demoKycView(r).blockers.includes("KYC_TEMPLATE_CHANGED") ? "KYC_TEMPLATE_CHANGED" : r.status === "APPROVED" ? "READY" : r.status,
     completeDocumentsAt: r.completeDocumentsAt,
     dueAt: r.dueAt,
     revisedDueAt: r.revisedDueAt,
@@ -3479,9 +3597,12 @@ function demoKycGate(clientId: string): KycGate {
 
 function demoKycView(r: KycReview): KycReview {
   const blockers: string[] = [];
+  const current = DEMO_KYC_TEMPLATES.find((t) => t.code === r.templateCode);
+  if (current && current.version !== r.templateVersion) blockers.push("KYC_TEMPLATE_CHANGED");
+  if (!r.reviewerId && ["DRAFT", "RETURNED"].includes(r.status)) blockers.push("NO_ELIGIBLE_KYC_REVIEWER");
   if (r.items.some((i) => i.required && !i.documentId)) blockers.push("KYC_DOCUMENTS_INCOMPLETE");
   if (!r.screeningResult) blockers.push("SCREENING_REQUIRED");
-  return { ...r, blockers: ["DRAFT", "RETURNED"].includes(r.status) ? blockers : [] };
+  return { ...r, blockers: ["DRAFT", "RETURNED"].includes(r.status) ? blockers : blockers.filter((b) => b === "KYC_TEMPLATE_CHANGED") };
 }
 
 function demoApprovalStatus(id?: string) {
@@ -3608,6 +3729,8 @@ function demoTrackAction(track: PolicyTrack, input: TrackActionInput, proofs: Re
   if (current.version !== track.version) throw new Error(ONBOARDING_MESSAGES.STALE_VERSION!);
   const view = demoTrackView(current);
   const free = ["INSURER_RESPONSE", "SINGLE_SOURCE", "DEADLINE"];
+  if (input.action === "DEADLINE" && (DEMO_ROLE !== "CRM Manager" || current.status !== "OPEN")) throw new Error("You cannot adjust this deadline.");
+  if (input.action === "SINGLE_SOURCE" && (!input.evidence?.main?.detail?.trim() || ![6, 7].includes(current.stage) || DEMO_ROLE !== "GI Underwriting Manager")) throw new Error("An underwriting justification is required at the quotation stage.");
   if (!free.includes(input.action) && !view.availableActions.includes(input.action)) {
     throw new Error(view.blockers[0] ? blockerText(view.blockers[0]) : ONBOARDING_MESSAGES.INVALID_STAGE!);
   }
@@ -3664,12 +3787,14 @@ function demoTrackAction(track: PolicyTrack, input: TrackActionInput, proofs: Re
     case "REQUEST_APPROVAL": {
       const purposeKey = input.action === "SINGLE_SOURCE" ? "SINGLE_SOURCE" : "RECOMMENDATION";
       const tier = purposeKey === "SINGLE_SOURCE" ? "SINGLE_SOURCE" : (t.recommendation?.tier ?? "STANDARD");
-      const roles = tier === "STANDARD" ? ["Technical Director"] : tier === "STRATEGIC" ? ["MD"] : ["Technical Director", "MD"];
+      const roles = tier === "STANDARD" ? ["Technical Director"] : tier === "STRATEGIC" ? ["MD", "MD"] : ["Technical Director", "MD"];
       const requestedAt = todayIso();
       const quote = t.quotes.find((q) => q.id === t.recommendation?.quoteId);
       const request: ApprovalRequest = {
         id: nextApprovalId(),
         subjectType: "NEW_BUSINESS",
+        action: purposeKey === "SINGLE_SOURCE" ? "SINGLE_SOURCE" : `RECOMMEND_${tier}`,
+        currentStepNumber: 1,
         subjectId: t.id,
         subjectRef: t.id,
         subjectRevision: t.materialRevision,
@@ -3686,8 +3811,8 @@ function demoTrackAction(track: PolicyTrack, input: TrackActionInput, proofs: Re
         requestedAt,
         dueAt: addWorkingDays(requestedAt, DECISION_DAYS),
         status: "PENDING",
-        steps: buildSteps(roles.map((role) => ({ role }))),
-        evidenceRequired: false,
+        steps: buildSteps(roles.map((role) => ({ role }))).map((step) => ({ ...step, requiredPermission: tier === "STRATEGIC" && step.order === 2 ? "ONBOARDING_BOARD_EVIDENCE" : "APPROVAL_DECIDE", evidencePurpose: tier === "STRATEGIC" && step.order === 2 ? "BOARD_APPROVAL" : "RECOMMENDATION_APPROVAL" })),
+        evidenceRequired: true,
         evidence: [],
         version: 1,
         history: [{ at: requestedAt, by: CURRENT_USER?.name ?? "Underwriting Manager", text: "Approval requested" }],
@@ -3706,9 +3831,12 @@ function demoTrackAction(track: PolicyTrack, input: TrackActionInput, proofs: Re
       );
       break;
     }
-    case "RECORD_BOARD_EVIDENCE":
+    case "RECORD_BOARD_EVIDENCE": {
+      const approval = APPROVALS.find((r) => r.id === t.approvalRequests.RECOMMENDATION);
+      if (approval) { approval.status = "APPROVED"; approval.steps = approval.steps.map((s) => ({ ...s, status: "APPROVED" })); approval.version++; }
       t = demoAdvance({ ...t, boardApproval: { authority: "BOARD_OF_DIRECTORS", recordedBy: CURRENT_USER?.name ?? "MD", recordedAt: new Date().toISOString(), decisionAt: proofs.main!.occurredAt } }, 9);
       break;
+    }
     case "PRESENT":
       if (t.stage === 8) t = demoAdvance(t, 9);
       break;
@@ -3743,6 +3871,7 @@ function demoTrackAction(track: PolicyTrack, input: TrackActionInput, proofs: Re
       };
       break;
     case "ASSIGN":
+      if (f.responsibility === "OWNER" && DEMO_LEADS.find((l) => l.clientId === t.clientId)?.ownerId !== f.assigneeId) throw new Error(ONBOARDING_MESSAGES.CLIENT_OWNER_MISMATCH);
       t = { ...t, assignees: { ...t.assignees, [String(f.responsibility)]: String(f.assigneeId) }, ownerId: f.responsibility === "OWNER" ? String(f.assigneeId) : t.ownerId };
       break;
     case "ON_HOLD":
@@ -3755,7 +3884,7 @@ function demoTrackAction(track: PolicyTrack, input: TrackActionInput, proofs: Re
       t = { ...t, status: (f.disposition as TrackStatus) ?? "CLOSED_LOST", milestones: t.milestones.map((m) => (m.status === "OPEN" ? { ...m, status: "CANCELLED" } : m)) };
       break;
     case "DEADLINE":
-      t = { ...t, milestones: t.milestones.map((m) => (m.code === f.milestone && m.status === "OPEN" ? { ...m, dueAt: `${String(f.dueAt)}T17:00:00Z` } : m)) };
+      t = { ...t, milestones: t.milestones.map((m) => (m.code === f.milestone && m.status === "OPEN" ? { ...m, dueAt: new Date(String(f.dueAt)).toISOString() } : m)) };
       break;
   }
   t = { ...t, version: current.version + 1 };
@@ -3842,7 +3971,7 @@ function onboardingTasks(): WorkTask[] {
       history: [],
     });
   }
-  for (const r of DEMO_KYC_REVIEWS.filter((x) => x.status === "SUBMITTED")) {
+  for (const r of DEMO_KYC_REVIEWS.filter((x) => x.status === "SUBMITTED" && x.reviewerId)) {
     tasks.push({
       id: `T-${r.id}-DECIDE`,
       key: `KYC:${r.id}:DECIDE`,
@@ -3853,6 +3982,7 @@ function onboardingTasks(): WorkTask[] {
       resourceId: r.id,
       resourceRef: r.id,
       client: r.clientName,
+      owner: r.reviewerId,
       ownerRole: "Risk & Compliance Manager",
       dueDate: (r.revisedDueAt ?? r.dueAt ?? new Date().toISOString()).slice(0, 10),
       status: "OPEN",
