@@ -157,21 +157,21 @@ export function SessionsView() {
                 return (
                   <tr key={s.sessionReference}>
                     <Td>
-                      <div className="flex items-center gap-2 text-xs font-medium">
+                      <div className="flex items-center gap-2 text-sm font-medium">
                         {s.fullName}
                         {self ? <Chip tone="sky">You</Chip> : null}
                         {sessionsOf(s.userId) > 1 ? <Chip>{sessionsOf(s.userId)} sessions</Chip> : null}
                       </div>
-                      <div className="text-[11px] text-muted-foreground">{s.email}</div>
+                      <div className="text-xs text-muted-foreground">{s.email}</div>
                     </Td>
                     <Td>
-                      <span className="flex items-center gap-1.5 text-xs whitespace-nowrap">
+                      <span className="flex items-center gap-1.5 text-sm whitespace-nowrap">
                         <Dot tone={activityTone(s.lastAccessedAt)} />
                         {ago(s.lastAccessedAt)}
                       </span>
                     </Td>
-                    <Td className="text-xs whitespace-nowrap">{time(s.authenticatedAt)}</Td>
-                    <Td className="text-xs whitespace-nowrap">{time(s.expiresAt)}</Td>
+                    <Td className="text-sm whitespace-nowrap">{time(s.authenticatedAt)}</Td>
+                    <Td className="text-sm whitespace-nowrap">{time(s.expiresAt)}</Td>
                     <Td>
                       {canEndSessions && !self && !isEnding ? (
                         <div className="flex flex-wrap gap-2">
@@ -190,7 +190,7 @@ export function SessionsView() {
                 <tr>
                   <Td colSpan={5}>
                     <div className="rounded-xl bg-pale px-3 py-3">
-                      <p className="text-xs font-medium">Sign {ending.name} out everywhere</p>
+                      <p className="text-sm font-medium">Sign {ending.name} out everywhere</p>
                       <EndForm reason={reason} setReason={setReason} busy={busy} onConfirm={confirmEnd} onCancel={() => setEnding(null)} />
                     </div>
                   </Td>
@@ -198,7 +198,7 @@ export function SessionsView() {
               ) : null}
               {rows.length === 0 ? (
                 <tr>
-                  <Td className={error ? "text-xs text-danger" : "text-xs text-muted-foreground"} colSpan={5}>
+                  <Td className={error ? "text-sm text-danger" : "text-sm text-muted-foreground"} colSpan={5}>
                     {error ?? (sessions === null ? "Loading sessions…" : query ? `Nobody matches "${query}".` : "Nobody is signed in.")}
                   </Td>
                 </tr>

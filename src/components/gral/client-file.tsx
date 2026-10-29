@@ -277,7 +277,7 @@ export function ClientFile({
                     <tbody>
                       {policies.map((p) => (
                         <tr key={p.uuid ?? p.id}>
-                          <td className="border-b border-border px-3 py-3 text-xs font-medium">
+                          <td className="border-b border-border px-3 py-3 text-sm font-medium">
                             <Link
                               href={`/policies/${encodeURIComponent(p.id)}${p.uuid ? `?ref=${p.uuid}` : ""}`}
                               className="text-primary underline underline-offset-2 hover:opacity-70"
@@ -285,22 +285,22 @@ export function ClientFile({
                               {p.id}
                             </Link>
                           </td>
-                          <td className="border-b border-border px-3 py-3 text-xs">
+                          <td className="border-b border-border px-3 py-3 text-sm">
                             <Recorded value={p.classOfInsurance} />
                           </td>
-                          <td className="border-b border-border px-3 py-3 text-xs">
+                          <td className="border-b border-border px-3 py-3 text-sm">
                             <Recorded value={p.insurer} />
                           </td>
-                          <td className="border-b border-border px-3 py-3 text-xs whitespace-nowrap">
+                          <td className="border-b border-border px-3 py-3 text-sm whitespace-nowrap">
                             {p.sumInsured ? formatRwf(p.sumInsured) : <NotRecorded />}
                           </td>
-                          <td className="border-b border-border px-3 py-3 text-xs whitespace-nowrap">
+                          <td className="border-b border-border px-3 py-3 text-sm whitespace-nowrap">
                             {p.premium ? formatRwf(p.premium) : <NotRecorded />}
                           </td>
-                          <td className="border-b border-border px-3 py-3 text-xs whitespace-nowrap">
+                          <td className="border-b border-border px-3 py-3 text-sm whitespace-nowrap">
                             <Recorded value={p.start} />
                           </td>
-                          <td className="border-b border-border px-3 py-3 text-xs whitespace-nowrap">
+                          <td className="border-b border-border px-3 py-3 text-sm whitespace-nowrap">
                             <Recorded value={p.renewal} />
                           </td>
                           <td className="border-b border-border px-3 py-3">

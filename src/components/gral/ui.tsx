@@ -173,7 +173,7 @@ export function Person({ name }: { name: string }) {
       <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-pale text-[10px] font-semibold text-primary">
         {initials(name)}
       </span>
-      <span className="truncate text-xs text-foreground">{name}</span>
+      <span className="truncate text-sm text-foreground">{name}</span>
     </span>
   );
 }

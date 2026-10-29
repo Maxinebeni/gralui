@@ -176,11 +176,11 @@ export function ClaimsView() {
                     <HeadGap colSpan={6} />
                     {blocked.map((c) => (
                       <tr key={c.id}>
-                        <Td className="text-xs font-medium whitespace-nowrap">{c.id}</Td>
-                        <Td className="text-xs whitespace-nowrap">{stageLabel(c)}</Td>
-                        <Td className="max-w-[220px] text-xs">{claimBlocker(c)}</Td>
-                        <Td className="text-xs whitespace-nowrap">{actionOwner(c)}</Td>
-                        <Td className="text-xs whitespace-nowrap">
+                        <Td className="text-sm font-medium whitespace-nowrap">{c.id}</Td>
+                        <Td className="text-sm whitespace-nowrap">{stageLabel(c)}</Td>
+                        <Td className="max-w-[220px] text-sm">{claimBlocker(c)}</Td>
+                        <Td className="text-sm whitespace-nowrap">{actionOwner(c)}</Td>
+                        <Td className="text-sm whitespace-nowrap">
                           {workingDaysBetween(isDisputed(c) ? c.dispute!.raisedAt : c.stepStartedAt, todayIso())} working days
                         </Td>
                         <Td className="text-right">

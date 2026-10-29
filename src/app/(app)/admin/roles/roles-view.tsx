@@ -89,14 +89,14 @@ export function RolesView() {
               {rows.map((r) => (
                 <tr key={r.id} className="cursor-pointer hover:bg-pale/50" onClick={() => setOpen(r)}>
                   <Td>
-                    <div className="flex items-center gap-2 text-xs font-medium">
+                    <div className="flex items-center gap-2 text-sm font-medium">
                       {r.name}
                       {r.code === "ADMINISTRATOR" ? <Chip tone="neutral">Built-in</Chip> : null}
                     </div>
-                    <div className="text-[11px] text-muted-foreground">{r.code}</div>
+                    <div className="text-xs text-muted-foreground">{r.code}</div>
                   </Td>
-                  <Td className="text-xs">{r.permissions.length}</Td>
-                  <Td className="text-xs">{people(r.code)}</Td>
+                  <Td className="text-sm">{r.permissions.length}</Td>
+                  <Td className="text-sm">{people(r.code)}</Td>
                   <Td>
                     <TextLink>{canUpdateRole && r.code !== "ADMINISTRATOR" ? "Edit" : "View"}</TextLink>
                   </Td>
@@ -104,7 +104,7 @@ export function RolesView() {
               ))}
               {rows.length === 0 ? (
                 <tr>
-                  <Td className={error ? "text-xs text-danger" : "text-xs text-muted-foreground"} colSpan={4}>
+                  <Td className={error ? "text-sm text-danger" : "text-sm text-muted-foreground"} colSpan={4}>
                     {error ?? (roles === null ? "Loading roles…" : "No roles of this type yet.")}
                   </Td>
                 </tr>

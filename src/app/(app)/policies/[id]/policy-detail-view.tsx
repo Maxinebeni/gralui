@@ -133,7 +133,7 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
                 <tbody>
                   {detail.periods.map((period) => (
                     <tr key={period.periodId}>
-                      <Td className="text-xs whitespace-nowrap">
+                      <Td className="text-sm whitespace-nowrap">
                         {period.from ? formatDate(period.from) : <NotRecorded />} – {period.to ? formatDate(period.to) : <NotRecorded />}
                         {period.current ? (
                           <span className="ml-2">
@@ -141,11 +141,11 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
                           </span>
                         ) : null}
                       </Td>
-                      <Td className="text-xs whitespace-nowrap">{MOVEMENT_LABEL[period.movement]}</Td>
-                      <Td className="text-xs whitespace-nowrap">{plain(period.sumInsured)}</Td>
-                      <Td className="text-xs whitespace-nowrap">{plain(period.netPremium)}</Td>
-                      <Td className="text-xs whitespace-nowrap">{plain(period.totalPremium)}</Td>
-                      <Td className="text-xs whitespace-nowrap"><Recorded value={period.bookingNote} /></Td>
+                      <Td className="text-sm whitespace-nowrap">{MOVEMENT_LABEL[period.movement]}</Td>
+                      <Td className="text-sm whitespace-nowrap">{plain(period.sumInsured)}</Td>
+                      <Td className="text-sm whitespace-nowrap">{plain(period.netPremium)}</Td>
+                      <Td className="text-sm whitespace-nowrap">{plain(period.totalPremium)}</Td>
+                      <Td className="text-sm whitespace-nowrap"><Recorded value={period.bookingNote} /></Td>
                     </tr>
                   ))}
                 </tbody>

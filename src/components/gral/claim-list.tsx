@@ -175,8 +175,8 @@ export function ClaimsTable({
           {rows.map((c) => (
             <tr key={c.id} className="cursor-pointer hover:bg-pale/50" onClick={() => onView(c)}>
               <Td>
-                <div className="text-xs font-medium whitespace-nowrap">{c.id}</div>
-                <div className="max-w-[160px] truncate text-[11px] text-muted-foreground">{c.client}</div>
+                <div className="text-sm font-medium whitespace-nowrap">{c.id}</div>
+                <div className="max-w-[160px] truncate text-xs text-muted-foreground">{c.client}</div>
               </Td>
               <Td>
                 <div className="flex items-center gap-1.5">
@@ -184,9 +184,9 @@ export function ClaimsTable({
                   <ClaimSlaChip claim={c} />
                 </div>
               </Td>
-              <Td className="text-xs">{daysOpen(c)}d</Td>
-              <Td className="text-xs whitespace-nowrap">{c.amount.toLocaleString("en-US")}</Td>
-              <Td className={cn("text-xs whitespace-nowrap", isDisputed(c) && "text-warning")}>{stageLabel(c)}</Td>
+              <Td className="text-sm">{daysOpen(c)}d</Td>
+              <Td className="text-sm whitespace-nowrap">{c.amount.toLocaleString("en-US")}</Td>
+              <Td className={cn("text-sm whitespace-nowrap", isDisputed(c) && "text-warning")}>{stageLabel(c)}</Td>
               <Td>
                 <div className="max-w-[130px] truncate">
                   <Person name={c.handler} />
@@ -196,7 +196,7 @@ export function ClaimsTable({
           ))}
           {rows.length === 0 ? (
             <tr>
-              <Td className="text-xs text-muted-foreground" colSpan={6}>
+              <Td className="text-sm text-muted-foreground" colSpan={6}>
                 {emptyMessage}
               </Td>
             </tr>

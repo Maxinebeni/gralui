@@ -141,11 +141,11 @@ export function UsersView() {
               {rows.map((u) => (
                 <tr key={u.id} className="cursor-pointer hover:bg-pale/50" onClick={() => setOpen(u)}>
                   <Td>
-                    <div className="flex items-center gap-2 text-xs font-medium">
+                    <div className="flex items-center gap-2 text-sm font-medium">
                       {u.fullName}
                       {u.id === selfId ? <Chip tone="sky">You</Chip> : null}
                     </div>
-                    <div className="text-[11px] text-muted-foreground">{u.email}</div>
+                    <div className="text-xs text-muted-foreground">{u.email}</div>
                   </Td>
                   <Td>
                     <div className="flex max-w-[260px] flex-wrap gap-1">
@@ -156,11 +156,11 @@ export function UsersView() {
                       ))}
                     </div>
                   </Td>
-                  <Td className="text-xs">{CATEGORY_LABEL[u.profileCategory]}</Td>
+                  <Td className="text-sm">{CATEGORY_LABEL[u.profileCategory]}</Td>
                   <Td>
                     <UserStatusChip status={u.status} />
                   </Td>
-                  <Td className="text-xs whitespace-nowrap">{formatDay(u.createdAt)}</Td>
+                  <Td className="text-sm whitespace-nowrap">{formatDay(u.createdAt)}</Td>
                   <Td>
                     <TextLink>Manage</TextLink>
                   </Td>
@@ -168,7 +168,7 @@ export function UsersView() {
               ))}
               {rows.length === 0 ? (
                 <tr>
-                  <Td className={error ? "text-xs text-danger" : "text-xs text-muted-foreground"} colSpan={6}>
+                  <Td className={error ? "text-sm text-danger" : "text-sm text-muted-foreground"} colSpan={6}>
                     {error ?? (users === null ? "Loading users…" : query ? `No users match "${query}".` : "No users in this view.")}
                   </Td>
                 </tr>

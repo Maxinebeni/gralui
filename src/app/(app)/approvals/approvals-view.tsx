@@ -118,19 +118,19 @@ export function ApprovalsView() {
                 return (
                   <tr key={r.id} className="cursor-pointer hover:bg-pale/50" onClick={() => setOpen(r)}>
                     <Td>
-                      <div className="text-xs font-medium whitespace-nowrap">{r.title}</div>
-                      <div className="max-w-[240px] truncate text-[11px] text-muted-foreground">{r.subjectRef}</div>
+                      <div className="text-sm font-medium whitespace-nowrap">{r.title}</div>
+                      <div className="max-w-[240px] truncate text-xs text-muted-foreground">{r.subjectRef}</div>
                       <div className="mt-0.5 max-w-[240px] truncate text-[9px] text-subtle" title={r.id}>Request ID: {r.id}</div>
                     </Td>
                     <Td>
                       <Chip tone="sky">{SUBJECT_LABEL[r.subjectType]}</Chip>
                     </Td>
-                    <Td className="max-w-[160px] truncate text-xs">{r.client ?? "No client"}</Td>
-                    <Td className="text-xs whitespace-nowrap">{r.amount !== undefined ? r.amount.toLocaleString("en-US") : "No amount"}</Td>
+                    <Td className="max-w-[160px] truncate text-sm">{r.client ?? "No client"}</Td>
+                    <Td className="text-sm whitespace-nowrap">{r.amount !== undefined ? r.amount.toLocaleString("en-US") : "No amount"}</Td>
                     <Td>
                       <Chip tone={statusTone(r)}>{statusLabel(r)}</Chip>
                     </Td>
-                    <Td className={cn("text-xs whitespace-nowrap", late && "font-medium text-danger")}>
+                    <Td className={cn("text-sm whitespace-nowrap", late && "font-medium text-danger")}>
                       {r.status === "PENDING" ? formatDate(r.dueAt) : "Decided"}
                     </Td>
                     <Td>
@@ -141,7 +141,7 @@ export function ApprovalsView() {
               })}
               {rows.length === 0 ? (
                 <tr>
-                  <Td className="text-xs text-muted-foreground" colSpan={7}>
+                  <Td className="text-sm text-muted-foreground" colSpan={7}>
                     {tab === "Waiting for me" ? "Nothing is waiting for your decision." : "No requests in this view."}
                   </Td>
                 </tr>

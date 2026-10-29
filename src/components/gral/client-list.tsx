@@ -99,7 +99,7 @@ export function ClientsTable({
         <tbody>
           {clients.length === 0 ? (
             <tr>
-              <td colSpan={HEADINGS.length} className="px-3 py-8 text-center text-xs text-muted-foreground">
+              <td colSpan={HEADINGS.length} className="px-3 py-8 text-center text-sm text-muted-foreground">
                 {emptyMessage}
               </td>
             </tr>
@@ -107,22 +107,22 @@ export function ClientsTable({
             clients.map((c) => (
               <tr key={c.id}>
                 <Td>
-                  <div className="max-w-[150px] truncate text-xs font-medium">{c.name}</div>
+                  <div className="max-w-[150px] truncate text-sm font-medium">{c.name}</div>
                   <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-muted-foreground">{c.id}</span>
+                    <span className="text-xs text-muted-foreground">{c.id}</span>
                     {c.nonCompliant ? <Chip tone="danger">Flagged</Chip> : null}
                   </div>
                   <TextLink onClick={() => onView(c)}>View File</TextLink>
                 </Td>
-                <Td className="text-xs">
+                <Td className="text-sm">
                   <span className="block max-w-[90px] truncate">{c.type}</span>
                 </Td>
-                <Td className="text-xs">
+                <Td className="text-sm">
                   <span className="block max-w-[80px] truncate">
                     <Recorded value={c.sector} />
                   </span>
                 </Td>
-                <Td className="text-xs">{c.activePolicies}</Td>
+                <Td className="text-sm">{c.activePolicies}</Td>
                 <Td>
                   <StatusDot ok={c.kyc} title={c.kycGateStatus ? `KYC: ${c.kycGateStatus}` : undefined} />
                 </Td>
@@ -137,7 +137,7 @@ export function ClientsTable({
                 </Td>
                 <Td>
                   <div className="w-16">
-                    <div className="text-[11px] text-muted-foreground">
+                    <div className="text-xs text-muted-foreground">
                       {c.docsFiled} / {c.docsTotal}
                     </div>
                     <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-secondary">

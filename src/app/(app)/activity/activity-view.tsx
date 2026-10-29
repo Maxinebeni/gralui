@@ -44,10 +44,10 @@ export function ActivityView() {
                 className="grid gap-2 py-4 hover:opacity-80 sm:grid-cols-[220px_minmax(0,1fr)_auto] sm:items-center sm:gap-6"
               >
                 <Person name={a.who} />
-                <span className="min-w-0 text-xs text-foreground">{a.what}</span>
+                <span className="min-w-0 text-sm text-foreground">{a.what}</span>
                 <span className="flex items-center gap-3">
                   <Chip tone="sky">{a.module}</Chip>
-                  <span className="w-24 text-right text-[11px] text-muted-foreground">{timeAgo(a.at)}</span>
+                  <span className="w-24 text-right text-xs text-muted-foreground">{timeAgo(a.at)}</span>
                 </span>
               </Link>
             </li>

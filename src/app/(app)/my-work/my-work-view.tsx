@@ -153,20 +153,20 @@ export function MyWorkView() {
                   onClick={() => (opensRecord(t) ? router.push(recordHref(t.resourceType, t.resourceId)) : setSelected(t))}
                 >
                   <Td>
-                    <div className={cn("max-w-[280px] text-xs font-medium", t.status === "DONE" && "text-muted-foreground line-through")}>
+                    <div className={cn("max-w-[280px] text-sm font-medium", t.status === "DONE" && "text-muted-foreground line-through")}>
                       {t.title}
                     </div>
-                    {t.detail ? <div className="max-w-[280px] truncate text-[11px] text-muted-foreground">{t.detail}</div> : null}
+                    {t.detail ? <div className="max-w-[280px] truncate text-xs text-muted-foreground">{t.detail}</div> : null}
                   </Td>
                   <Td>
-                    <div className="text-xs whitespace-nowrap">{t.resourceRef}</div>
-                    <div className="max-w-[160px] truncate text-[11px] text-muted-foreground">{t.client ?? ""}</div>
+                    <div className="text-sm whitespace-nowrap">{t.resourceRef}</div>
+                    <div className="max-w-[160px] truncate text-xs text-muted-foreground">{t.client ?? ""}</div>
                   </Td>
                   <Td>
                     <Chip tone={t.source === "MANUAL" ? "neutral" : "sky"}>{TYPE_LABEL[t.type]}</Chip>
                   </Td>
                   <Td>
-                    <div className="max-w-[150px] truncate">{t.owner ? <Person name={t.owner} /> : <span className="text-xs">{t.ownerRole}</span>}</div>
+                    <div className="max-w-[150px] truncate">{t.owner ? <Person name={t.owner} /> : <span className="text-sm">{t.ownerRole}</span>}</div>
                   </Td>
                   <Td>
                     {t.status === "DONE" ? (
@@ -185,7 +185,7 @@ export function MyWorkView() {
                             e.stopPropagation();
                             setSelected(t);
                           }}
-                          className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                          className="text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground"
                         >
                           Reassign
                         </button>
@@ -196,7 +196,7 @@ export function MyWorkView() {
               ))}
               {rows.length === 0 ? (
                 <tr>
-                  <Td className="text-xs text-muted-foreground" colSpan={6}>
+                  <Td className="text-sm text-muted-foreground" colSpan={6}>
                     {tab === "Mine" ? "Nothing assigned to you right now." : "No tasks in this view."}
                   </Td>
                 </tr>
