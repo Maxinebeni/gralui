@@ -23,6 +23,7 @@ import type {
 export const CLIENTS: Client[] = [
   {
     id: "CLT-001",
+    createdAt: "2024-03-12",
     name: "Kigali Steel Industries Ltd",
     type: "Corporate",
     sector: "Manufacturing",
@@ -70,6 +71,7 @@ export const CLIENTS: Client[] = [
   },
   {
     id: "CLT-002",
+    createdAt: "2024-07-01",
     name: "Rwanda Energy Group",
     type: "State Enterprise",
     sector: "Energy & Utilities",
@@ -114,6 +116,7 @@ export const CLIENTS: Client[] = [
   },
   {
     id: "CLT-003",
+    createdAt: "2025-01-20",
     name: "Bralirwa PLC",
     type: "Corporate",
     sector: "Retail & FMCG",
@@ -148,6 +151,7 @@ export const CLIENTS: Client[] = [
   },
   {
     id: "CLT-004",
+    createdAt: `${todayIso().slice(0, 8)}01`,
     name: "Bank of Kigali",
     type: "Financial Institution",
     sector: "Banking & Finance",
@@ -182,6 +186,7 @@ export const CLIENTS: Client[] = [
   },
   {
     id: "CLT-005",
+    createdAt: todayIso(),
     name: "Horizon Logistics Rwanda",
     type: "SME",
     sector: "Transport & Logistics",

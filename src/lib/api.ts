@@ -171,6 +171,7 @@ type ClientView = {
   managerId?: string;
   restricted: boolean;
   version: number;
+  createdAt?: string;
 };
 
 type ClientSummary = {
@@ -249,6 +250,7 @@ function toClient(v: ClientView, managers: ManagerChoice[]): Client {
     uuid: v.id,
     version: v.version,
     managerId: v.managerId,
+    createdAt: v.createdAt?.slice(0, 10),
     name: v.profile.registeredName,
     type: TYPE_FROM_BACKEND[v.profile.type] ?? "Corporate",
     sector: v.profile.sector,

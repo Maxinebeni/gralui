@@ -4,6 +4,7 @@
 
 import type { ClientInput } from "./api";
 import { CLIENTS } from "./mock-data";
+import { todayIso } from "./renewals";
 import type { Client } from "./types";
 
 function sameText(a: string, b: string): boolean {
@@ -44,6 +45,7 @@ export async function mockCreateClient(input: ClientInput): Promise<Client> {
   }
   const client: Client = {
     id: nextClientId(),
+    createdAt: todayIso(),
     name: input.name,
     type: input.type,
     sector: input.sector,

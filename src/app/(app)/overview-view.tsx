@@ -1,23 +1,9 @@
 "use client";
 
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { LucideIcon } from "lucide-react";
-import {
-  AlertTriangle,
-  BadgeCheck,
-  CalendarClock,
-  CheckCircle2,
-  ClipboardList,
-  FileWarning,
-  Stamp,
-  Timer,
-  UserPlus,
-  Wallet,
-} from "lucide-react";
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader } from "@/components/gral/shell";
 import {
   ChartCard,
@@ -26,27 +12,35 @@ import {
   FloatCard,
   NavyButton,
   Person,
+  SegmentedTabs,
   StageBar,
   StatTile,
 } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
 import { formatRwf, timeAgo } from "@/lib/format";
-import {
-  activityFrom,
-  claimsPerMonth,
-  getClaimSteps,
-  toClaimSummary,
-} from "@/lib/api";
-import { useApprovals, useClaims, useClients, useLeads, useRenewals } from "@/lib/queries";
+import { activityFrom, toClaimSummary } from "@/lib/api";
+import { useClaims, useClients, useRenewals } from "@/lib/queries";
 import { isClosed } from "@/lib/claims";
-import { canDecide } from "@/lib/approvals";
-import { leadHealth, trackHealth } from "@/lib/onboarding";
 import { useCurrentUser } from "@/lib/auth-context";
 import { canAccessPath } from "@/lib/permissions";
-import { currentMilestone, daysOverdue, daysToExpiry, renewalHealth } from "@/lib/renewals";
-import type { ActivityItem, Client, ClientClaim, Lead, PolicyTrack, RenewalCase, Role } from "@/lib/types";
-
-type Tile = { icon: LucideIcon; label: string; value: string; delta?: string; tone?: "up" | "down"; href: string };
+import { currentMilestone, daysBetween, daysOverdue, daysToExpiry, formatDate, renewalHealth, todayIso } from "@/lib/renewals";
+import {
+  claimsByStatus,
+  claimsOpenedThisMonth,
+  clientsByCategory,
+  expiringBetween,
+  hasActivePolicy,
+  inForce,
+  newThisMonth,
+  overdueClaims,
+  overdueRenewals,
+  policyRows,
+  settledPerMonth,
+  topClientsByPremium,
+  unpaidPolicies,
+  type PolicyRow,
+} from "@/lib/dashboard";
+import type { ActivityItem, Claim, Client, ClientClaim, RenewalCase, Role } from "@/lib/types";
 
 type Attention = {
   dot: "red" | "amber" | "blue";
@@ -139,127 +133,43 @@ function buildAttention(claims: ClientClaim[], renewals: RenewalCase[], clients:
   return items.sort((a, b) => rank[a.dot] - rank[b.dot]);
 }
 
-/**
- * Each tile and card needs the same access as the page it opens, so people
- * only see figures from parts of the system they work in. Their data is only
- * loaded when it can be shown.
- */
-type Access = { claims: boolean; renewals: boolean; clients: boolean; leads: boolean; approvals: boolean };
+/** GRAL's three dashboard views. Each needs the same access as the page it reports on. */
+const VIEWS = ["Renewals", "Clients", "Claims"] as const;
+type View = (typeof VIEWS)[number];
 
-type TileKey =
-  | "openClaims"
-  | "slaBreached"
-  | "renewals30"
-  | "renewalsQuarter"
-  | "incompleteFiles"
-  | "kycComplete"
-  | "kycPending"
-  | "docsExpiring"
-  | "nonCompliant"
-  | "openLeads"
-  | "leadsOverdue"
-  | "approvalsWaiting"
-  | "claimsAwaitingPayment"
-  | "premiumDue"
-  | "settledThisMonth"
-  | "outstandingInvoices";
+/** Roles that open on Claims; everyone else opens on Renewals, the view GRAL said matters most. */
+const CLAIMS_FIRST: readonly Role[] = ["Technical Director", "Claims Manager", "Claims Underwriter"];
 
-/** Each role's preferred tiles, first to last. Tiles the person cannot open are skipped and the default list fills the gaps. */
-const ROLE_TILES: Partial<Record<Role, TileKey[]>> = {
-  MD: ["approvalsWaiting", "openClaims", "renewals30", "openLeads"],
-  DMD: ["approvalsWaiting", "openClaims", "renewals30", "openLeads"],
-  "Technical Director": ["openClaims", "slaBreached", "approvalsWaiting", "renewals30"],
-  "Commercial Director": ["renewalsQuarter", "openLeads", "leadsOverdue", "renewals30"],
-  "Finance Director": ["claimsAwaitingPayment", "premiumDue", "settledThisMonth", "outstandingInvoices"],
-  "Risk & Compliance Manager": ["kycComplete", "kycPending", "docsExpiring", "nonCompliant"],
-  "Claims Manager": ["openClaims", "slaBreached", "approvalsWaiting"],
-  "Claims Underwriter": ["openClaims", "slaBreached"],
-  "Accounts Executive": ["renewals30", "openLeads", "incompleteFiles", "openClaims"],
-  "CRM Manager": ["openLeads", "leadsOverdue", "incompleteFiles", "renewals30"],
-  "Client Relation Records Officer": ["incompleteFiles", "docsExpiring", "openLeads"],
-  "GI Underwriting Manager": ["renewals30", "openLeads", "openClaims"],
-};
-const DEFAULT_TILES: TileKey[] = ["openClaims", "slaBreached", "renewals30", "incompleteFiles", "openLeads", "approvalsWaiting"];
+const clientHref = (id: string) => `/clients?client=${encodeURIComponent(id)}`;
 
 export function OverviewView() {
   const router = useRouter();
   const { user } = useCurrentUser();
   const role = user.role;
 
-  const access: Access = {
-    claims: canAccessPath(user, "/claims"),
-    renewals: canAccessPath(user, "/renewals"),
-    clients: canAccessPath(user, "/clients"),
-    leads: canAccessPath(user, "/clients/leads"),
-    approvals: canAccessPath(user, "/approvals"),
-  };
-  const { claims: canClaims, renewals: canRenewals, clients: canClients, leads: canLeads, approvals: canApprovals } = access;
+  const canClaims = canAccessPath(user, "/claims");
+  const canRenewals = canAccessPath(user, "/renewals");
+  const canClients = canAccessPath(user, "/clients");
 
   // Everything comes from the shared lists, so the pages behind these cards open at once.
+  // Renewal figures are worked out from client policies, so they need the client list too.
   const claimsQuery = useClaims(canClaims);
-  const clientsQuery = useClients("", canClients);
+  const clientsQuery = useClients("", canClients || canRenewals);
   const renewalsQuery = useRenewals(canRenewals);
-  const leadsQuery = useLeads(canLeads);
-  const approvalsQuery = useApprovals(role, canApprovals);
-  const { data: steps = [] } = useQuery({ queryKey: ["claimSteps"], queryFn: () => getClaimSteps(), enabled: canClaims, staleTime: Infinity });
 
-  const allClaims = useMemo(() => (canClaims ? (claimsQuery.data ?? []) : []), [canClaims, claimsQuery.data]);
-  const claims: ClientClaim[] = useMemo(() => allClaims.filter((c) => !isClosed(c)).map(toClaimSummary), [allClaims]);
-  const monthly = useMemo(() => claimsPerMonth(allClaims), [allClaims]);
-  const clients: Client[] = canClients ? (clientsQuery.data ?? []) : [];
+  const allClaims: Claim[] = useMemo(() => (canClaims ? (claimsQuery.data ?? []) : []), [canClaims, claimsQuery.data]);
+  const openClaims: ClientClaim[] = useMemo(() => allClaims.filter((c) => !isClosed(c)).map(toClaimSummary), [allClaims]);
+  const clients: Client[] = useMemo(() => clientsQuery.data ?? [], [clientsQuery.data]);
   const renewals: RenewalCase[] = useMemo(() => (canRenewals ? (renewalsQuery.data ?? []) : []), [canRenewals, renewalsQuery.data]);
-  const leads: Lead[] = canLeads ? (leadsQuery.data?.leads ?? []) : [];
-  const tracks: PolicyTrack[] = canLeads ? (leadsQuery.data?.tracks ?? []) : [];
-  const waiting = canApprovals ? (approvalsQuery.data ?? []).filter((r) => canDecide(r, role)).length : 0;
   const activity: ActivityItem[] = useMemo(() => activityFrom(allClaims, renewals).slice(0, 5), [allClaims, renewals]);
 
-  const now = new Date();
-  const firstName = user.name.split(" ")[0];
-  const today = now.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-
-  const breached = claims.filter((c) => c.sla === "breached").length;
-  const dueIn30 = renewals.filter((r) => daysToExpiry(r) >= 0 && daysToExpiry(r) <= 30).length;
-  const dueIn90 = renewals.filter((r) => daysToExpiry(r) >= 0 && daysToExpiry(r) <= 90);
-  const incompleteFiles = clients.filter((c) => c.docsFiled < c.docsTotal).length;
-  const kycComplete = clients.filter((c) => c.kyc).length;
-  const nonCompliant = clients.filter((c) => c.nonCompliant).length;
-  const expiringDocs = clients.flatMap((c) => c.documents).filter((d) => d.status === "soon").length;
-  const pipelineValue = claims.reduce((s, c) => s + c.amount, 0);
-  const renewalPremium = dueIn90.reduce((s, r) => s + r.premium, 0);
-  const completeFiles = clients.filter((c) => c.docsFiled === c.docsTotal && !c.nonCompliant).length;
-  const openLeads = leads.filter((l) => l.status === "OPEN");
-
-  const catalog: Record<TileKey, Tile & { needs: keyof Access }> = {
-    openClaims: { icon: ClipboardList, label: "Open Claims", value: String(claims.length), href: "/claims", needs: "claims" },
-    slaBreached: { icon: AlertTriangle, label: "SLA Breached", value: String(breached), tone: "down", href: "/claims", needs: "claims" },
-    renewals30: { icon: CalendarClock, label: "Renewals Due in 30 Days", value: String(dueIn30), href: "/renewals", needs: "renewals" },
-    renewalsQuarter: { icon: CalendarClock, label: "Renewals This Quarter", value: String(dueIn90.length), href: "/renewals", needs: "renewals" },
-    incompleteFiles: { icon: FileWarning, label: "Clients with Incomplete Files", value: String(incompleteFiles), href: "/clients", needs: "clients" },
-    kycComplete: { icon: BadgeCheck, label: "KYC Complete", value: String(kycComplete), href: "/clients", needs: "clients" },
-    kycPending: { icon: Timer, label: "KYC Pending", value: String(clients.length - kycComplete), href: "/clients", needs: "clients" },
-    docsExpiring: { icon: CalendarClock, label: "Documents Expiring Soon", value: String(expiringDocs), href: "/clients", needs: "clients" },
-    nonCompliant: { icon: AlertTriangle, label: "Non-Compliant", value: String(nonCompliant), tone: "down", href: "/clients", needs: "clients" },
-    openLeads: { icon: UserPlus, label: "Open Leads", value: String(openLeads.length), href: "/clients/leads", needs: "leads" },
-    leadsOverdue: {
-      icon: AlertTriangle,
-      label: "Onboarding Steps Overdue",
-      value: String(openLeads.filter((l) => leadHealth(l) === "overdue").length + tracks.filter((t) => trackHealth(t) === "overdue").length),
-      tone: "down",
-      href: "/clients/leads",
-      needs: "leads",
-    },
-    approvalsWaiting: { icon: Stamp, label: "Approvals Waiting for You", value: String(waiting), href: "/approvals", needs: "approvals" },
-    // Sample values until the finance figures come from the backend.
-    claimsAwaitingPayment: { icon: Wallet, label: "Claims Awaiting Payment", value: "RWF 12.7m", href: "/claims", needs: "claims" },
-    premiumDue: { icon: Wallet, label: "Premium Due", value: `RWF ${(renewalPremium / 1000000).toFixed(1)}m`, href: "/renewals", needs: "renewals" },
-    settledThisMonth: { icon: Wallet, label: "Settled This Month", value: "RWF 31.4m", href: "/claims", needs: "claims" },
-    outstandingInvoices: { icon: Wallet, label: "Outstanding Invoices", value: "6", href: "/renewals", needs: "renewals" },
-  };
-  const tileKeys = [...new Set([...(ROLE_TILES[role as Role] ?? []), ...DEFAULT_TILES])].filter((k) => access[catalog[k].needs]);
-  const tiles = tileKeys.slice(0, 4).map((k) => catalog[k]);
+  const views = VIEWS.filter((v) => (v === "Renewals" ? canRenewals : v === "Clients" ? canClients : canClaims));
+  const preferred: View = CLAIMS_FIRST.includes(role as Role) ? "Claims" : "Renewals";
+  const [picked, setPicked] = useState<View | null>(null);
+  const view = picked && views.includes(picked) ? picked : views.includes(preferred) ? preferred : views[0];
 
   const attention = useMemo(() => {
-    let list = buildAttention(claims, renewals, clients);
+    let list = buildAttention(openClaims, renewals, canClients ? clients : []);
     if (role === "MD" || role === "DMD") {
       list = [...list].sort((a, b) => Number(b.kind === "approval") - Number(a.kind === "approval"));
     } else if (role === "Technical Director") {
@@ -272,33 +182,27 @@ export function OverviewView() {
       list = list.filter((a) => a.kind !== "compliance");
     }
     return list;
-  }, [claims, renewals, clients, role]);
+  }, [openClaims, renewals, clients, canClients, role]);
 
-
-  const stepCounts = steps.map((s) => ({
-    label: s.name === "FNOL Received" ? "FNOL" : s.name === "Documentation" ? "Docs" : s.name,
-    count: claims.filter((c) => c.step === s.n).length,
-  }));
-
-  const nothingToShow = !canClaims && !canRenewals && !canClients && !canLeads && !canApprovals;
+  const now = new Date();
+  const firstName = user.name.split(" ")[0];
+  const today = now.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
   return (
     <>
       <PageHeader title={`${greeting(now.getHours())}, ${firstName}`} subtitle={today} />
 
-      {tiles.length > 0 ? (
-        <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {tiles.map((t, i) => (
-            <Link key={t.label} href={t.href} className="block">
-              <div className="lift-card">
-                <StatTile icon={t.icon} label={t.label} value={t.value} delta={t.delta} tone={t.tone} delay={i * 60} />
-              </div>
-            </Link>
-          ))}
+      {views.length > 1 ? (
+        <div className="mt-5 grid justify-items-start">
+          <SegmentedTabs tabs={views} value={view!} onChange={setPicked} />
         </div>
       ) : null}
 
-      {nothingToShow ? (
+      {view === "Renewals" ? <RenewalsView clients={clients} /> : null}
+      {view === "Clients" ? <ClientsView clients={clients} /> : null}
+      {view === "Claims" ? <ClaimsView claims={allClaims} /> : null}
+
+      {!view ? (
         <FloatCard className="mt-5 p-5" delay={60}>
           <h2 className="text-base font-semibold tracking-tight">Your work</h2>
           <p className="mt-2 text-xs text-muted-foreground">
@@ -310,158 +214,390 @@ export function OverviewView() {
         </FloatCard>
       ) : null}
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
-        <div className="min-w-0 space-y-4">
-          {canClaims || canRenewals || canClients ? (
-            <FloatCard className="p-4 sm:p-5" delay={120}>
-              <h2 className="text-base font-semibold tracking-tight">Needs Your Attention</h2>
-              {attention.length === 0 ? (
-                <p className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
-                  <CheckCircle2 className="size-4 text-success" /> You&apos;re all caught up.
-                </p>
-              ) : (
-                <div className="mt-3 divide-y divide-border">
-                  {attention.slice(0, 7).map((a) => (
-                    <div key={a.text} className="grid gap-2 py-3 first:pt-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                      <div className="flex min-w-0 items-center gap-2.5">
-                        <span
-                          className={cn(
-                            "size-2 shrink-0 rounded-full",
-                            a.dot === "red" && "bg-danger",
-                            a.dot === "amber" && "bg-warning",
-                            a.dot === "blue" && "bg-sky",
-                          )}
-                        />
-                        <span className="text-xs text-foreground">{a.text}</span>
-                      </div>
-                      <div className="flex min-w-0 flex-wrap items-center gap-2 pl-4 sm:shrink-0 sm:justify-end sm:pl-0">
-                        <Chip tone="sky">{a.module}</Chip>
-                        <span className="text-[11px] text-muted-foreground">{a.when}</span>
-                        <NavyButton onClick={() => router.push(a.href)}>{a.action}</NavyButton>
-                      </div>
+      {view ? (
+        <Row>
+          <FloatCard className="p-4 sm:p-5" delay={300}>
+            <h2 className="text-base font-semibold tracking-tight">Needs Your Attention</h2>
+            {attention.length === 0 ? (
+              <p className="mt-4 text-xs text-muted-foreground">You&apos;re all caught up.</p>
+            ) : (
+              <div className="mt-3 divide-y divide-border">
+                {attention.slice(0, 7).map((a) => (
+                  <div key={a.text} className="grid gap-2 py-3 first:pt-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <span
+                        className={cn(
+                          "size-2 shrink-0 rounded-full",
+                          a.dot === "red" && "bg-danger",
+                          a.dot === "amber" && "bg-warning",
+                          a.dot === "blue" && "bg-sky",
+                        )}
+                      />
+                      <span className="text-sm text-foreground">{a.text}</span>
                     </div>
-                  ))}
-                </div>
-              )}
-            </FloatCard>
-          ) : null}
-
-          {canClaims ? (
-            <FloatCard className="p-4 sm:p-5" delay={180}>
-              <h2 className="text-base font-semibold tracking-tight">Claims Pipeline</h2>
-              <div className="mt-4">
-                <StageBar stages={stepCounts} onSelect={() => router.push("/claims")} />
-              </div>
-              <p className="mt-4 text-[11px] text-muted-foreground">Total value in pipeline: {formatRwf(pipelineValue)}</p>
-            </FloatCard>
-          ) : null}
-
-          {canClaims ? (
-            <ChartCard
-              delay={280}
-              title="Claims per Month"
-              legend={[
-                { label: "Amount (RWF m)", tone: "sky" },
-                { label: "Number of claims", tone: "primary" },
-              ]}
-            >
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={monthly} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-                  <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" vertical={false} />
-                  <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
-                  <YAxis yAxisId="left" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
-                    tick={{ fontSize: 10, fill: "var(--subtle)" }}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", fontSize: 11 }} />
-                  <Line yAxisId="left" type="monotone" dataKey="amount" stroke="var(--sky)" strokeWidth={2} dot={false} name="Amount (RWF m)" />
-                  <Line yAxisId="right" type="monotone" dataKey="count" stroke="var(--primary)" strokeWidth={2} dot={false} name="Number of claims" />
-                </LineChart>
-              </ResponsiveContainer>
-            </ChartCard>
-          ) : null}
-
-          {canRenewals ? (
-            <FloatCard className="p-4 sm:p-5" delay={240}>
-              <h2 className="text-base font-semibold tracking-tight">Upcoming Renewals (next 90 days)</h2>
-              <div className="relative mt-8 mb-2 h-10">
-                <div className="absolute top-4 h-0.5 w-full rounded-full bg-border" />
-                {renewals
-                  .filter((r) => daysToExpiry(r) <= 90)
-                  .map((r) => {
-                    const pct = (Math.min(Math.max(daysToExpiry(r), 0), 90) / 90) * 100;
-                    const health = renewalHealth(r);
-                    const tone = health === "overdue" ? "bg-danger" : health === "due-soon" ? "bg-warning" : "bg-primary";
-                    return (
-                      <button
-                        key={r.id}
-                        type="button"
-                        onClick={() => router.push(`/renewals?case=${r.id}`)}
-                        aria-label={`${r.policyId} ${r.client}`}
-                        className="group absolute top-2.5"
-                        style={{ left: `calc(${pct}% - 5px)` }}
-                      >
-                        <span className={cn("block size-2.5 rounded-full ring-2 ring-card", tone)} />
-                        <span className="pointer-events-none absolute bottom-6 left-1/2 z-10 hidden w-44 -translate-x-1/2 rounded-xl border border-border bg-card p-2.5 text-left text-[11px] shadow-[var(--shadow-float)] group-hover:block sm:w-56">
-                          <span className="block font-medium">{r.policyId}</span>
-                          <span className="block text-muted-foreground">{r.client}</span>
-                          <span className="block text-muted-foreground">{formatRwf(r.premium)}</span>
-                          <span className="block text-muted-foreground">{currentMilestone(r)?.name ?? "Completed"}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                <span className="absolute top-7 left-0 text-[10px] text-subtle">Today</span>
-                <span className="absolute top-7 right-0 text-[10px] text-subtle">+90 days</span>
-              </div>
-              <p className="mt-4 text-[11px] text-muted-foreground">{formatRwf(renewalPremium)} in premium up for renewal</p>
-            </FloatCard>
-          ) : null}
-        </div>
-
-        <div className="min-w-0 space-y-4">
-          {canClients ? (
-            <FloatCard className="p-5" delay={220}>
-              <h2 className="text-base font-semibold tracking-tight">Client File Status</h2>
-              <DistributionRow
-                items={[
-                  { label: "Complete", value: String(completeFiles), tone: "success" },
-                  { label: "Partial", value: String(clients.length - completeFiles - nonCompliant), tone: "warning" },
-                  { label: "Non-Compliant", value: String(nonCompliant), tone: "danger" },
-                ]}
-              />
-            </FloatCard>
-          ) : null}
-
-
-          {!nothingToShow ? (
-            <FloatCard className="p-5" delay={340}>
-              <h2 className="text-base font-semibold tracking-tight">Recent Activity</h2>
-              {activity.length === 0 ? <p className="mt-4 text-xs text-muted-foreground">Nothing recorded yet.</p> : null}
-              <div className="mt-4 space-y-4">
-                {activity.map((a, i) => (
-                  <Link key={`${a.at}-${i}`} href={a.href} className="block min-w-0 hover:opacity-80">
-                    <Person name={a.who} />
-                    <p className="mt-1.5 text-[11px] text-muted-foreground">
-                      {a.what} · {timeAgo(a.at)}
-                    </p>
-                  </Link>
+                    <div className="flex min-w-0 flex-wrap items-center gap-2 pl-4 sm:shrink-0 sm:justify-end sm:pl-0">
+                      <Chip tone="sky">{a.module}</Chip>
+                      <span className="text-xs text-muted-foreground">{a.when}</span>
+                      <NavyButton onClick={() => router.push(a.href)}>{a.action}</NavyButton>
+                    </div>
+                  </div>
                 ))}
               </div>
-              <Link
-                href="/activity"
-                className="mt-4 inline-block text-xs font-semibold text-primary underline underline-offset-4 hover:opacity-70"
-              >
-                View all
-              </Link>
-            </FloatCard>
-          ) : null}
-        </div>
-      </div>
+            )}
+          </FloatCard>
+
+          <FloatCard className="p-5" delay={340}>
+            <h2 className="text-base font-semibold tracking-tight">Recent Activity</h2>
+            {activity.length === 0 ? <p className="mt-4 text-xs text-muted-foreground">Nothing recorded yet.</p> : null}
+            <div className="mt-4 space-y-4">
+              {activity.map((a, i) => (
+                <Link key={`${a.at}-${i}`} href={a.href} className="block min-w-0 hover:opacity-80">
+                  <Person name={a.who} />
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    {a.what} · {timeAgo(a.at)}
+                  </p>
+                </Link>
+              ))}
+            </div>
+            <Link
+              href="/activity"
+              className="mt-4 inline-block text-xs font-semibold text-primary underline underline-offset-4 hover:opacity-70"
+            >
+              View all
+            </Link>
+          </FloatCard>
+        </Row>
+      ) : null}
+
+      {view === "Claims" ? <SettledChart claims={allClaims} /> : null}
     </>
+  );
+}
+
+/* ---------------------------------- Shared ----------------------------------- */
+
+function Tiles({ items }: { items: { label: string; value: number | string; href: string }[] }) {
+  return (
+    <div className={cn("mt-4 grid gap-4 sm:grid-cols-2", items.length === 5 ? "xl:grid-cols-5" : "xl:grid-cols-4")}>
+      {items.map((t, i) => (
+        <Link key={t.label} href={t.href} className="block">
+          <div className="lift-card">
+            <StatTile label={t.label} value={String(t.value)} delay={i * 50} />
+          </div>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+/** Every row below the tiles: a wide card on the left and a side card on the right. */
+function Row({ children }: { children: ReactNode }) {
+  return <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">{children}</div>;
+}
+
+function SectionCard({
+  title,
+  delay = 0,
+  className,
+  children,
+}: {
+  title: ReactNode;
+  delay?: number;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <FloatCard className={cn("p-4 sm:p-5", className)} delay={delay}>
+      <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+      <div className="mt-3">{children}</div>
+    </FloatCard>
+  );
+}
+
+function Empty({ children }: { children: ReactNode }) {
+  return <p className="py-2 text-xs text-muted-foreground">{children}</p>;
+}
+
+/** A short list for the side cards: name and chip on top, details underneath. */
+function SideList<T>({
+  rows,
+  title,
+  chip,
+  detail,
+  href,
+  empty,
+}: {
+  rows: T[];
+  title: (row: T) => string;
+  chip: (row: T) => ReactNode;
+  detail: (row: T) => string;
+  href: (row: T) => string;
+  empty: string;
+}) {
+  if (rows.length === 0) return <Empty>{empty}</Empty>;
+  return (
+    <ul className="divide-y divide-border text-sm">
+      {rows.map((r, i) => (
+        <li key={i}>
+          <Link href={href(r)} className="block py-2.5 hover:bg-secondary/50">
+            <span className="flex items-center justify-between gap-2">
+              <span className="min-w-0 truncate font-medium">{title(r)}</span>
+              {chip(r)}
+            </span>
+            <span className="mt-0.5 block truncate text-xs text-muted-foreground">{detail(r)}</span>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** A list that is a table on wide screens and stacked rows on phones. */
+function Rows<T>({
+  head,
+  rows,
+  cols,
+  cells,
+  href,
+  empty,
+}: {
+  head: string[];
+  rows: T[];
+  /** Grid template for wide screens. */
+  cols: string;
+  cells: (row: T) => ReactNode[];
+  href: (row: T) => string;
+  empty: string;
+}) {
+  if (rows.length === 0) return <Empty>{empty}</Empty>;
+  return (
+    <div className="text-sm">
+      <div className="hidden gap-3 border-b border-border pb-2 text-[11px] font-medium text-muted-foreground sm:grid" style={{ gridTemplateColumns: cols }}>
+        {head.map((h) => (
+          <span key={h}>{h}</span>
+        ))}
+      </div>
+      <ul className="divide-y divide-border">
+        {rows.map((r, i) => (
+          <li key={i}>
+            <Link
+              href={href(r)}
+              className="grid grid-cols-2 gap-x-3 gap-y-1 py-2.5 hover:bg-secondary/50 sm:grid-cols-[var(--cols)] sm:items-center"
+              style={{ ["--cols" as string]: cols }}
+            >
+              {cells(r).map((c, j) => (
+                <span key={j} className={cn("min-w-0 truncate", j === 0 && "col-span-2 font-medium sm:col-span-1")}>
+                  {c}
+                </span>
+              ))}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function DaysChip({ days }: { days: number }) {
+  if (days < 0) return <Chip tone="danger">{-days}d overdue</Chip>;
+  if (days === 0) return <Chip tone="danger">Today</Chip>;
+  return <Chip tone={days <= 14 ? "danger" : days <= 30 ? "warning" : "neutral"}>{days}d left</Chip>;
+}
+
+const POLICY_HEAD = ["Client", "Policy number", "Class", "Expiry date", ""];
+const POLICY_COLS = "minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.2fr) minmax(0,0.9fr) 6.5rem";
+const policyCells = (r: PolicyRow) => [r.client, r.policy.id, r.policy.classOfInsurance, formatDate(r.expiry), <DaysChip key="d" days={r.daysLeft} />];
+
+/* --------------------------------- Renewals ---------------------------------- */
+
+function RenewalsView({ clients }: { clients: Client[] }) {
+  const today = todayIso();
+  const rows = useMemo(() => policyRows(clients, today), [clients, today]);
+  const due30 = expiringBetween(rows, 0, 30);
+  const due60 = expiringBetween(rows, 31, 60);
+  const overdue = overdueRenewals(rows);
+  const unpaid = unpaidPolicies(rows, today);
+
+  return (
+    <>
+      <Tiles
+        items={[
+          { label: "Total Active Policies", value: inForce(rows).length, href: "/clients" },
+          { label: "Expiring in Next 30 Days", value: due30.length, href: "/renewals" },
+          { label: "Expiring in 31-60 Days", value: due60.length, href: "/renewals" },
+          { label: "Overdue Renewals", value: overdue.length, href: "/renewals" },
+          { label: "Unpaid Policies", value: unpaid.length, href: "/clients" },
+        ]}
+      />
+
+      <Row>
+        <SectionCard title="Expiring in the Next 30 Days" delay={120}>
+          <Rows head={POLICY_HEAD} rows={due30} cols={POLICY_COLS} cells={policyCells} href={(r) => clientHref(r.clientId)} empty="None." />
+        </SectionCard>
+        <SectionCard title="Overdue Renewals" delay={160}>
+          <SideList
+            rows={overdue}
+            title={(r) => r.client}
+            chip={(r) => <DaysChip days={r.daysLeft} />}
+            detail={(r) => `${r.policy.id} · ${r.policy.classOfInsurance} · expired ${formatDate(r.expiry)}`}
+            href={(r) => clientHref(r.clientId)}
+            empty="None."
+          />
+        </SectionCard>
+      </Row>
+
+      <Row>
+        <SectionCard title="Expiring in 31-60 Days" delay={200}>
+          <Rows head={POLICY_HEAD} rows={due60} cols={POLICY_COLS} cells={policyCells} href={(r) => clientHref(r.clientId)} empty="None." />
+        </SectionCard>
+        <SectionCard title="Unpaid Policies" delay={240}>
+          <SideList
+            rows={unpaid}
+            title={(r) => r.client}
+            chip={(r) => <span className="shrink-0 font-medium">{formatRwf(r.balance ?? 0)}</span>}
+            detail={(r) => `${r.policy.id} · cover started ${r.policy.start}`}
+            href={(r) => clientHref(r.clientId)}
+            empty="None."
+          />
+        </SectionCard>
+      </Row>
+    </>
+  );
+}
+
+/* ---------------------------------- Clients ---------------------------------- */
+
+function ClientsView({ clients }: { clients: Client[] }) {
+  const today = todayIso();
+  const active = clients.filter((c) => hasActivePolicy(c, today));
+  const noPolicy = clients.filter((c) => !hasActivePolicy(c, today));
+  const fresh = newThisMonth(clients, today);
+  const top = topClientsByPremium(clients, 15, today);
+  const categories = clientsByCategory(clients);
+  const completeFiles = clients.filter((c) => c.docsFiled === c.docsTotal && !c.nonCompliant).length;
+  const nonCompliant = clients.filter((c) => c.nonCompliant).length;
+
+  return (
+    <>
+      <Tiles
+        items={[
+          { label: "Total Active Clients", value: active.length, href: "/clients" },
+          { label: "New Clients This Month", value: fresh.length, href: "/clients" },
+          { label: "Clients with No Active Policy", value: noPolicy.length, href: "/clients" },
+          { label: "SLA Agreements Due", value: "–", href: "/clients" },
+        ]}
+      />
+
+      <Row>
+        <SectionCard title="Top Clients by Premium" delay={120}>
+          <Rows
+            head={["#", "Client", "Category", "Premium"]}
+            rows={top.map((t, i) => ({ ...t, rank: i + 1 }))}
+            cols="2rem minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)"
+            cells={(t) => [t.rank, t.client.name, t.client.type, <span key="p" className="font-medium">{formatRwf(t.premium)}</span>]}
+            href={(t) => clientHref(t.client.id)}
+            empty="None."
+          />
+        </SectionCard>
+
+        <div className="min-w-0 space-y-4">
+          <SectionCard title="Clients by Category" delay={160}>
+            <StageBar wideLabels stages={categories} />
+          </SectionCard>
+          <SectionCard title="Client File Status" delay={200}>
+            <DistributionRow
+              items={[
+                { label: "Complete", value: String(completeFiles), tone: "success" },
+                { label: "Partial", value: String(clients.length - completeFiles - nonCompliant), tone: "warning" },
+                { label: "Non-Compliant", value: String(nonCompliant), tone: "danger" },
+              ]}
+            />
+          </SectionCard>
+        </div>
+      </Row>
+
+      <Row>
+        <SectionCard title="Clients with No Active Policy" delay={240}>
+          <Rows
+            head={["Client", "Category", "Account manager"]}
+            rows={noPolicy}
+            cols="minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.2fr)"
+            cells={(c) => [c.name, c.type, c.manager || "Not assigned"]}
+            href={(c) => clientHref(c.id)}
+            empty="None."
+          />
+        </SectionCard>
+        <SectionCard title="SLA Agreements Due for Renewal" delay={280}>
+          <Empty>Not recorded yet.</Empty>
+        </SectionCard>
+      </Row>
+    </>
+  );
+}
+
+/* ---------------------------------- Claims ----------------------------------- */
+
+function ClaimsView({ claims }: { claims: Claim[] }) {
+  const router = useRouter();
+  const today = todayIso();
+  const open = claims.filter((c) => !isClosed(c));
+  const overdue = overdueClaims(claims, today);
+  const monthly = settledPerMonth(claims, 6, today);
+
+  return (
+    <>
+      <Tiles
+        items={[
+          { label: "Total Open Claims", value: open.length, href: "/claims" },
+          { label: "Claims Opened This Month", value: claimsOpenedThisMonth(claims, today).length, href: "/claims" },
+          { label: "Overdue Claims", value: overdue.length, href: "/claims" },
+          { label: "Claims Settled This Month", value: monthly.at(-1)?.count ?? 0, href: "/claims" },
+        ]}
+      />
+
+      <Row>
+        <SectionCard title="Overdue Claims" delay={120}>
+          <Rows
+            head={["Claim", "Client", "Class", "Reported", ""]}
+            rows={overdue}
+            cols="minmax(0,1fr) minmax(0,1.6fr) minmax(0,1.2fr) minmax(0,0.9fr) 6.5rem"
+            cells={(c) => [
+              c.id,
+              c.client,
+              c.classOfInsurance,
+              formatDate(c.dateReported),
+              <Chip key="d" tone="danger">
+                {daysBetween(c.dateReported, today)} days open
+              </Chip>,
+            ]}
+            href={(c) => `/claims?claim=${encodeURIComponent(c.id)}`}
+            empty="None."
+          />
+        </SectionCard>
+        <SectionCard title="Claims by Status" delay={160}>
+          <StageBar wideLabels stages={claimsByStatus(claims)} onSelect={() => router.push("/claims")} />
+        </SectionCard>
+      </Row>
+    </>
+  );
+}
+
+/** Sits below Needs Your Attention and Recent Activity on the Claims view. */
+function SettledChart({ claims }: { claims: Claim[] }) {
+  const monthly = settledPerMonth(claims, 6, todayIso());
+  return (
+    <div className="mt-4">
+      <ChartCard delay={380} title="Claims Settled per Month" legend={[]} height={200}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={monthly} margin={{ top: 4, right: 8, left: -24, bottom: 0 }}>
+            <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" vertical={false} />
+            <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
+            <Tooltip cursor={{ fill: "var(--secondary)" }} contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", fontSize: 11 }} />
+            <Bar dataKey="count" name="Claims settled" fill="var(--primary)" radius={[6, 6, 0, 0]} maxBarSize={36} />
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartCard>
+    </div>
   );
 }

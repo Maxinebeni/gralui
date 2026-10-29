@@ -82,6 +82,8 @@ export type Client = {
   version?: number;
   /** Backend ID of the assigned relationship manager. */
   managerId?: string;
+  /** ISO date the client was added to the system. Older sample records may not have it. */
+  createdAt?: string;
   name: string;
   type: ClientType;
   sector: string;
