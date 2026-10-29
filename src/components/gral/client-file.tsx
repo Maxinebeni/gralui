@@ -13,8 +13,9 @@ import type { Client, ClientClaim, Policy } from "@/lib/types";
 import { Chip, Dot, NavyButton, NotRecorded, OutlineButton, Recorded, SegmentedTabs, TextLink } from "./ui";
 import { PolicyForm } from "./policy-form";
 import { DocumentPanel } from "./documents";
+import { ContactsPanel, InteractionsPanel } from "./client-records";
 
-const TABS = ["KYC & Compliance", "Policies", "Claims", "Correspondence"] as const;
+const TABS = ["KYC & Compliance", "Policies", "Claims", "Contacts", "Interactions"] as const;
 export type ClientFileTab = (typeof TABS)[number];
 
 export function ClientFile({
@@ -45,7 +46,7 @@ export function ClientFile({
   const { canUpload: canUploadDocuments, canReplace: canReplaceDocuments } = documentPermissions(user);
   const { canFlagNonCompliant, seesDocumentDetail } = clientPermissions(user.role);
   // Edit Client follows CLIENT_UPDATE; Add and Edit Policy follow POLICY_CREATE.
-  const { canEditClient, canAddPolicy, canEditPolicy } = clientEditPermissions(user);
+  const { canEditClient, canAddPolicy, canEditPolicy, canEditContacts, canRecordInteraction } = clientEditPermissions(user);
 
   useEffect(() => {
     let cancelled = false;
@@ -355,24 +356,9 @@ export function ClientFile({
           </div>
         ) : null}
 
-        {tab === "Correspondence" ? (
-          <div className="mt-6 space-y-2.5">
-            {client.correspondence.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No correspondence on record yet.</p>
-            ) : null}
-            {client.correspondence.map((c) => (
-              <div key={c.subject} className="rounded-xl border border-border px-3 py-2.5">
-                <p className="text-xs font-medium">{c.subject}</p>
-                <p className="text-[11px] text-muted-foreground">
-                  {c.date} · {c.channel}
-                </p>
-              </div>
-            ))}
-            <OutlineButton onClick={() => toast.success("Correspondence entry added.")}>
-              <Plus className="size-3.5" /> Add
-            </OutlineButton>
-          </div>
-        ) : null}
+        {tab === "Contacts" ? <ContactsPanel client={client} canEdit={canEditContacts && !!onChanged} onChanged={onChanged} /> : null}
+
+        {tab === "Interactions" ? <InteractionsPanel client={client} canRecord={canRecordInteraction} /> : null}
       </div>
     </div>
   );

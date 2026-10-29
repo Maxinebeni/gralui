@@ -87,7 +87,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const inboxQuery = useQuery({
     queryKey: inboxKey,
     queryFn: getNotificationInbox,
-    enabled: !MOCK_AUTH && !!user.id,
+    enabled: MOCK_AUTH || !!user.id,
     refetchInterval: 30_000,
   });
 
@@ -153,7 +153,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="mx-auto max-w-[1280px] px-3 py-4 sm:px-6 sm:py-6">
+      <div className="mx-auto max-w-[1280px] px-3 pt-6 pb-4 sm:px-6 sm:py-6">
         {/* Phones: logo + icons on row 1, full-width scrollable menu on row 2. */}
         <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-4 lg:flex lg:justify-between">
           <Link href="/" className="flex min-w-0 items-center">
@@ -277,6 +277,10 @@ export function Shell({ children }: { children: ReactNode }) {
                     </DropdownMenuItem>
                   ))}
                 </div>
+                <div className="my-1 h-px bg-border" />
+                <DropdownMenuItem onSelect={() => router.push("/notifications")} className="rounded-xl px-3 py-2 text-xs font-semibold text-primary">
+                  See all notifications
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
             <Link
@@ -469,7 +473,8 @@ export function SlideOver({
 }
 
 /** Backend notifications carry no link, so each opens the area its type belongs to. */
-function notificationHref(type: string) {
+/** The page a notification opens, from its type. */
+export function notificationHref(type: string) {
   const t = type.toUpperCase();
   if (t.includes("APPROVAL")) return "/approvals";
   if (t.includes("RENEWAL")) return "/renewals";

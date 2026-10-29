@@ -98,6 +98,7 @@ export function KycReviewPage({ review: r, history, onChanged }: { review: KycRe
           </span>
         </div>
         {r.decisionReason ? <p className="mt-2 text-xs">Decision note: “{r.decisionReason}”</p> : null}
+        <KycStages review={r} youPrepare={perms.canPrepareKyc} youReview={assigned} />
       </FloatCard>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
@@ -184,6 +185,34 @@ export function KycReviewPage({ review: r, history, onChanged }: { review: KycRe
         </div>
       </div>
     </>
+  );
+}
+
+/** The three parts of a KYC review, who does each, and where this one is. */
+function KycStages({ review: r, youPrepare, youReview }: { review: KycReview; youPrepare: boolean; youReview: boolean }) {
+  const decided = r.status === "APPROVED" || r.status === "REJECTED";
+  const submitted = r.status === "SUBMITTED" || decided;
+  const stages = [
+    { name: "Documents", owner: "Accounts Executive", you: youPrepare, done: submitted, current: !submitted },
+    { name: "Screening", owner: "Compliance reviewer", you: youReview, done: !!r.screeningResult || decided, current: submitted && !r.screeningResult && !decided },
+    { name: "Decision", owner: "Compliance reviewer", you: youReview, done: decided, current: submitted && !!r.screeningResult && !decided },
+  ];
+  return (
+    <ol className="mt-4 grid gap-2 sm:grid-cols-3">
+      {stages.map((s, i) => (
+        <li key={s.name} className={s.current ? "rounded-xl border border-sky/40 bg-pale px-3 py-2.5" : "rounded-xl border border-border px-3 py-2.5"}>
+          <p className="flex items-center gap-2 text-sm font-medium">
+            {s.done ? <Check className="size-3.5 text-success" /> : <span className="text-subtle">{i + 1}</span>}
+            {s.name}
+            {s.current ? <Chip tone="sky">Now</Chip> : null}
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {s.owner}
+            {s.you ? " · you" : ""}
+          </p>
+        </li>
+      ))}
+    </ol>
   );
 }
 

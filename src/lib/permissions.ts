@@ -203,6 +203,8 @@ export function clientEditPermissions(user: SessionUser) {
       canEditClient: hasPermission(user, "CLIENT_UPDATE"),
       canAddPolicy: hasPermission(user, "POLICY_CREATE"),
       canEditPolicy: hasPermission(user, "POLICY_UPDATE") || hasPermission(user, "POLICY_CREATE"),
+      canEditContacts: hasPermission(user, "CLIENT_CONTACT_UPDATE"),
+      canRecordInteraction: hasPermission(user, "CLIENT_INTERACTION_RECORD"),
     };
   }
   const demoManager = ["MD", "Commercial Director", "Accounts Executive", "CRM Manager"].includes(user.role);
@@ -211,6 +213,8 @@ export function clientEditPermissions(user: SessionUser) {
     canEditClient: demoManager,
     canAddPolicy: demoManager,
     canEditPolicy: demoManager,
+    canEditContacts: demoManager,
+    canRecordInteraction: demoManager,
   };
 }
 

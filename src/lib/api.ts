@@ -32,6 +32,15 @@ import {
 } from "./mock-clients";
 import { DEMO_ADMIN_ID, PERMISSIONS, ROLES_DATA, USERS_DATA } from "./mock-admin";
 import { DEMO_KYC_REVIEWS, DEMO_KYC_TEMPLATES, DEMO_LEADS, DEMO_TRACKS } from "./mock-leads";
+import { mockListNotifications, mockMarkNotificationRead, mockUnreadCount } from "./mock-notifications";
+import {
+  mockAddContact,
+  mockListContacts,
+  mockListInteractions,
+  mockMakePrimary,
+  mockRecordInteraction,
+  mockUpdateContact,
+} from "./mock-client-records";
 import {
   APPROVAL_POLICY_VERSION,
   DECISION_DAYS,
@@ -201,6 +210,8 @@ async function loadManagers(): Promise<ManagerChoice[]> {
   if (MANAGERS) return MANAGERS;
   try {
     const res = await apiFetch("/api/v1/clients/managers?size=100");
+    // Not allowed to list managers: remember that instead of asking on every client.
+    if (res.status === 403) MANAGERS = [];
     if (!res.ok) return [];
     MANAGERS = ((await res.json()) as Page<ManagerChoice>).items ?? [];
     return MANAGERS;
@@ -546,6 +557,126 @@ export async function updateClient(id: string, input: ClientInput): Promise<Clie
   // Nothing changed: no request needed.
   if (!view) return current;
   return toClient(view, await loadManagers());
+}
+
+/* ------------------------- Contacts and interactions ------------------------- */
+// Backend clients: /api/v1/clients/{id}/contacts and /interactions. Every change
+// needs the client's latest version and a reason; interactions are never edited,
+// a correction is recorded as a new entry that points at the original.
+
+export type ClientContactEntry = { id: string; primary: boolean; contact: ClientContact };
+
+export type ClientInteraction = {
+  id: string;
+  occurredAt: string;
+  /** CALL, MEETING, EMAIL, VISIT or OTHER. */
+  type: string;
+  summary: string;
+  followUp?: string;
+  recordedAt: string;
+  /** Set when this entry corrects an earlier one. */
+  correctsId?: string;
+};
+
+type ClientPageView<T> = { items?: T[]; totalPages?: number };
+type BackendContactView = { id: string; primary: boolean; contact: BackendContact };
+
+async function readClientPages<T>(path: string, fallback: string): Promise<T[]> {
+  const all: T[] = [];
+  for (let page = 0; page < 50; page++) {
+    const res = await apiFetch(`${path}?page=${page}&size=100`);
+    if (!res.ok) throw new Error(await problemMessage(res, fallback));
+    const body = (await res.json()) as ClientPageView<T>;
+    all.push(...(body.items ?? []));
+    if (page + 1 >= (body.totalPages ?? 1)) break;
+  }
+  return all;
+}
+
+/** The backend reference and latest version of a backend client. */
+function clientRef(client: Client) {
+  const current = CLIENT_CACHE.get(client.id) ?? client;
+  if (!current.uuid || current.version === undefined) {
+    throw new Error("This client could not be found. Close it and open it again.");
+  }
+  return { uuid: current.uuid, version: current.version };
+}
+
+async function sendContact(client: Client, path: string, method: "POST" | "PUT", body: object, fallback: string): Promise<Client> {
+  const { uuid, version } = clientRef(client);
+  const res = await apiFetch(`/api/v1/clients/${uuid}${path}`, { method, body: JSON.stringify({ version, ...body }) });
+  if (!res.ok) throw new Error(await problemMessage(res, fallback));
+  return toClient((await res.json()) as ClientView, await loadManagers());
+}
+
+export async function listClientContacts(client: Client): Promise<ClientContactEntry[]> {
+  if (MOCK_AUTH || !client.uuid) return mockListContacts(client);
+  const views = await readClientPages<BackendContactView>(`/api/v1/clients/${client.uuid}/contacts`, "Could not load the contacts.");
+  return views.map((v) => ({
+    id: v.id,
+    primary: v.primary,
+    contact: { name: v.contact.name, title: v.contact.jobTitle, email: v.contact.email, phone: v.contact.phone },
+  }));
+}
+
+export async function addClientContact(client: Client, contact: ClientContact): Promise<Client> {
+  if (MOCK_AUTH || !client.uuid) return mockAddContact(client, contact);
+  return sendContact(client, "/contacts", "POST", { contact: toContact(contact), reason: "Contact added from the client file." }, "Could not add the contact.");
+}
+
+export async function updateClientContact(client: Client, contactId: string, contact: ClientContact): Promise<Client> {
+  if (MOCK_AUTH || !client.uuid) return mockUpdateContact(client, contactId, contact);
+  return sendContact(
+    client,
+    `/contacts/${encodeURIComponent(contactId)}`,
+    "PUT",
+    { contact: toContact(contact), reason: "Contact updated from the client file." },
+    "Could not save the contact.",
+  );
+}
+
+export async function makePrimaryContact(client: Client, contactId: string): Promise<Client> {
+  if (MOCK_AUTH || !client.uuid) return mockMakePrimary(client, contactId);
+  return sendContact(
+    client,
+    `/contacts/${encodeURIComponent(contactId)}/primary`,
+    "POST",
+    { reason: "Primary contact changed from the client file." },
+    "Could not change the primary contact.",
+  );
+}
+
+type BackendInteractionView = ClientInteraction & { clientVersion?: number };
+
+export async function listClientInteractions(client: Client): Promise<ClientInteraction[]> {
+  if (MOCK_AUTH || !client.uuid) return mockListInteractions(client);
+  const views = await readClientPages<BackendInteractionView>(`/api/v1/clients/${client.uuid}/interactions`, "Could not load the interactions.");
+  return views.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+}
+
+export type InteractionInput = { occurredAt: string; type: string; summary: string; followUp?: string; correctsId?: string };
+
+export async function recordClientInteraction(client: Client, input: InteractionInput): Promise<ClientInteraction> {
+  if (MOCK_AUTH || !client.uuid) return mockRecordInteraction(client, input);
+  const { uuid, version } = clientRef(client);
+  const res = await apiFetch(`/api/v1/clients/${uuid}/interactions`, {
+    method: "POST",
+    body: JSON.stringify({
+      version,
+      occurredAt: new Date(input.occurredAt).toISOString(),
+      type: input.type,
+      summary: input.summary.trim(),
+      followUp: input.followUp?.trim() || undefined,
+      correctsId: input.correctsId,
+      reason: input.correctsId ? "Correction recorded from the client file." : "Interaction recorded from the client file.",
+    }),
+  });
+  if (!res.ok) throw new Error(await problemMessage(res, "Could not record the interaction."));
+  const view = (await res.json()) as BackendInteractionView;
+  // Recording moves the client to a new version; keep the cache in step.
+  const cached = CLIENT_CACHE.get(client.id);
+  if (cached && view.clientVersion !== undefined) CLIENT_CACHE.set(client.id, { ...cached, version: view.clientVersion });
+  return view;
 }
 
 /* --------------------------------- Policies ---------------------------------- */
@@ -2647,6 +2778,8 @@ const ONBOARDING_MESSAGES: Record<string, string> = {
 async function onboardingProblem(res: Response, fallback: string): Promise<string> {
   const problem = await readProblem(res);
   if (res.status === 401) return "Your session has ended. Please sign in again.";
+  // The backend's reason code says which rule refused, e.g. not the assigned reviewer.
+  if (res.status === 403 && problem.code && ONBOARDING_MESSAGES[problem.code]) return ONBOARDING_MESSAGES[problem.code]!;
   if (res.status === 403) return "You do not have permission to do this.";
   if (res.status === 404) return "This record could not be found.";
   // A generic 400 with field names is more useful than "Invalid request".
@@ -4570,6 +4703,10 @@ export async function getNotificationSocketCsrf(): Promise<{ headerName: string;
 
 /** Load the signed-in user's durable notification inbox and unread count. */
 export async function getNotificationInbox(): Promise<NotificationInbox> {
+  if (MOCK_AUTH) {
+    const [page, unreadCount] = await Promise.all([mockListNotifications(0, 20, false), mockUnreadCount()]);
+    return { items: page.items, unreadCount };
+  }
   const [inboxResponse, countResponse] = await Promise.all([
     apiFetch("/api/v1/notifications?page=0&size=20&unreadOnly=false"),
     apiFetch("/api/v1/notifications/unread-count"),
@@ -4581,7 +4718,19 @@ export async function getNotificationInbox(): Promise<NotificationInbox> {
   return { items: inbox.items ?? [], unreadCount: count.count ?? 0 };
 }
 
+export type NotificationPage = { items: InboxNotification[]; page: number; totalPages: number; totalElements: number };
+
+/** One page of the inbox for the Notifications page, newest first. */
+export async function listNotifications(page: number, unreadOnly: boolean, size = 20): Promise<NotificationPage> {
+  if (MOCK_AUTH) return mockListNotifications(page, size, unreadOnly);
+  const response = await apiFetch(`/api/v1/notifications?page=${page}&size=${size}&unreadOnly=${unreadOnly}`);
+  if (!response.ok) throw new Error(await onboardingProblem(response, "Could not load notifications."));
+  const body = (await response.json()) as Partial<NotificationPage>;
+  return { items: body.items ?? [], page: body.page ?? page, totalPages: body.totalPages ?? 1, totalElements: body.totalElements ?? 0 };
+}
+
 export async function markNotificationRead(notificationId: string): Promise<void> {
+  if (MOCK_AUTH) return mockMarkNotificationRead(notificationId);
   const response = await apiFetch(`/api/v1/notifications/${encodeURIComponent(notificationId)}/read`, { method: "POST" });
   if (!response.ok) throw new Error(await onboardingProblem(response, "Could not mark the notification as read."));
 }
