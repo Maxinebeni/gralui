@@ -4644,6 +4644,118 @@ export async function confirmClaimRegistration(id: string, by: string): Promise<
   return saveClaim({ ...c, step: "DOCUMENTS", stepStartedAt: todayIso() }, by, "Registration confirmed; moved to Documents");
 }
 
+/* ------------------ Claim documents checklist on the backend (CLM-02) ------------------ */
+// GET /claims/{id}/documents returns the checklist the backend keeps for the
+// claim. Each item is satisfied by attaching an exact CLAIM_EVIDENCE document
+// version linked to the claim, or by recording why it does not apply. The
+// checklist is provisional and does not block submission to the insurer.
+
+type ClaimChecklistItemView = {
+  code: string;
+  label: string;
+  description?: string;
+  status: string;
+  documentId?: string | null;
+  documentVersion?: number | null;
+  notApplicableReason?: string | null;
+  version: number;
+  updatedAt?: string | null;
+};
+type ClaimChecklistView = { claimId: string; provisional: boolean; nonBlocking: boolean; items: ClaimChecklistItemView[] };
+
+export type ClaimChecklistItem = {
+  code: string;
+  label: string;
+  description: string;
+  status: "RECEIVED" | "NOT_APPLICABLE" | "MISSING";
+  /** The server's own status word, shown when it is not one of the three above. */
+  serverStatus: string;
+  documentId?: string;
+  documentVersion?: number;
+  notApplicableReason?: string;
+  updatedAt?: string;
+  version: number;
+};
+export type ClaimChecklist = { provisional: boolean; nonBlocking: boolean; items: ClaimChecklistItem[] };
+
+/** Missing words the server may use; any other status counts as in (e.g. the incident details recorded from the claim). */
+const CHECKLIST_MISSING = ["MISSING", "REQUIRED", "PENDING", "OUTSTANDING", "OPEN"];
+
+function checklistStatus(i: ClaimChecklistItemView): ClaimChecklistItem["status"] {
+  const status = (i.status ?? "").toUpperCase();
+  if (i.notApplicableReason || status === "NOT_APPLICABLE") return "NOT_APPLICABLE";
+  if (i.documentId) return "RECEIVED";
+  return CHECKLIST_MISSING.includes(status) ? "MISSING" : "RECEIVED";
+}
+
+function toChecklist(v: ClaimChecklistView): ClaimChecklist {
+  return {
+    provisional: v.provisional,
+    nonBlocking: v.nonBlocking,
+    items: (v.items ?? []).map((i) => ({
+      code: i.code,
+      label: i.label,
+      description: i.description ?? "",
+      status: checklistStatus(i),
+      serverStatus: i.status,
+      documentId: i.documentId ?? undefined,
+      documentVersion: i.documentVersion ?? undefined,
+      notApplicableReason: i.notApplicableReason ?? undefined,
+      updatedAt: i.updatedAt ?? undefined,
+      version: i.version,
+    })),
+  };
+}
+
+async function claimChecklistProblem(res: Response, fallback: string): Promise<string> {
+  const problem = await readProblem(res);
+  if (res.status === 401) return "Your session has ended. Please sign in again.";
+  if (res.status === 403) return "You do not have permission to update this claim's documents.";
+  if (res.status === 404) return "The claim or the document could not be found. Refresh and try again.";
+  if (res.status === 409) return "Someone else changed this checklist. Refresh and try again.";
+  if (res.status === 400 && problem.fields?.length) return `Please check these fields: ${problem.fields.join(", ")}.`;
+  if (problem.code) return blockerText(problem.code);
+  if (problem.title && problem.title !== "Bad Request") return problem.title;
+  return fallback;
+}
+
+/** The backend checklist for a backend claim, or null for sample claims. */
+export async function getClaimChecklist(claim: Claim): Promise<ClaimChecklist | null> {
+  if (MOCK_AUTH || !claim.uuid) return null;
+  const res = await apiFetch(`/api/v1/claims/${claim.uuid}/documents`);
+  if (!res.ok) throw new Error(await claimChecklistProblem(res, "Could not load the documents checklist."));
+  return toChecklist((await res.json()) as ClaimChecklistView);
+}
+
+/** Attach a file to one checklist item: upload it to the claim, then link the exact version. */
+export async function attachClaimChecklistDocument(claim: Claim, item: ClaimChecklistItem, file: File): Promise<ClaimChecklist> {
+  if (!claim.uuid) throw new Error("This is a sample claim; its documents stay in this tab.");
+  // The evidence must be a CLAIM_EVIDENCE version linked to this claim with
+  // purpose CLAIM_EVIDENCE (backend docs/api/claims.md).
+  const doc = await uploadDocument({ type: "CLAIM", id: claim.uuid }, file, {
+    classification: "CLAIM_EVIDENCE",
+    purpose: "CLAIM_EVIDENCE",
+  });
+  const res = await apiFetch(`/api/v1/claims/${claim.uuid}/documents/${encodeURIComponent(item.code)}`, {
+    method: "PUT",
+    body: JSON.stringify({ expectedVersion: item.version, documentId: doc.id, documentVersion: doc.version }),
+  });
+  if (!res.ok) throw new Error(await claimChecklistProblem(res, "Could not attach the file to the checklist."));
+  return toChecklist((await res.json()) as ClaimChecklistView);
+}
+
+/** Record why a checklist item does not apply to this claim. */
+export async function markClaimChecklistNotApplicable(claim: Claim, item: ClaimChecklistItem, reason: string): Promise<ClaimChecklist> {
+  if (!claim.uuid) throw new Error("This is a sample claim.");
+  if (!reason.trim()) throw new Error("Say why this document does not apply.");
+  const res = await apiFetch(`/api/v1/claims/${claim.uuid}/documents/${encodeURIComponent(item.code)}`, {
+    method: "PUT",
+    body: JSON.stringify({ expectedVersion: item.version, notApplicableReason: reason.trim() }),
+  });
+  if (!res.ok) throw new Error(await claimChecklistProblem(res, "Could not save the reason."));
+  return toChecklist((await res.json()) as ClaimChecklistView);
+}
+
 export async function fileClaimDocument(id: string, name: string, evidence: string, by: string): Promise<Claim> {
   const c = findClaim(id);
   requireOpen(c);
