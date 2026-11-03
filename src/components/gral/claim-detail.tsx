@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, FileText, Flag, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -8,11 +8,14 @@ import { formatRwf } from "@/lib/format";
 import { parseAmount, settlementWarnings } from "@/lib/amounts";
 import {
   addClaimNote,
+  attachClaimChecklistDocument,
   closeClaim,
   confirmClaimRegistration,
   decideDispute,
   fileClaimDocument,
+  getClaimChecklist,
   logClaimFollowUp,
+  markClaimChecklistNotApplicable,
   markClaimReadyToSubmit,
   recordInsurerRejection,
   recordPaidToClient,
@@ -21,6 +24,8 @@ import {
   signClaimSettlement,
   submitClaimToInsurer,
   uploadDocument,
+  type ClaimChecklist,
+  type ClaimChecklistItem,
 } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { claimPermissions } from "@/lib/permissions";
@@ -559,6 +564,67 @@ function DocumentsTab({ claim, canUpdate, userName, run }: { claim: Claim; canUp
   // Bumped after a checklist upload so the file list below reloads.
   const [refresh, setRefresh] = useState(0);
   const editable = canUpdate && !isClosed(claim);
+  // Backend claims use the server's checklist (CLM-02); sample claims keep the local one.
+  const [checklist, setChecklist] = useState<ClaimChecklist | null | undefined>(claim.uuid ? undefined : null);
+  const [checklistError, setChecklistError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!claim.uuid) return;
+    let cancelled = false;
+    getClaimChecklist(claim)
+      .then((c) => {
+        if (!cancelled) {
+          setChecklist(c);
+          setChecklistError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setChecklistError(err instanceof Error ? err.message : "Could not load the documents checklist.");
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Reload when the claim or the file list changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claim.uuid, refresh]);
+
+  if (claim.uuid && checklist !== null) {
+    return (
+      <div className="mt-4 space-y-2">
+        {checklistError ? (
+          <p className="text-xs text-danger">
+            {checklistError}{" "}
+            <button type="button" onClick={() => setRefresh((n) => n + 1)} className="text-primary underline underline-offset-2">
+              Try again
+            </button>
+          </p>
+        ) : checklist === undefined ? (
+          <p className="text-xs text-muted-foreground">Loading the documents checklist…</p>
+        ) : (
+          <BackendChecklist
+            claim={claim}
+            checklist={checklist}
+            editable={editable}
+            onChanged={(next) => {
+              setChecklist(next);
+              setRefresh((n) => n + 1);
+            }}
+          />
+        )}
+        <div className="pt-4">
+          <DocumentPanel
+            key={refresh}
+            subject={{ type: "CLAIM", id: claim.uuid }}
+            classification="CLAIM_EVIDENCE"
+            purpose="CLAIM_DOCUMENT"
+            canUpload={editable}
+            title="Claim Files"
+            emptyText="No files uploaded yet."
+          />
+        </div>
+      </div>
+    );
+  }
   // Backend claims upload to the backend by their UUID; sample claims stay in this tab.
   const subject = { type: "CLAIM" as const, id: claim.uuid ?? claim.id };
 
@@ -619,6 +685,117 @@ function DocumentsTab({ claim, canUpdate, userName, run }: { claim: Claim; canUp
         />
       </div>
     </div>
+  );
+}
+
+/** The backend's documents checklist: attach a file to each item, or say why it does not apply. */
+function BackendChecklist({
+  claim,
+  checklist,
+  editable,
+  onChanged,
+}: {
+  claim: Claim;
+  checklist: ClaimChecklist;
+  editable: boolean;
+  onChanged: (next: ClaimChecklist) => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [naFor, setNaFor] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  const done = checklist.items.filter((i) => i.status !== "MISSING").length;
+
+  async function attach(item: ClaimChecklistItem, file: File) {
+    setBusy(item.code);
+    try {
+      onChanged(await attachClaimChecklistDocument(claim, item, file));
+      toast.success(`${item.label} received.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not attach the file.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function notApplicable(item: ClaimChecklistItem) {
+    setBusy(item.code);
+    try {
+      onChanged(await markClaimChecklistNotApplicable(claim, item, reason));
+      toast.success(`${item.label} marked as not applicable.`);
+      setNaFor(null);
+      setReason("");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not save the reason.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (checklist.items.length === 0) {
+    return <p className="text-xs text-muted-foreground">The server has no documents checklist for this claim yet.</p>;
+  }
+
+  return (
+    <>
+      <p className="text-[11px] text-muted-foreground">
+        {done} of {checklist.items.length} documents in.
+        {checklist.provisional || checklist.nonBlocking
+          ? " This checklist is provisional and does not stop the claim being submitted to the insurer."
+          : ""}
+      </p>
+      {checklist.items.map((item) => (
+        <div key={item.code} className="rounded-xl border border-border px-3 py-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="flex min-w-0 items-start gap-2 text-xs">
+              {item.status === "MISSING" ? <Dot tone="danger" /> : <Check className="size-4 shrink-0 text-success" />}
+              <span className="min-w-0">
+                {item.label}
+                {item.description ? <span className="block text-[11px] text-muted-foreground">{item.description}</span> : null}
+              </span>
+            </span>
+            {item.status === "RECEIVED" ? (
+              <Chip tone="success">
+                {item.documentId ? "Received" : "Recorded"}
+                {item.updatedAt ? ` ${formatDate(item.updatedAt.slice(0, 10))}` : ""}
+              </Chip>
+            ) : item.status === "NOT_APPLICABLE" ? (
+              <Chip>Not applicable</Chip>
+            ) : editable ? (
+              <span className="flex flex-wrap gap-2">
+                <FilePickButton
+                  onFile={(file) => attach(item, file)}
+                  disabled={busy === item.code}
+                  destination={`${item.label} · claim ${claim.id}`}
+                >
+                  <Upload className="size-3.5" /> {busy === item.code ? "Saving…" : "Upload"}
+                </FilePickButton>
+                <OutlineButton onClick={() => setNaFor(naFor === item.code ? null : item.code)}>Not applicable</OutlineButton>
+              </span>
+            ) : (
+              <Chip tone="danger">Missing</Chip>
+            )}
+          </div>
+          {item.notApplicableReason ? (
+            <p className="mt-1 text-[11px] text-muted-foreground">Reason: {item.notApplicableReason}</p>
+          ) : null}
+          {naFor === item.code ? (
+            <div className="mt-2 space-y-2 border-t border-border pt-2">
+              <textarea
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                rows={2}
+                placeholder="Why this document does not apply to this claim"
+                aria-label="Reason it does not apply"
+                className="w-full rounded-xl border border-input bg-card px-3 py-2 text-xs outline-none focus:border-sky focus:ring-2 focus:ring-sky/30"
+              />
+              <NavyButton onClick={() => notApplicable(item)} disabled={busy === item.code || !reason.trim()}>
+                {busy === item.code ? "Saving…" : "Save reason"}
+              </NavyButton>
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </>
   );
 }
 
