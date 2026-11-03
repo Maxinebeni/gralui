@@ -31,6 +31,8 @@ import {
 } from "@/lib/renewals";
 import type { RenewalCase } from "@/lib/types";
 import { AmountInput } from "./amount-input";
+import { RenewalActions, RenewalBlockers } from "./renewal-actions";
+import { renewalActionsFor } from "@/lib/renewal-actions";
 import { Chip, Dot, NavyButton, OutlineButton, Person, SegmentedTabs } from "./ui";
 
 const TABS = ["Milestones", "Quotes", "Acceptance"] as const;
@@ -59,7 +61,7 @@ export function RenewalCasePanel({
 }) {
   const [tab, setTab] = useState<Tab>("Milestones");
   const { user } = useCurrentUser();
-  const { canUpdateRenewals } = renewalPermissions(user.role);
+  const { canUpdateRenewals } = renewalPermissions(user);
   const days = daysToExpiry(renewal);
 
   async function run(action: () => Promise<RenewalCase>, success: string) {
@@ -111,13 +113,15 @@ export function RenewalCasePanel({
         {!canUpdateRenewals ? (
           <p className="mt-3 text-[11px] text-subtle">View only</p>
         ) : null}
+        {renewal.backend ? <RenewalBlockers renewal={renewal} /> : null}
 
         {tab === "Milestones" ? (
-          <MilestonesTab renewal={renewal} canUpdate={canUpdateRenewals} userName={user.name} run={run} />
+          <MilestonesTab renewal={renewal} canUpdate={canUpdateRenewals} userName={user.name} run={run} onChanged={onChanged} />
         ) : null}
-        {tab === "Quotes" ? <QuotesTab renewal={renewal} canUpdate={canUpdateRenewals} run={run} /> : null}
+        {/* On backend cases, quotes and acceptance are recorded from the milestone rows. */}
+        {tab === "Quotes" ? <QuotesTab renewal={renewal} canUpdate={canUpdateRenewals && !renewal.backend} run={run} /> : null}
         {tab === "Acceptance" ? (
-          <AcceptanceTab renewal={renewal} canUpdate={canUpdateRenewals} userName={user.name} run={run} />
+          <AcceptanceTab renewal={renewal} canUpdate={canUpdateRenewals && !renewal.backend} userName={user.name} run={run} />
         ) : null}
       </div>
     </div>
@@ -131,11 +135,13 @@ function MilestonesTab({
   canUpdate,
   userName,
   run,
+  onChanged,
 }: {
   renewal: RenewalCase;
   canUpdate: boolean;
   userName: string;
   run: Run;
+  onChanged: (updated: RenewalCase) => void;
 }) {
   const [note, setNote] = useState("");
   const [evidence, setEvidence] = useState("");
@@ -216,7 +222,13 @@ function MilestonesTab({
               </div>
             </div>
 
-            {isCurrent && canUpdate ? (
+            {renewal.backend && (isCurrent || renewalActionsFor(renewal, m.code).length > 0) ? (
+              <div className="mt-3 space-y-2 border-t border-border pt-3">
+                {late ? <p className="text-[11px] font-medium text-danger">Overdue by {overdue} days.</p> : null}
+                <RenewalActions renewal={renewal} step={m.code} onChanged={onChanged} />
+              </div>
+            ) : null}
+            {!renewal.backend && isCurrent && canUpdate ? (
               <div className="mt-3 space-y-2 border-t border-border pt-3">
                 {late ? (
                   <p className="text-[11px] font-medium text-danger">Overdue by {overdue} days.</p>
@@ -252,6 +264,11 @@ function MilestonesTab({
           </li>
         );
       })}
+      {renewal.backend ? (
+        <li className="list-none pt-2">
+          <RenewalActions renewal={renewal} step={null} onChanged={onChanged} />
+        </li>
+      ) : null}
     </ol>
   );
 }
