@@ -10,6 +10,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Search } from "lucide-react";
 import { ClientFile } from "@/components/gral/client-file";
 import { ClientFormPanel } from "@/components/gral/client-form";
+import { KycBadge } from "@/components/gral/kyc-badge";
 import { SlideOver } from "@/components/gral/shell";
 import { Chip, NotRecorded, Person, Recorded, TextLink } from "@/components/gral/ui";
 import { useClients, useRefresh } from "@/lib/queries";
@@ -124,7 +125,7 @@ export function ClientsTable({
                 </Td>
                 <Td className="text-sm">{c.activePolicies}</Td>
                 <Td>
-                  <StatusDot ok={c.kyc} title={c.kycGateStatus ? `KYC: ${c.kycGateStatus}` : undefined} />
+                  <KycBadge short kyc={c.kyc} status={c.kycStatus} gateStatus={c.kycGateStatus} />
                 </Td>
                 <Td>
                   <StatusDot ok={c.policiesOk} />

@@ -27,7 +27,7 @@ export type NavItem = {
  * table, dev branch). Add "CLAIM" and "RENEWAL" when the backend adds
  * CLAIM_READ and RENEWAL_READ — then those menus follow the backend too.
  */
-const BACKEND_MODULES = ["CLIENT", "USER", "ROLE", "SESSION", "LEAD", "KYC", "INSURER"];
+const BACKEND_MODULES = ["CLIENT", "USER", "ROLE", "SESSION", "LEAD", "KYC", "INSURER", "IMPORT"];
 
 const CLAIM_ROLES: readonly Role[] = [
   "MD",
@@ -53,6 +53,10 @@ const ONBOARDING_ROLES: readonly Role[] = [
   "Risk & Compliance Manager",
   "Internal Audit Manager",
 ];
+
+/** The backend's permission matrix: these roles read imports; the first three also upload and check them. */
+const IMPORT_ROLES: readonly Role[] = ["CRM Manager", "GI Underwriting Manager", "Claims Manager", "Risk & Compliance Manager", "Internal Audit Manager"];
+const IMPORT_AUTHORS: readonly Role[] = ["CRM Manager", "GI Underwriting Manager", "Claims Manager"];
 
 const RENEWAL_ROLES: readonly Role[] = [
   "MD",
@@ -88,6 +92,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Renewals", href: "/renewals", permission: "RENEWAL_READ", roles: RENEWAL_ROLES, businessOnly: true },
   // Admin pages sit in the name (account) menu, not the top bar. Real backend
   // permissions; in demo mode only the MD sees them.
+  { label: "Data Import", href: "/imports", permission: "IMPORT_READ", roles: IMPORT_ROLES, parent: ACCOUNT_MENU, businessOnly: true },
   { label: "Users", href: "/admin", permission: "USER_READ", roles: ["MD"], parent: ACCOUNT_MENU },
   { label: "Roles & Permissions", href: "/admin/roles", permission: "ROLE_READ", roles: ["MD"], parent: ACCOUNT_MENU },
   { label: "Active Sessions", href: "/admin/sessions", permission: "SESSION_READ", roles: ["MD"], parent: ACCOUNT_MENU },
@@ -175,6 +180,11 @@ export function renewalPermissions(role: Role) {
  * DMD chairs the Claims Committee; the fraud flag is limited to Technical
  * Director, Risk & Compliance Manager and MD (data-shapes proposal).
  */
+export function importPermissions(user: SessionUser) {
+  const can = (code: string) => (usesBackendPermissions(user) ? hasPermission(user, code) : IMPORT_AUTHORS.includes(user.role));
+  return { canUpload: can("IMPORT_UPLOAD"), canValidate: can("IMPORT_VALIDATE") };
+}
+
 export function claimPermissions(role: Role) {
   return {
     canUpdateClaims: ["Technical Director", "DMD", "MD", "Claims Manager", "Claims Underwriter"].includes(role),

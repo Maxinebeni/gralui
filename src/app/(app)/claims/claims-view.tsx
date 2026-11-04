@@ -16,6 +16,7 @@ import {
   Th,
   byUrgency,
   filterClaims,
+  useClaimFilters,
   useClaims,
   useOpenClaim,
   ClaimsTable,
@@ -70,7 +71,8 @@ export function ClaimsView() {
   const { open, openId, backHref, setOpen } = useOpenClaim(allClaims);
   // Date reported filter; applies to the tiles, the queue and Needs Action.
   const [range, setRange] = useState<DateRange>("all");
-  const claims = useMemo(() => allClaims.filter((c) => withinRange(c.dateReported, range)), [allClaims, range]);
+  const { matching, pills } = useClaimFilters(allClaims);
+  const claims = useMemo(() => matching.filter((c) => withinRange(c.dateReported, range)), [matching, range]);
   const [tab, setTab] = useState<(typeof CLAIM_TABS)[number]>("Breached");
   const [newOpen, setNewOpen] = useState(false);
   const monthly = useMemo(() => claimsPerMonth(allClaims), [allClaims]);
@@ -108,12 +110,15 @@ export function ClaimsView() {
       <PageHeader
         title="Claims Queue"
         extraPills={
-          <FilterMenu
-            label="Reported"
-            value={range}
-            options={DATE_RANGE_OPTIONS}
-            onChange={(v) => setRange(v as DateRange)}
-          />
+          <>
+            <FilterMenu
+              label="Reported"
+              value={range}
+              options={DATE_RANGE_OPTIONS}
+              onChange={(v) => setRange(v as DateRange)}
+            />
+            {pills}
+          </>
         }
         action={
           canUpdateClaims ? (

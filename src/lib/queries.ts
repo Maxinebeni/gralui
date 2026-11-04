@@ -7,7 +7,7 @@
 
 import { useCallback } from "react";
 import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
-import { listApprovals, listAssignees, listClaims, listClients, listLeads, listRenewals, listTasks } from "./api";
+import { listApprovals, listAssignees, listClaims, listClients, listImports, listLeads, listRenewals, listTasks } from "./api";
 import { queryKeys } from "./query";
 
 export function useClaims(enabled = true) {
@@ -40,11 +40,15 @@ export function useTasks(role: string, enabled = true) {
   return useQuery({ queryKey: queryKeys.tasks(role), queryFn: () => listTasks(), enabled });
 }
 
+export function useImports() {
+  return useQuery({ queryKey: queryKeys.imports, queryFn: () => listImports() });
+}
+
 export function useAssignees() {
   return useQuery({ queryKey: queryKeys.assignees, queryFn: () => listAssignees() });
 }
 
-type ListName = "claims" | "clients" | "leads" | "renewals" | "approvals" | "tasks";
+type ListName = "claims" | "clients" | "leads" | "renewals" | "approvals" | "tasks" | "imports";
 
 /** Marks lists as changed; screens showing them load them again. Tasks change with almost everything, so they always refresh. */
 export function useRefresh() {

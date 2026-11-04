@@ -4,6 +4,7 @@
 // role. Permissions are grouped by area so the checklist reads like the app.
 
 import { useState } from "react";
+import Link from "next/link";
 import { X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -152,7 +153,11 @@ export function RolePanel({
             ) : null}
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            Code {role.code} · {peopleCount} {peopleCount === 1 ? "person" : "people"} · {role.permissions.length}{" "}
+            Code {role.code} ·{" "}
+            <Link href={`/admin?role=${encodeURIComponent(role.code)}`} className="text-primary underline underline-offset-2">
+              {peopleCount} {peopleCount === 1 ? "person" : "people"}
+            </Link>{" "}
+            · {role.permissions.length}{" "}
             {role.permissions.length === 1 ? "permission" : "permissions"}
           </p>
         </div>

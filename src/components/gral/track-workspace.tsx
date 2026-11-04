@@ -5,11 +5,13 @@ import Link from "next/link";
 import { onboardingOptions, runTrackAction, type TrackDetail } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { onboardingPermissions } from "@/lib/permissions";
+import { isKycBlocker, kycBlockedReasons, kycHref } from "@/lib/kyc";
 import { TRACK_STAGES, trackHandoff, trackHealth } from "@/lib/onboarding";
 import { useRefresh } from "@/lib/queries";
 import { ActionPanel, OtherActions, StageRecord, STAGE_ACTIONS, type TrackOptions, type TrackRun } from "./track-forms";
 import { Blockers, HealthChip, HistoryList } from "./onboarding-ui";
 import { SingleSourceRequest } from "./track-workflow-actions";
+import { KycBlockedNotice } from "./kyc-badge";
 import { KycReviewerAssignment } from "./kyc-reviewer-assignment";
 import { PageHeader } from "./shell";
 import { Chip, FloatCard, OutlineButton } from "./ui";
@@ -46,7 +48,8 @@ export function TrackWorkspace({ detail, onChanged }: { detail: TrackDetail; onC
         {error ? <p role="alert" className="text-xs text-danger">{error}</p> : null}
         {selected === 3 ? <div className="space-y-3"><p className="text-sm">Client KYC: {t.kyc?.status ?? "Not started"}</p>{perms.canReadKyc ? <><Link className="text-xs text-primary underline" href={`/clients/kyc/${encodeURIComponent(t.kyc?.caseId ?? t.clientId)}${t.kyc?.caseId ? "" : "?mode=client"}`}>Open client KYC</Link><KycReviewerAssignment caseId={t.kyc?.caseId} onChanged={onChanged} /></> : null}</div> : <StageRecord track={t} n={selected} insurerName={insurerName} />}
         {handoff?.summary ? <p className="text-sm font-medium">{handoff.summary}</p> : null}
-        {selected === t.stage ? <Blockers codes={t.blockers} /> : null}
+        {selected === t.stage ? <KycBlockedNotice reasons={kycBlockedReasons(t.blockers)} href={perms.canReadKyc ? kycHref(t.clientId, t.kyc?.caseId) : undefined} /> : null}
+        {selected === t.stage ? <Blockers codes={t.blockers.filter((b) => !isKycBlocker(b))} /> : null}
         {handoff && !actions.length ? <p className="text-xs text-muted-foreground">{handoff.waiting}</p> : null}
         {actions.map((action) => <ActionPanel key={`${t.id}:${action}`} action={action} track={t} options={options} insurerName={insurerName} run={run} leadName={detail.lead?.clientName ?? detail.lead?.name ?? ""} />)}
         {selected === 7 && t.stage === 7 && t.availableActions.includes("QUOTE") && t.invitations.some((i) => !i.response) ? <ActionPanel key={`${t.id}:INSURER_RESPONSE`} action="INSURER_RESPONSE" track={t} options={options} insurerName={insurerName} run={run} leadName="" collapsed /> : null}

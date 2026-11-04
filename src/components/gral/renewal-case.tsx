@@ -29,8 +29,11 @@ import {
   milestoneDue,
   renewalHealth,
 } from "@/lib/renewals";
+import { kycBlockedReasons } from "@/lib/kyc";
+import { useClients } from "@/lib/queries";
 import type { RenewalCase } from "@/lib/types";
 import { AmountInput } from "./amount-input";
+import { KycBadge, KycBlockedNotice } from "./kyc-badge";
 import { Chip, Dot, NavyButton, OutlineButton, Person, SegmentedTabs } from "./ui";
 
 const TABS = ["Milestones", "Quotes", "Acceptance"] as const;
@@ -61,6 +64,8 @@ export function RenewalCasePanel({
   const { user } = useCurrentUser();
   const { canUpdateRenewals } = renewalPermissions(user.role);
   const days = daysToExpiry(renewal);
+  const { data: clients = [] } = useClients("");
+  const client = clients.find((c) => c.id === renewal.clientId);
 
   async function run(action: () => Promise<RenewalCase>, success: string) {
     try {
@@ -80,6 +85,7 @@ export function RenewalCasePanel({
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xl font-semibold tracking-tight">{renewal.client}</span>
             <RenewalHealthChip renewal={renewal} />
+            {client ? <KycBadge kyc={client.kyc} status={client.kycStatus} gateStatus={client.kycGateStatus} /> : null}
           </div>
           <p className="mt-2.5 text-xs text-muted-foreground">
             {renewal.id} · {renewal.policyId} · {renewal.classOfInsurance} · {renewal.insurer}
@@ -113,7 +119,7 @@ export function RenewalCasePanel({
         ) : null}
 
         {tab === "Milestones" ? (
-          <MilestonesTab renewal={renewal} canUpdate={canUpdateRenewals} userName={user.name} run={run} />
+          <MilestonesTab renewal={renewal} canUpdate={canUpdateRenewals} userName={user.name} run={run} kycApproved={client ? client.kyc : true} kycLink={client ? `/clients?client=${encodeURIComponent(client.id)}` : undefined} />
         ) : null}
         {tab === "Quotes" ? <QuotesTab renewal={renewal} canUpdate={canUpdateRenewals} run={run} /> : null}
         {tab === "Acceptance" ? (
@@ -131,17 +137,22 @@ function MilestonesTab({
   canUpdate,
   userName,
   run,
+  kycApproved,
+  kycLink,
 }: {
   renewal: RenewalCase;
   canUpdate: boolean;
   userName: string;
   run: Run;
+  kycApproved: boolean;
+  kycLink?: string;
 }) {
   const [note, setNote] = useState("");
   const [evidence, setEvidence] = useState("");
   const [saving, setSaving] = useState(false);
   const current = currentMilestone(renewal);
   const blocker = completionBlocker(renewal);
+  const kycBlocked = current?.code === "ACCEPTANCE" && !kycApproved;
   const overdue = daysOverdue(renewal);
 
   async function complete() {
@@ -221,7 +232,9 @@ function MilestonesTab({
                 {late ? (
                   <p className="text-[11px] font-medium text-danger">Overdue by {overdue} days.</p>
                 ) : null}
-                {blocker ? (
+                {kycBlocked ? (
+                  <KycBlockedNotice reasons={kycBlockedReasons(["KYC_NOT_READY"])} href={kycLink} />
+                ) : blocker ? (
                   <p className="text-[11px] text-warning">{blocker}</p>
                 ) : m.code === "APPROVAL" ? (
                   <ApprovalRequestBox renewalId={renewal.id} userName={userName} />

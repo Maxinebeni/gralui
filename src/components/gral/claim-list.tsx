@@ -3,15 +3,17 @@
 // Pieces shared by the Claims Queue and All Claims pages: loading the claims,
 // the ?claim= deep link, the tab filters and the claims table.
 
-import { useCallback, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Search } from "lucide-react";
 import { ClaimDetailPanel } from "@/components/gral/claim-detail";
+import { ALL_OPTION, ClearFilters, FilterMenu, optionsFrom } from "@/components/gral/filter-menu";
 import { Chip, FloatCard, Person, PriorityPill } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
 import { useClaims as useClaimsQuery, useRefresh } from "@/lib/queries";
 import {
+  CLAIM_STEP_DEFS,
   claimSla,
   daysOpen,
   isClosed,
@@ -60,6 +62,48 @@ export function filterClaims(claims: Claim[], tab: ClaimTab) {
     default:
       return [...claims];
   }
+}
+
+export type ClaimFilters = { insurer?: string; handler?: string; step?: string; priority?: string };
+
+/** Each filter left empty matches every claim. */
+export function applyClaimFilters(claims: Claim[], f: ClaimFilters) {
+  return claims.filter(
+    (c) =>
+      (!f.insurer || c.insurer === f.insurer) &&
+      (!f.handler || c.handler === f.handler) &&
+      (!f.step || c.step === f.step) &&
+      (!f.priority || c.priority === f.priority),
+  );
+}
+
+const NO_CLAIM_FILTERS = { insurer: ALL_OPTION, handler: ALL_OPTION, step: ALL_OPTION, priority: ALL_OPTION };
+const STEP_OPTIONS = [{ value: ALL_OPTION, label: "All steps" }, ...CLAIM_STEP_DEFS.map((s) => ({ value: s.code as string, label: s.name }))];
+
+/** The queue filters: returns the matching claims and the pills that set them. */
+export function useClaimFilters(claims: Claim[]) {
+  const [filters, setFilters] = useState(NO_CLAIM_FILTERS);
+  const set = (key: keyof typeof NO_CLAIM_FILTERS) => (value: string) => setFilters((f) => ({ ...f, [key]: value }));
+  const matching = useMemo(() => {
+    const chosen = (v: string) => (v === ALL_OPTION ? undefined : v);
+    return applyClaimFilters(claims, {
+      insurer: chosen(filters.insurer),
+      handler: chosen(filters.handler),
+      step: chosen(filters.step),
+      priority: chosen(filters.priority),
+    });
+  }, [claims, filters]);
+  const filtered = Object.values(filters).some((v) => v !== ALL_OPTION);
+  const pills = (
+    <>
+      <FilterMenu label="Insurer" value={filters.insurer} options={optionsFrom(claims.map((c) => c.insurer), "All insurers")} onChange={set("insurer")} />
+      <FilterMenu label="Handler" value={filters.handler} options={optionsFrom(claims.map((c) => c.handler), "All handlers")} onChange={set("handler")} />
+      <FilterMenu label="Step" value={filters.step} options={STEP_OPTIONS} onChange={set("step")} />
+      <FilterMenu label="Priority" value={filters.priority} options={optionsFrom(claims.map((c) => c.priority), "All priorities")} onChange={set("priority")} />
+      {filtered ? <ClearFilters onClear={() => setFilters(NO_CLAIM_FILTERS)} /> : null}
+    </>
+  );
+  return { matching, pills };
 }
 
 export function useClaims() {

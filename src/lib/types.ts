@@ -97,6 +97,8 @@ export type Client = {
   kyc: boolean;
   /** Backend gate status returned by GET /clients/{clientId}/kyc-summary. */
   kycGateStatus?: string;
+  /** NOT_STARTED, DRAFT, SUBMITTED, RETURNED, APPROVED or REJECTED, from the same summary. */
+  kycStatus?: string;
   policiesOk: boolean;
   claimsOk: boolean;
   correspondenceOk: boolean;

@@ -5,7 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft } from "lucide-react";
 import { PageHeader } from "@/components/gral/shell";
-import { FilterMenu } from "@/components/gral/filter-menu";
+import { ALL_OPTION, ClearFilters, FilterMenu, optionsFrom } from "@/components/gral/filter-menu";
 import { RenewalCasePanel, RenewalHealthChip } from "@/components/gral/renewal-case";
 import {
   CardHeader,
@@ -26,16 +26,23 @@ import { queryKeys } from "@/lib/query";
 import { useRenewals } from "@/lib/queries";
 import {
   RENEWAL_MILESTONES,
+  RENEWAL_STAGES,
   currentMilestone,
   daysOverdue,
   daysToExpiry,
+  filterRenewals,
   formatDate,
   renewalHealth,
 } from "@/lib/renewals";
 import type { RenewalCase } from "@/lib/types";
 
 const TABS = ["Overdue", "Next 30 days", "Next 60 days", "All"] as const;
-const ALL = "__all__";
+const NO_FILTERS = { insurer: ALL_OPTION, owner: ALL_OPTION, stage: ALL_OPTION, classOfInsurance: ALL_OPTION };
+const STAGE_OPTIONS = [
+  { value: ALL_OPTION, label: "All stages" },
+  ...RENEWAL_STAGES.map((s) => ({ value: s.label as string, label: s.label as string })),
+  { value: "Completed", label: "Completed" },
+];
 
 export function RenewalsView() {
   const router = useRouter();
@@ -46,18 +53,21 @@ export function RenewalsView() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("All");
   const queryClient = useQueryClient();
   const { data: allRenewals = [] } = useRenewals();
-  const [insurer, setInsurer] = useState(ALL);
+  const [filters, setFilters] = useState(NO_FILTERS);
+  const setFilter = (key: keyof typeof NO_FILTERS) => (value: string) => setFilters((f) => ({ ...f, [key]: value }));
+  const filtered = Object.values(filters).some((v) => v !== ALL_OPTION);
 
 
-  // The insurer filter applies to the whole page, so the counts match the list.
-  const renewals = useMemo(
-    () => (insurer === ALL ? allRenewals : allRenewals.filter((r) => r.insurer === insurer)),
-    [allRenewals, insurer],
-  );
-  const insurerOptions = [
-    { value: ALL, label: "All insurers" },
-    ...[...new Set(allRenewals.map((r) => r.insurer))].sort().map((i) => ({ value: i, label: i })),
-  ];
+  // The filters apply to the whole page, so the counts match the list.
+  const renewals = useMemo(() => {
+    const chosen = (v: string) => (v === ALL_OPTION ? undefined : v);
+    return filterRenewals(allRenewals, {
+      insurer: chosen(filters.insurer),
+      owner: chosen(filters.owner),
+      stage: chosen(filters.stage),
+      classOfInsurance: chosen(filters.classOfInsurance),
+    });
+  }, [allRenewals, filters]);
 
   const open = allRenewals.find((r) => r.id === openId) ?? null;
   const setOpen = (r: RenewalCase | null) => {
@@ -85,14 +95,10 @@ export function RenewalsView() {
 
   // Open renewals by the milestone they are on; finished ones are left out.
   const active = renewals.filter((r) => currentMilestone(r));
-  const stage = (from: number, to: number) =>
-    active.filter((r) => r.completed.length + 1 >= from && r.completed.length + 1 <= to).length;
-  const stageCounts = [
-    { label: "Preparation", count: stage(1, 3) },
-    { label: "Quotes & approval", count: stage(4, 6) },
-    { label: "Placement", count: stage(7, 8) },
-    { label: "Delivery", count: stage(9, 10) },
-  ];
+  const stageCounts = RENEWAL_STAGES.map((s) => ({
+    label: s.label,
+    count: active.filter((r) => r.completed.length + 1 >= s.from && r.completed.length + 1 <= s.to).length,
+  }));
 
   const byInsurer = Object.entries(
     renewals.reduce<Record<string, number>>((acc, r) => ({ ...acc, [r.insurer]: (acc[r.insurer] ?? 0) + 1 }), {}),
@@ -122,7 +128,15 @@ export function RenewalsView() {
     <>
       <PageHeader
         title="Renewals Pipeline"
-        extraPills={<FilterMenu label="Insurer" value={insurer} options={insurerOptions} onChange={setInsurer} />}
+        extraPills={
+          <>
+            <FilterMenu label="Insurer" value={filters.insurer} options={optionsFrom(allRenewals.map((r) => r.insurer), "All insurers")} onChange={setFilter("insurer")} />
+            <FilterMenu label="Owner" value={filters.owner} options={optionsFrom(allRenewals.map((r) => r.owner), "All owners")} onChange={setFilter("owner")} />
+            <FilterMenu label="Stage" value={filters.stage} options={STAGE_OPTIONS} onChange={setFilter("stage")} />
+            <FilterMenu label="Class" value={filters.classOfInsurance} options={optionsFrom(allRenewals.map((r) => r.classOfInsurance), "All classes")} onChange={setFilter("classOfInsurance")} />
+            {filtered ? <ClearFilters onClear={() => setFilters(NO_FILTERS)} /> : null}
+          </>
+        }
       />
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

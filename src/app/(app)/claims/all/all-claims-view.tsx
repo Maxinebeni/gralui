@@ -12,6 +12,7 @@ import {
   byUrgency,
   filterClaims,
   matchesClaim,
+  useClaimFilters,
   useClaims,
   useOpenClaim,
   type ClaimTab,
@@ -27,12 +28,13 @@ export function AllClaimsView() {
   const [query, setQuery] = useState("");
 
   const [range, setRange] = useState<DateRange>("all");
+  const { matching, pills } = useClaimFilters(claims);
   const rows = useMemo(
     () =>
-      filterClaims(claims, tab)
+      filterClaims(matching, tab)
         .filter((c) => matchesClaim(c, query) && withinRange(c.dateReported, range))
         .sort(byUrgency),
-    [claims, tab, query, range],
+    [matching, tab, query, range],
   );
 
   if (openId) {
@@ -45,12 +47,15 @@ export function AllClaimsView() {
       <PageHeader
         title="All Claims"
         extraPills={
-          <FilterMenu
-            label="Reported"
-            value={range}
-            options={DATE_RANGE_OPTIONS}
-            onChange={(v) => setRange(v as DateRange)}
-          />
+          <>
+            <FilterMenu
+              label="Reported"
+              value={range}
+              options={DATE_RANGE_OPTIONS}
+              onChange={(v) => setRange(v as DateRange)}
+            />
+            {pills}
+          </>
         }
       />
       <FloatCard className="mt-5 overflow-hidden">

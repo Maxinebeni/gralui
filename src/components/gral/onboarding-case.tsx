@@ -5,6 +5,7 @@
 // Steps 1 and 2 are the backend's lead; steps 3 to 11 are one policy track.
 // When a lead has several policies, tabs above the tracker switch between them.
 
+import { isKycBlocker, kycBlockedReasons, kycHref } from "@/lib/kyc";
 import { confirmLead, onboardingOptions, runTrackAction, type LeadDetail, type TrackDetail } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import {
@@ -28,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { ArrowLeft, ArrowRight, Check, ExternalLink, Plus } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { KycBlockedNotice } from "./kyc-badge";
 import { KycReviewerAssignment } from "./kyc-reviewer-assignment";
 import {
   AssessmentForm,
@@ -483,7 +485,8 @@ function StepDetail({
 
         {active && open ? (
           <div className="space-y-3">
-            {onTrack && t!.blockers.length ? <Blockers codes={t!.blockers} /> : null}
+            {onTrack ? <KycBlockedNotice reasons={kycBlockedReasons(t!.blockers)} href={perms.canReadKyc ? kycHref(t!.clientId, t!.kyc?.caseId) : undefined} /> : null}
+            {onTrack ? <Blockers codes={t!.blockers.filter((b) => !isKycBlocker(b))} /> : null}
             {n === 1 && !l.ownerId ? perms.canAssignLead ? <AssignForm lead={l} onDone={onChanged} /> : <Waiting who="CRM Manager" /> : null}
             {n === 1 && l.ownerId && !l.confirmed ? (
               perms.canConfirmLead ? (

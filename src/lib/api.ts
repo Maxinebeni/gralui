@@ -32,6 +32,8 @@ import {
 } from "./mock-clients";
 import { DEMO_ADMIN_ID, PERMISSIONS, ROLES_DATA, USERS_DATA } from "./mock-admin";
 import { DEMO_KYC_REVIEWS, DEMO_KYC_TEMPLATES, DEMO_LEADS, DEMO_TRACKS } from "./mock-leads";
+import type { ImportBatch, ImportIssue, ImportMode } from "./imports";
+import { DEMO_DRY_RUN_ISSUES, DEMO_DRY_RUN_SHEETS, DEMO_IMPORTS, newDemoImport } from "./mock-imports";
 import { mockListNotifications, mockMarkNotificationRead, mockUnreadCount } from "./mock-notifications";
 import {
   mockAddContact,
@@ -408,6 +410,7 @@ export async function listClients(query = ""): Promise<Client[]> {
         try {
           const kyc = await readOnboarding<KycGate>(`/api/v1/clients/${s.id}/kyc-summary`, "Could not load the KYC summary.");
           kycGateStatus = kyc?.gateStatus ?? "NOT_STARTED";
+          client.kycStatus = kyc?.status ?? "NOT_STARTED";
         } catch (err) {
           console.warn(`Could not load KYC summary for ${s.reference}:`, err);
           kycGateStatus = "UNAVAILABLE";
@@ -1124,6 +1127,9 @@ export async function completeRenewalMilestone(
   const blocker = completionBlocker(c);
   if (blocker) throw new Error(blocker);
   const m = currentMilestone(c)!;
+  if (m.code === "ACCEPTANCE" && CLIENTS.find((x) => x.id === c.clientId)?.kyc === false) {
+    throw new Error(ONBOARDING_MESSAGES.KYC_NOT_READY);
+  }
   // Internal approval goes through the Approvals inbox (APR-01), never a tick box.
   if (m.code === "APPROVAL") {
     throw new Error("Internal approval is recorded in the Approvals inbox. Use Request approval.");
@@ -3717,12 +3723,12 @@ function demoLeadView(l: Lead): Lead {
 
 function demoKycGate(clientId: string): KycGate {
   const r = DEMO_KYC_REVIEWS.find((x) => x.clientId === clientId);
-  if (!r) return { clientId, status: "NOT_STARTED", gateStatus: "NOT_STARTED", missingRequirements: [] };
+  if (!r) return { clientId, status: "NOT_STARTED", gateStatus: "KYC_APPROVAL_REQUIRED", missingRequirements: [] };
   return {
     clientId,
     caseId: r.id,
     status: r.status,
-    gateStatus: demoKycView(r).blockers.includes("KYC_TEMPLATE_CHANGED") ? "KYC_TEMPLATE_CHANGED" : r.status === "APPROVED" ? "READY" : r.status,
+    gateStatus: demoKycView(r).blockers.includes("KYC_TEMPLATE_CHANGED") ? "KYC_TEMPLATE_CHANGED" : r.status === "APPROVED" ? "READY" : "KYC_APPROVAL_REQUIRED",
     completeDocumentsAt: r.completeDocumentsAt,
     dueAt: r.dueAt,
     revisedDueAt: r.revisedDueAt,
@@ -4888,4 +4894,59 @@ export async function requestPasswordReset(email: string): Promise<void> {
   });
   if (res.status === 429) throw new Error("Too many requests. Please wait a few minutes and try again.");
   if (!res.ok && res.status !== 202) throw new Error("Could not send the reset email. Please try again.");
+}
+
+/* ------------------------------ Data import (IMP-02, IMP-03) ------------------------------ */
+// These routes follow the API proposed in the backend's implementation guide;
+// IMP-02 is being built, so check them against /v3/api-docs when it lands.
+
+async function importProblem(res: Response, fallback: string) {
+  if (res.status === 404) return "Data import is not available on this server yet.";
+  return problemMessage(res, fallback);
+}
+
+export async function listImports(): Promise<ImportBatch[]> {
+  if (MOCK_AUTH) return [...DEMO_IMPORTS];
+  const res = await apiFetch("/api/v1/imports?size=100");
+  if (!res.ok) throw new Error(await importProblem(res, "Could not load the imports."));
+  return ((await res.json()) as Page<ImportBatch>).items;
+}
+
+export async function getImportBatch(id: string): Promise<ImportBatch | null> {
+  if (MOCK_AUTH) return DEMO_IMPORTS.find((b) => b.id === id) ?? null;
+  const res = await apiFetch(`/api/v1/imports/${encodeURIComponent(id)}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await importProblem(res, "Could not load this import."));
+  return (await res.json()) as ImportBatch;
+}
+
+export async function uploadImport(file: File, mode: ImportMode, uploadedBy: string): Promise<ImportBatch> {
+  if (MOCK_AUTH) return newDemoImport(file.name, mode, uploadedBy);
+  const form = new FormData();
+  form.append("file", file);
+  const res = await apiFetch(`/api/v1/imports?mode=${mode}`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await importProblem(res, "Could not upload this file."));
+  return (await res.json()) as ImportBatch;
+}
+
+/** The dry run: checks every row and writes no business records. */
+export async function validateImport(id: string): Promise<ImportBatch> {
+  if (MOCK_AUTH) {
+    const batch = DEMO_IMPORTS.find((b) => b.id === id);
+    if (!batch) throw new Error("This import could not be found.");
+    Object.assign(batch, { status: "VALIDATED", validatedAt: new Date().toISOString(), sheets: DEMO_DRY_RUN_SHEETS, fileProblems: [] });
+    return { ...batch };
+  }
+  const res = await apiFetch(`/api/v1/imports/${encodeURIComponent(id)}/validate`, { method: "POST" });
+  if (!res.ok) throw new Error(await importProblem(res, "Could not check this file."));
+  return (await res.json()) as ImportBatch;
+}
+
+export async function listImportIssues(id: string): Promise<ImportIssue[]> {
+  if (MOCK_AUTH) return DEMO_DRY_RUN_ISSUES;
+  return collectPages(async (page) => {
+    const res = await apiFetch(`/api/v1/imports/${encodeURIComponent(id)}/issues?page=${page}&size=100`);
+    if (!res.ok) throw new Error(await importProblem(res, "Could not load the issues."));
+    return (await res.json()) as Page<ImportIssue>;
+  });
 }

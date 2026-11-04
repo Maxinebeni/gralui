@@ -41,3 +41,22 @@ export function FilterMenu({
     </DropdownMenu>
   );
 }
+
+/** The value of a filter's "all" option. */
+export const ALL_OPTION = "__all__";
+
+/** An "all" option followed by each distinct value, sorted. */
+export function optionsFrom(values: string[], allLabel: string, labelOf: (value: string) => string = (v) => v) {
+  return [
+    { value: ALL_OPTION, label: allLabel },
+    ...[...new Set(values.filter(Boolean))].sort().map((value) => ({ value, label: labelOf(value) })),
+  ];
+}
+
+export function ClearFilters({ onClear }: { onClear: () => void }) {
+  return (
+    <button type="button" onClick={onClear} className="px-1.5 text-xs font-medium text-primary underline underline-offset-4 hover:opacity-70">
+      Clear filters
+    </button>
+  );
+}

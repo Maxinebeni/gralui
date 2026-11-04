@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Mail, Search, ShieldCheck, UserCheck, UserPlus, UserX } from "lucide-react";
+import { ALL_OPTION, ClearFilters, FilterMenu } from "@/components/gral/filter-menu";
 import { PageHeader, SlideOver } from "@/components/gral/shell";
 import { Td, Th } from "@/components/gral/claim-list";
 import {
@@ -41,6 +42,9 @@ export function UsersView() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("All");
   const [query, setQuery] = useState("");
+  // Roles & Permissions links here with ?role=CODE to show who holds a role.
+  const [roleFilter, setRoleFilter] = useState(searchParams.get("role") ?? ALL_OPTION);
+  const [typeFilter, setTypeFilter] = useState(ALL_OPTION);
   const [inviteOpen, setInviteOpen] = useState(false);
 
   const reload = useCallback(() => {
@@ -63,6 +67,8 @@ export function UsersView() {
     const status = TAB_STATUS[tab];
     return all
       .filter((u) => !status || u.status === status)
+      .filter((u) => roleFilter === ALL_OPTION || u.roles.includes(roleFilter))
+      .filter((u) => typeFilter === ALL_OPTION || u.profileCategory === typeFilter)
       .filter(
         (u) =>
           !q ||
@@ -71,7 +77,7 @@ export function UsersView() {
           u.roles.some((c) => roleName(c, roles).toLowerCase().includes(q)),
       )
       .sort((a, b) => a.fullName.localeCompare(b.fullName));
-  }, [all, tab, query, roles]);
+  }, [all, tab, query, roles, roleFilter, typeFilter]);
 
   const openId = searchParams.get("user");
   const open = all.find((u) => u.id === openId) ?? null;
@@ -90,6 +96,37 @@ export function UsersView() {
     <>
       <PageHeader
         title="Users"
+        extraPills={
+          <>
+            <FilterMenu
+              label="Role"
+              value={roleFilter}
+              options={[
+                { value: ALL_OPTION, label: "All roles" },
+                ...[...roles].sort((a, b) => a.name.localeCompare(b.name)).map((r) => ({ value: r.code, label: r.name })),
+              ]}
+              onChange={setRoleFilter}
+            />
+            <FilterMenu
+              label="Account"
+              value={typeFilter}
+              options={[
+                { value: ALL_OPTION, label: "All accounts" },
+                { value: "BUSINESS", label: CATEGORY_LABEL.BUSINESS },
+                { value: "ADMINISTRATION", label: CATEGORY_LABEL.ADMINISTRATION },
+              ]}
+              onChange={setTypeFilter}
+            />
+            {roleFilter !== ALL_OPTION || typeFilter !== ALL_OPTION ? (
+              <ClearFilters
+                onClear={() => {
+                  setRoleFilter(ALL_OPTION);
+                  setTypeFilter(ALL_OPTION);
+                }}
+              />
+            ) : null}
+          </>
+        }
         action={
           rights.canInvite ? (
             <NavyButton className="px-4 py-2 text-sm" onClick={() => setInviteOpen(true)}>

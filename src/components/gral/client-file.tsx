@@ -10,6 +10,7 @@ import { listClientClaims, listClientPolicies } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { canAccessPath, clientEditPermissions, clientPermissions, documentPermissions } from "@/lib/permissions";
 import type { Client, ClientClaim, Policy } from "@/lib/types";
+import { KycBadge } from "@/components/gral/kyc-badge";
 import { Chip, Dot, NavyButton, NotRecorded, OutlineButton, Recorded, SegmentedTabs, TextLink } from "./ui";
 import { PolicyForm } from "./policy-form";
 import { DocumentPanel } from "./documents";
@@ -94,6 +95,7 @@ export function ClientFile({
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-lg font-semibold tracking-tight">{client.name}</span>
               {client.nonCompliant ? <Chip tone="danger">Non-Compliant</Chip> : <Chip tone="success">Compliant</Chip>}
+              <KycBadge kyc={client.kyc} status={client.kycStatus} gateStatus={client.kycGateStatus} />
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
               {client.id} · {client.type} · <Recorded value={client.sector} /> · {client.activePolicies} active{" "}

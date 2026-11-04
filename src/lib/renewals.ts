@@ -99,3 +99,30 @@ export function completionBlocker(c: RenewalCase): string | null {
   }
   return null;
 }
+
+/** The pipeline's stages, by the milestone a renewal is on. */
+export const RENEWAL_STAGES = [
+  { label: "Preparation", from: 1, to: 3 },
+  { label: "Quotes & approval", from: 4, to: 6 },
+  { label: "Placement", from: 7, to: 8 },
+  { label: "Delivery", from: 9, to: 10 },
+] as const;
+
+export function renewalStage(c: RenewalCase): string {
+  if (!currentMilestone(c)) return "Completed";
+  const step = c.completed.length + 1;
+  return RENEWAL_STAGES.find((s) => step >= s.from && step <= s.to)?.label ?? "Completed";
+}
+
+export type RenewalFilters = { insurer?: string; owner?: string; stage?: string; classOfInsurance?: string };
+
+/** Each filter left empty matches every renewal. */
+export function filterRenewals(cases: RenewalCase[], f: RenewalFilters) {
+  return cases.filter(
+    (c) =>
+      (!f.insurer || c.insurer === f.insurer) &&
+      (!f.owner || c.owner === f.owner) &&
+      (!f.classOfInsurance || c.classOfInsurance === f.classOfInsurance) &&
+      (!f.stage || renewalStage(c) === f.stage),
+  );
+}
