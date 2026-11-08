@@ -45,6 +45,7 @@ import { formatDate } from "@/lib/renewals";
 import type { Claim, ClaimFollowUp } from "@/lib/types";
 import { AmountInput } from "./amount-input";
 import { ClaimSlaChip } from "./claim-list";
+import { BackendClaimWorkflow, ClaimHistoryList } from "./claim-workflow";
 import { DocumentPanel, FilePickButton } from "./documents";
 import { ReviewDialog } from "./review-dialog";
 import { Chip, Dot, NavyButton, OutlineButton, Person, PriorityPill, SegmentedTabs } from "./ui";
@@ -127,7 +128,11 @@ export function ClaimDetailPanel({
       </div>
 
       <div className="px-5 pt-5 sm:px-8">
-        <CurrentStep claim={claim} perms={perms} role={user.role} userName={user.name} run={run} />
+        {claim.serverState ? (
+          <BackendClaimWorkflow claim={claim} onChanged={onChanged} />
+        ) : (
+          <CurrentStep claim={claim} perms={perms} role={user.role} userName={user.name} run={run} />
+        )}
       </div>
 
       <div className="px-5 py-7 sm:px-8">
@@ -141,8 +146,30 @@ export function ClaimDetailPanel({
             </p>
           )
         ) : null}
-        {tab === "Follow-ups" ? <FollowUpsTab claim={claim} /> : null}
-        {tab === "Activity Log" ? <EventList events={[...claim.history].reverse()} empty="No activity yet." /> : null}
+        {tab === "Follow-ups" ? (
+          claim.serverState ? (
+            <ClaimHistoryList
+              claim={claim}
+              only={[
+                "INSURER_SUBMITTED",
+                "INSURER_ACKNOWLEDGED",
+                "FOLLOW_UP_RECORDED",
+                "INSURER_RESPONSE_RECORDED",
+                "INSURER_INFORMATION_SENT",
+                "ESCALATED_TO_TECHNICAL_DIRECTOR",
+              ]}
+            />
+          ) : (
+            <FollowUpsTab claim={claim} />
+          )
+        ) : null}
+        {tab === "Activity Log" ? (
+          claim.serverState ? (
+            <ClaimHistoryList claim={claim} />
+          ) : (
+            <EventList events={[...claim.history].reverse()} empty="No activity yet." />
+          )
+        ) : null}
         {tab === "Internal Notes" ? (
           <NotesTab
             claim={claim}
@@ -176,7 +203,7 @@ export function ClaimDetailPanel({
 
 function Stepper({ claim }: { claim: Claim }) {
   const currentN = stepDef(claim.step).n;
-  const closed = isClosed(claim);
+  const closed = isClosed(claim) || claim.serverState === "CLOSED";
   return (
     <div className="mt-4 overflow-x-auto pb-2">
       <div className="flex min-w-[520px] items-start gap-1">

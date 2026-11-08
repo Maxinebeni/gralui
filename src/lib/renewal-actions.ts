@@ -150,6 +150,14 @@ const prefillFromProposal = (c: RenewalCase): Values => {
     expiryDate: q.expiryDate,
     premium: String(q.premium),
     terms: q.terms,
+    // The schedule must match the agreed money too, so it starts from the quote's figures.
+    ...(q.financials
+      ? {
+          netPremium: String(q.financials.netPremium),
+          amountPaid: String(q.financials.amountPaid),
+          commissionRate: String(Math.round(q.financials.commissionRate * 10000) / 100),
+        }
+      : {}),
   };
 };
 
