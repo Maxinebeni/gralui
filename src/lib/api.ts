@@ -84,6 +84,7 @@ import { demoCanRunTrackAction } from "./permissions";
 import { INSURER_GROUPS, PRODUCT_GROUPS, type OptionGroup } from "./reference-data";
 import { RENEWAL_MILESTONES, completionBlocker, currentMilestone, formatDate, milestoneDue, todayIso } from "./renewals";
 import type {
+  RenewalMilestoneCode,
   AccessCategory,
   ActivityItem,
   ApprovalDecision,
@@ -1111,7 +1112,323 @@ function saveRenewal(updated: RenewalCase): RenewalCase {
 }
 
 export async function listRenewals(): Promise<RenewalCase[]> {
-  return [...RENEWAL_CASES];
+  if (MOCK_AUTH) return [...RENEWAL_CASES];
+  return listBackendRenewals();
+}
+
+/* ------------------------- Renewals on the backend (REN-01 to REN-06) ------------------------- */
+// The backend keeps one renewal case per policy period, with ten milestones
+// that match the screen's ten (ACTIVATION is "Extract & Brief" and PLACEMENT
+// is "Acceptance & Placement"). Each action is its own command; the case's
+// availableActions say which ones the signed-in user may run right now.
+
+type RenewalMilestoneView = {
+  code: string;
+  dueDate: string | null;
+  status: string;
+  assigneeId?: string | null;
+  responsibleRoles?: string[];
+};
+type RenewalQuoteView = {
+  id: string;
+  version: number;
+  insurerId: string;
+  productId: string;
+  effectDate: string;
+  expiryDate: string;
+  premium: number;
+  currency: string;
+  terms: string;
+};
+type RenewalEvidenceView = { purpose: string; occurredAt: string; detail?: string | null };
+/** Operational details added in the November renewals update. Older snapshots may leave them out. */
+type RenewalOperationsView = {
+  lateDate?: string | null;
+  underwriterId?: string | null;
+  technicalDirectorId?: string | null;
+  recovery?: { dueDate?: string | null; deadline?: string | null } | null;
+  recoveryDueDate?: string | null;
+};
+type RenewalView = {
+  id: string;
+  policyId: string;
+  policyPeriodId: string;
+  clientId: string;
+  ownerId?: string;
+  state: string;
+  version: number;
+  expiryDate: string;
+  milestones: RenewalMilestoneView[];
+  quotes: RenewalQuoteView[];
+  proposal?: {
+    quoteId: string;
+    quoteVersion: number;
+    annualCommissionRwf?: number | string | null;
+    commissionBasis?: string | null;
+  } | null;
+  approvalRequestId?: string | null;
+  evidence: RenewalEvidenceView[];
+  operations?: RenewalOperationsView | null;
+  successorPolicyId?: string | null;
+  risks: string[];
+  blockers: string[];
+  availableActions: string[];
+};
+
+/** Server milestone code to the screen's code. */
+const RENEWAL_CODE: Record<string, RenewalMilestoneCode> = {
+  ACTIVATION: "BRIEF",
+  VISIT: "VISIT",
+  NOTICE: "NOTICE",
+  RFQ: "RFQ",
+  QUOTES: "QUOTES",
+  APPROVAL: "APPROVAL",
+  PLACEMENT: "ACCEPTANCE",
+  SCHEDULE: "SCHEDULE",
+  DELIVERY: "DELIVERY",
+  COMPLETION: "COMPLETION",
+};
+const DONE_RENEWAL_STATUS = ["COMPLETED", "SATISFIED", "SKIPPED", "WAIVED", "NOT_APPLICABLE"];
+
+/** The evidence that finishes each milestone, so the screen can show the real date it was done. */
+const RENEWAL_DONE_EVIDENCE: Partial<Record<string, string[]>> = {
+  VISIT: ["VISIT"],
+  NOTICE: ["NOTICE"],
+  RFQ: ["RFQ"],
+  QUOTES: ["COMPARISON", "QUOTE"],
+  APPROVAL: ["CLIENT_PRESENTATION"],
+  PLACEMENT: ["PLACEMENT", "CLIENT_ACCEPTANCE"],
+  SCHEDULE: ["SCHEDULE"],
+  DELIVERY: ["SCHEDULE_DELIVERY"],
+};
+
+function renewalDoneDate(v: RenewalView, serverCode: string): string | undefined {
+  const purposes = RENEWAL_DONE_EVIDENCE[serverCode];
+  if (!purposes) return undefined;
+  const dates = v.evidence.filter((e) => purposes.includes(e.purpose.toUpperCase())).map((e) => e.occurredAt);
+  return dates.sort().at(-1)?.slice(0, 10);
+}
+
+/** Short references shown on screen (REN-1A2B3C4D), mapped to the backend UUID. */
+const RENEWAL_INDEX = new Map<string, string>();
+const RENEWAL_POLICIES = new Map<string, PolicyView>();
+
+function renewalRef(id: string) {
+  return `REN-${id.slice(0, 8).toUpperCase()}`;
+}
+
+async function renewalPolicy(id: string): Promise<PolicyView | null> {
+  const cached = RENEWAL_POLICIES.get(id);
+  if (cached) return cached;
+  const res = await apiFetch(`/api/v1/policies/${id}`);
+  if (!res.ok) return null;
+  const view = (await res.json()) as PolicyView;
+  RENEWAL_POLICIES.set(id, view);
+  return view;
+}
+
+function toRenewalCase(
+  v: RenewalView,
+  policy: PolicyView | null,
+  clients: Client[],
+  managers: ManagerChoice[],
+  insurers: InsurerView[],
+): RenewalCase {
+  const ref = renewalRef(v.id);
+  RENEWAL_INDEX.set(ref, v.id);
+  const period = policy?.periods.find((p) => p.id === v.policyPeriodId) ?? policy?.periods[0];
+  const client = clients.find((c) => c.uuid === v.clientId);
+  const insurerName = (id: string) => insurers.find((i) => i.id === id)?.name ?? "Insurer";
+
+  const milestones = v.milestones
+    .filter((m) => RENEWAL_CODE[m.code])
+    .map((m) => ({
+      code: RENEWAL_CODE[m.code]!,
+      serverCode: m.code,
+      dueDate: m.dueDate,
+      status: m.status,
+      responsibleRoles: m.responsibleRoles ?? [],
+      assigneeId: m.assigneeId ?? undefined,
+    }));
+
+  // The screen reads the current milestone as the first unfinished one, so
+  // keep only the unbroken run of finished milestones from the first.
+  const completed: RenewalCase["completed"] = [];
+  for (const def of RENEWAL_MILESTONES) {
+    const m = milestones.find((x) => x.code === def.code);
+    if (!m || !DONE_RENEWAL_STATUS.includes(m.status.toUpperCase())) break;
+    completed.push({
+      code: def.code,
+      completedAt: renewalDoneDate(v, m.serverCode) ?? m.dueDate ?? todayIso(),
+      completedBy: "Recorded in GRAL's system",
+      note: `${def.name} recorded`,
+    });
+  }
+
+  const acceptance = v.evidence.find((e) => /ACCEPT/i.test(e.purpose));
+  return {
+    id: ref,
+    policyId: policy?.policyNumber ?? period?.externalPolicyNumber ?? "Policy",
+    clientId: client?.id ?? "",
+    client: client?.name ?? "Client",
+    classOfInsurance: period?.productName ?? "",
+    insurer: period?.insurerName ?? "",
+    premium: period ? Number(latestTerms(period)?.totalPremium ?? 0) : 0,
+    expiryDate: v.expiryDate,
+    owner: managerName(v.ownerId, managers),
+    completed,
+    quotes: v.quotes.map((q) => ({
+      id: q.id,
+      insurer: insurerName(q.insurerId),
+      premium: Number(q.premium),
+      terms: q.terms,
+      recommended: v.proposal?.quoteId === q.id,
+    })),
+    acceptance: acceptance
+      ? {
+          quoteId: v.proposal?.quoteId ?? "",
+          acceptedAt: acceptance.occurredAt.slice(0, 10),
+          recordedBy: "Recorded in GRAL's system",
+          evidence: acceptance.detail ?? "Written acceptance on file",
+        }
+      : undefined,
+    backend: {
+      id: v.id,
+      version: v.version,
+      state: v.state,
+      availableActions: v.availableActions ?? [],
+      blockers: v.blockers ?? [],
+      risks: v.risks ?? [],
+      milestones,
+      policyUuid: v.policyId,
+      periodId: v.policyPeriodId,
+      clientUuid: v.clientId,
+      insurerId: period?.insurerId,
+      productId: period?.productId,
+      quotes: v.quotes.map((q) => ({
+        id: q.id,
+        version: q.version,
+        insurerId: q.insurerId,
+        productId: q.productId,
+        effectDate: q.effectDate,
+        expiryDate: q.expiryDate,
+        premium: Number(q.premium),
+        terms: q.terms,
+      })),
+      proposalQuoteId: v.proposal?.quoteId,
+      annualCommissionRwf:
+        v.proposal?.annualCommissionRwf === null || v.proposal?.annualCommissionRwf === undefined
+          ? undefined
+          : Number(v.proposal.annualCommissionRwf),
+      commissionBasis: v.proposal?.commissionBasis ?? undefined,
+      approvalRequestId: v.approvalRequestId ?? undefined,
+      successorPolicyUuid: v.successorPolicyId ?? undefined,
+      lateDate: v.operations?.lateDate?.slice(0, 10) ?? undefined,
+      recoveryDueDate:
+        (v.operations?.recovery?.dueDate ?? v.operations?.recovery?.deadline ?? v.operations?.recoveryDueDate)?.slice(0, 10) ??
+        undefined,
+      underwriterId: v.operations?.underwriterId ?? undefined,
+      technicalDirectorId: v.operations?.technicalDirectorId ?? undefined,
+    },
+  };
+}
+
+async function renewalContext() {
+  const [clients, managers, catalog] = await Promise.all([
+    listClientChoices().catch(() => [] as Client[]),
+    loadManagers(),
+    loadCatalog(),
+  ]);
+  return { clients, managers, insurers: catalog?.insurers ?? [] };
+}
+
+async function listBackendRenewals(): Promise<RenewalCase[]> {
+  const views = await readAllOnboarding<RenewalView>("/api/v1/renewals?sort=expiryDate", "Could not load the renewals.");
+  const ctx = await renewalContext();
+  return mapLimited(views, 4, async (v) =>
+    toRenewalCase(v, await renewalPolicy(v.policyId), ctx.clients, ctx.managers, ctx.insurers),
+  );
+}
+
+/** One renewal from the server, for refreshing a case after an action. */
+async function getBackendRenewal(uuid: string): Promise<RenewalCase> {
+  const v = await readOnboarding<RenewalView>(`/api/v1/renewals/${uuid}`, "Could not load this renewal.");
+  if (!v) throw new Error("This renewal could not be found.");
+  const ctx = await renewalContext();
+  return toRenewalCase(v, await renewalPolicy(v.policyId), ctx.clients, ctx.managers, ctx.insurers);
+}
+
+/** Choices the renewal action forms need. */
+export async function renewalChoices(): Promise<{
+  insurers: { id: string; name: string }[];
+  products: { id: string; name: string }[];
+  managers: { id: string; name: string }[];
+}> {
+  const [catalog, managers] = await Promise.all([loadCatalog(), loadManagers()]);
+  return {
+    insurers: (catalog?.insurers ?? []).filter((i) => i.active).map((i) => ({ id: i.id, name: i.name })),
+    products: (catalog?.products ?? []).filter((p) => p.active).map((p) => ({ id: p.id, name: p.name })),
+    managers: managers.map((m) => ({ id: m.id, name: m.fullName })),
+  };
+}
+
+/** Who the server allows to take a specialist role on this renewal (underwriter or Technical Director). */
+export async function listRenewalSpecialists(
+  c: RenewalCase,
+  assignment: "UNDERWRITER" | "TECHNICAL_DIRECTOR",
+): Promise<{ id: string; name: string }[]> {
+  if (!c.backend) return [];
+  // This list pages with hasMore instead of a total count.
+  const people: { id: string; fullName?: string; name?: string; email?: string }[] = [];
+  for (let page = 0; page < 50; page++) {
+    const result = await readOnboarding<{ items: typeof people; hasMore?: boolean; totalElements?: number }>(
+      `/api/v1/renewals/${c.backend.id}/specialists?assignment=${assignment}&page=${page}&size=20`,
+      "Could not load the eligible staff.",
+    );
+    if (!result) throw new Error("Could not load the eligible staff.");
+    people.push(...(result.items ?? []));
+    const more = result.hasMore ?? (result.totalElements !== undefined && people.length < result.totalElements);
+    if (!more || !result.items?.length) break;
+  }
+  return people.map((p) => ({ id: p.id, name: p.fullName ?? p.name ?? p.email ?? "Staff member" }));
+}
+
+/** What a renewal action form collected. Files are uploaded as evidence first. */
+export type RenewalActionInput = {
+  /** The path after /renewals/{id}/, e.g. "record-visit". */
+  path: string;
+  /** Builds the request body from the uploaded evidence and a fresh command. */
+  body: (helpers: {
+    command: (reason?: string) => Record<string, unknown>;
+    proof: (key: string) => { documentId: string; documentVersion: number; occurredAt: string; detail?: string };
+  }) => Record<string, unknown>;
+  /** Files to upload first, by key, with the date they relate to. */
+  files: Record<string, EvidenceInput>;
+  classification: DocumentClassification;
+  /** The exact evidence purpose the action expects, e.g. VISIT. */
+  purpose: string;
+};
+
+/** Runs one renewal action and returns the refreshed case. */
+export async function runRenewalAction(c: RenewalCase, input: RenewalActionInput): Promise<RenewalCase> {
+  const backend = c.backend;
+  if (!backend) throw new Error("This renewal is sample data and cannot be saved.");
+  const proofs = new Map<string, Awaited<ReturnType<typeof uploadProof>>>();
+  for (const [key, evidence] of Object.entries(input.files)) {
+    // The server only accepts evidence linked with the exact purpose its action expects.
+    proofs.set(key, await uploadProof({ type: "RENEWAL", id: backend.id }, evidence, input.purpose, input.classification));
+  }
+  const body = input.body({
+    command: (reason) => commandEnvelope(backend.version, reason),
+    proof: (key) => {
+      const p = proofs.get(key);
+      if (!p) throw new Error("Attach the evidence file.");
+      return { documentId: p.documentId, documentVersion: p.documentVersion, occurredAt: p.occurredAt, detail: p.detail };
+    },
+  });
+  await sendOnboarding<RenewalView>("POST", `/api/v1/renewals/${backend.id}/${input.path}`, body, "Could not save this renewal step.");
+  RENEWAL_POLICIES.delete(backend.policyUuid);
+  return getBackendRenewal(backend.id);
 }
 
 export async function getRenewalMonthly(): Promise<RenewalMonth[]> {
@@ -2193,7 +2510,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 
 function usesDocumentBackend(subject: DocumentSubject) {
   // The backend accepts documents for clients, claims, leads, policy tracks and KYC reviews.
-  return !MOCK_AUTH && ["CLIENT", "CLAIM", "LEAD", "ONBOARDING", "KYC"].includes(subject.type) && UUID_PATTERN.test(subject.id);
+  return !MOCK_AUTH && ["CLIENT", "CLAIM", "LEAD", "ONBOARDING", "KYC", "RENEWAL"].includes(subject.type) && UUID_PATTERN.test(subject.id);
 }
 
 function subjectKey(subject: DocumentSubject) {
@@ -2900,7 +3217,7 @@ export async function loadCommandHistory(type: "LEAD" | "ONBOARDING" | "KYC", id
 
 /** Uploads the proof under its record with the purpose the backend checks, and returns the reference. */
 async function uploadProof(
-  subject: { type: "LEAD" | "ONBOARDING" | "KYC"; id: string },
+  subject: { type: "LEAD" | "ONBOARDING" | "KYC" | "RENEWAL"; id: string },
   input: EvidenceInput,
   purpose: string,
   classification: DocumentClassification = "CORRESPONDENCE",
@@ -4409,6 +4726,118 @@ export async function confirmClaimRegistration(id: string, by: string): Promise<
   requireOpen(c);
   if (c.step !== "REGISTER") throw new Error("This claim is already registered.");
   return saveClaim({ ...c, step: "DOCUMENTS", stepStartedAt: todayIso() }, by, "Registration confirmed; moved to Documents");
+}
+
+/* ------------------ Claim documents checklist on the backend (CLM-02) ------------------ */
+// GET /claims/{id}/documents returns the checklist the backend keeps for the
+// claim. Each item is satisfied by attaching an exact CLAIM_EVIDENCE document
+// version linked to the claim, or by recording why it does not apply. The
+// checklist is provisional and does not block submission to the insurer.
+
+type ClaimChecklistItemView = {
+  code: string;
+  label: string;
+  description?: string;
+  status: string;
+  documentId?: string | null;
+  documentVersion?: number | null;
+  notApplicableReason?: string | null;
+  version: number;
+  updatedAt?: string | null;
+};
+type ClaimChecklistView = { claimId: string; provisional: boolean; nonBlocking: boolean; items: ClaimChecklistItemView[] };
+
+export type ClaimChecklistItem = {
+  code: string;
+  label: string;
+  description: string;
+  status: "RECEIVED" | "NOT_APPLICABLE" | "MISSING";
+  /** The server's own status word, shown when it is not one of the three above. */
+  serverStatus: string;
+  documentId?: string;
+  documentVersion?: number;
+  notApplicableReason?: string;
+  updatedAt?: string;
+  version: number;
+};
+export type ClaimChecklist = { provisional: boolean; nonBlocking: boolean; items: ClaimChecklistItem[] };
+
+/** Missing words the server may use; any other status counts as in (e.g. the incident details recorded from the claim). */
+const CHECKLIST_MISSING = ["MISSING", "REQUIRED", "PENDING", "OUTSTANDING", "OPEN"];
+
+function checklistStatus(i: ClaimChecklistItemView): ClaimChecklistItem["status"] {
+  const status = (i.status ?? "").toUpperCase();
+  if (i.notApplicableReason || status === "NOT_APPLICABLE") return "NOT_APPLICABLE";
+  if (i.documentId) return "RECEIVED";
+  return CHECKLIST_MISSING.includes(status) ? "MISSING" : "RECEIVED";
+}
+
+function toChecklist(v: ClaimChecklistView): ClaimChecklist {
+  return {
+    provisional: v.provisional,
+    nonBlocking: v.nonBlocking,
+    items: (v.items ?? []).map((i) => ({
+      code: i.code,
+      label: i.label,
+      description: i.description ?? "",
+      status: checklistStatus(i),
+      serverStatus: i.status,
+      documentId: i.documentId ?? undefined,
+      documentVersion: i.documentVersion ?? undefined,
+      notApplicableReason: i.notApplicableReason ?? undefined,
+      updatedAt: i.updatedAt ?? undefined,
+      version: i.version,
+    })),
+  };
+}
+
+async function claimChecklistProblem(res: Response, fallback: string): Promise<string> {
+  const problem = await readProblem(res);
+  if (res.status === 401) return "Your session has ended. Please sign in again.";
+  if (res.status === 403) return "You do not have permission to update this claim's documents.";
+  if (res.status === 404) return "The claim or the document could not be found. Refresh and try again.";
+  if (res.status === 409) return "Someone else changed this checklist. Refresh and try again.";
+  if (res.status === 400 && problem.fields?.length) return `Please check these fields: ${problem.fields.join(", ")}.`;
+  if (problem.code) return blockerText(problem.code);
+  if (problem.title && problem.title !== "Bad Request") return problem.title;
+  return fallback;
+}
+
+/** The backend checklist for a backend claim, or null for sample claims. */
+export async function getClaimChecklist(claim: Claim): Promise<ClaimChecklist | null> {
+  if (MOCK_AUTH || !claim.uuid) return null;
+  const res = await apiFetch(`/api/v1/claims/${claim.uuid}/documents`);
+  if (!res.ok) throw new Error(await claimChecklistProblem(res, "Could not load the documents checklist."));
+  return toChecklist((await res.json()) as ClaimChecklistView);
+}
+
+/** Attach a file to one checklist item: upload it to the claim, then link the exact version. */
+export async function attachClaimChecklistDocument(claim: Claim, item: ClaimChecklistItem, file: File): Promise<ClaimChecklist> {
+  if (!claim.uuid) throw new Error("This is a sample claim; its documents stay in this tab.");
+  // The evidence must be a CLAIM_EVIDENCE version linked to this claim with
+  // purpose CLAIM_EVIDENCE (backend docs/api/claims.md).
+  const doc = await uploadDocument({ type: "CLAIM", id: claim.uuid }, file, {
+    classification: "CLAIM_EVIDENCE",
+    purpose: "CLAIM_EVIDENCE",
+  });
+  const res = await apiFetch(`/api/v1/claims/${claim.uuid}/documents/${encodeURIComponent(item.code)}`, {
+    method: "PUT",
+    body: JSON.stringify({ expectedVersion: item.version, documentId: doc.id, documentVersion: doc.version }),
+  });
+  if (!res.ok) throw new Error(await claimChecklistProblem(res, "Could not attach the file to the checklist."));
+  return toChecklist((await res.json()) as ClaimChecklistView);
+}
+
+/** Record why a checklist item does not apply to this claim. */
+export async function markClaimChecklistNotApplicable(claim: Claim, item: ClaimChecklistItem, reason: string): Promise<ClaimChecklist> {
+  if (!claim.uuid) throw new Error("This is a sample claim.");
+  if (!reason.trim()) throw new Error("Say why this document does not apply.");
+  const res = await apiFetch(`/api/v1/claims/${claim.uuid}/documents/${encodeURIComponent(item.code)}`, {
+    method: "PUT",
+    body: JSON.stringify({ expectedVersion: item.version, notApplicableReason: reason.trim() }),
+  });
+  if (!res.ok) throw new Error(await claimChecklistProblem(res, "Could not save the reason."));
+  return toChecklist((await res.json()) as ClaimChecklistView);
 }
 
 export async function fileClaimDocument(id: string, name: string, evidence: string, by: string): Promise<Claim> {

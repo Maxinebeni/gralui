@@ -54,7 +54,9 @@ export function formatDate(iso: string) {
 }
 
 export function milestoneDue(c: RenewalCase, m: MilestoneDef) {
-  return addDays(c.expiryDate, m.offset);
+  // Backend cases carry the official working-day due date for each milestone.
+  const official = c.backend?.milestones.find((x) => x.code === m.code)?.dueDate;
+  return official ?? addDays(c.expiryDate, m.offset);
 }
 
 /** Days from today until the policy expires (negative once expired). */

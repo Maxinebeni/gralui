@@ -52,7 +52,7 @@ export function RenewalsView() {
 
   const [tab, setTab] = useState<(typeof TABS)[number]>("All");
   const queryClient = useQueryClient();
-  const { data: allRenewals = [] } = useRenewals();
+  const { data: allRenewals = [], isLoading, error, refetch } = useRenewals();
   const [filters, setFilters] = useState(NO_FILTERS);
   const setFilter = (key: keyof typeof NO_FILTERS) => (value: string) => setFilters((f) => ({ ...f, [key]: value }));
   const filtered = Object.values(filters).some((v) => v !== ALL_OPTION);
@@ -154,7 +154,16 @@ export function RenewalsView() {
               {rows.map((r) => (
                 <RenewalCard key={r.id} renewal={r} onOpen={() => setOpen(r)} />
               ))}
-              {rows.length === 0 ? <p className="text-xs text-muted-foreground">No renewals in this view.</p> : null}
+              {error ? (
+                <p className="text-xs text-danger">
+                  {error instanceof Error ? error.message : "Could not load the renewals."}{" "}
+                  <button type="button" onClick={() => refetch()} className="text-primary underline underline-offset-2">
+                    Try again
+                  </button>
+                </p>
+              ) : rows.length === 0 ? (
+                <p className="text-xs text-muted-foreground">{isLoading ? "Loading renewals…" : "No renewals in this view."}</p>
+              ) : null}
             </div>
           </FloatCard>
         </div>

@@ -180,6 +180,57 @@ export type RenewalCase = {
   completed: CompletedMilestone[];
   quotes: RenewalQuote[];
   acceptance?: RenewalAcceptance;
+  /** Present when the renewal lives on GRAL's backend (REN-01 to REN-06). */
+  backend?: BackendRenewal;
+};
+
+/** What the renewal screens need to show and act on a backend renewal case. */
+export type BackendRenewal = {
+  id: string;
+  version: number;
+  state: string;
+  /** Actions the server allows the signed-in user right now, e.g. VISIT_RECORD. */
+  availableActions: string[];
+  blockers: string[];
+  risks: string[];
+  /** One per screen milestone, with the server's own due date and status. */
+  milestones: {
+    code: RenewalMilestoneCode;
+    serverCode: string;
+    dueDate: string | null;
+    status: string;
+    /** Server roles that may do this step, e.g. ACCOUNTS_EXECUTIVE. */
+    responsibleRoles: string[];
+    assigneeId?: string;
+  }[];
+  policyUuid: string;
+  periodId: string;
+  clientUuid: string;
+  insurerId?: string;
+  productId?: string;
+  /** Quotes with the IDs and versions the server needs. */
+  quotes: {
+    id: string;
+    version: number;
+    insurerId: string;
+    productId: string;
+    effectDate: string;
+    expiryDate: string;
+    premium: number;
+    terms: string;
+  }[];
+  proposalQuoteId?: string;
+  /** Annual commission on the recommended quote; it decides the approval route. */
+  annualCommissionRwf?: number;
+  commissionBasis?: string;
+  approvalRequestId?: string;
+  successorPolicyUuid?: string;
+  /** The date the case counts as late, and any agreed recovery deadline. */
+  lateDate?: string;
+  recoveryDueDate?: string;
+  /** Assigned specialists, when the server names them. */
+  underwriterId?: string;
+  technicalDirectorId?: string;
 };
  
 export type RenewalMonth = { month: string; premium: number; policies: number };

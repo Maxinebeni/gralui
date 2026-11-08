@@ -27,7 +27,7 @@ export type NavItem = {
  * table, dev branch). Add "CLAIM" and "RENEWAL" when the backend adds
  * CLAIM_READ and RENEWAL_READ — then those menus follow the backend too.
  */
-const BACKEND_MODULES = ["CLIENT", "USER", "ROLE", "SESSION", "LEAD", "KYC", "INSURER", "IMPORT"];
+const BACKEND_MODULES = ["CLIENT", "USER", "ROLE", "SESSION", "LEAD", "KYC", "INSURER", "IMPORT", "RENEWAL"];
 
 const CLAIM_ROLES: readonly Role[] = [
   "MD",
@@ -161,7 +161,16 @@ export function canAccessPath(user: SessionUser, pathname: string) {
  * acceptance). PROVISIONAL — the design's roles plus the SOP milestone
  * owners; replace with RENEWAL_* permissions once the backend has them.
  */
-export function renewalPermissions(role: Role) {
+export function renewalPermissions(user: SessionUser) {
+  if (usesBackendPermissions(user)) {
+    // The backend checks each renewal action; any renewal write permission
+    // lets the user work on a case, and the server's availableActions decide
+    // which buttons show.
+    return {
+      canUpdateRenewals: (user.permissions ?? []).some((p) => p.startsWith("RENEWAL_") && p !== "RENEWAL_READ"),
+    };
+  }
+  const role = user.role;
   return {
     canUpdateRenewals: [
       "Commercial Director",
