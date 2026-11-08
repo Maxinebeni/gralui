@@ -35,6 +35,8 @@ import {
   renewalHealth,
 } from "@/lib/renewals";
 import type { RenewalCase } from "@/lib/types";
+import { useCurrentUser } from "@/lib/auth-context";
+import { hasPermission, usesBackendPermissions } from "@/lib/permissions";
 
 const TABS = ["Overdue", "Next 30 days", "Next 60 days", "All"] as const;
 const NO_FILTERS = { insurer: ALL_OPTION, owner: ALL_OPTION, stage: ALL_OPTION, classOfInsurance: ALL_OPTION };
@@ -53,6 +55,8 @@ export function RenewalsView() {
   const [tab, setTab] = useState<(typeof TABS)[number]>("All");
   const queryClient = useQueryClient();
   const { data: allRenewals = [], isLoading, error, refetch } = useRenewals();
+  const { user } = useCurrentUser();
+  const canSeeExits = usesBackendPermissions(user) && hasPermission(user, "RENEWAL_EXIT_READ");
   const [filters, setFilters] = useState(NO_FILTERS);
   const setFilter = (key: keyof typeof NO_FILTERS) => (value: string) => setFilters((f) => ({ ...f, [key]: value }));
   const filtered = Object.values(filters).some((v) => v !== ALL_OPTION);
@@ -128,6 +132,13 @@ export function RenewalsView() {
     <>
       <PageHeader
         title="Renewals Pipeline"
+        action={
+          canSeeExits ? (
+            <Link href="/renewals/exits" className="rounded-full bg-card px-4 py-2 text-xs font-medium shadow-sm hover:text-primary">
+              Exit Register
+            </Link>
+          ) : undefined
+        }
         extraPills={
           <>
             <FilterMenu label="Insurer" value={filters.insurer} options={optionsFrom(allRenewals.map((r) => r.insurer), "All insurers")} onChange={setFilter("insurer")} />

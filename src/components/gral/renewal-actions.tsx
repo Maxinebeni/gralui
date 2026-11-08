@@ -410,7 +410,8 @@ function AssigneeSelect({
   const roles = step?.responsibleRoles ?? [];
   const wantsUnderwriter = target === "UNDERWRITER" || roles.some((r) => /UNDERWRITING/.test(r));
   const wantsDirector = target === "TECHNICAL_DIRECTOR" || roles.includes("TECHNICAL_DIRECTOR");
-  const wantsManagers = target === "OWNER" || roles.includes("ACCOUNTS_EXECUTIVE");
+  // When a step can go to an underwriter, the server has refused Accounts Executives (8 Nov test), so only underwriters are offered.
+  const wantsManagers = target === "OWNER" || (roles.includes("ACCOUNTS_EXECUTIVE") && !roles.some((r) => /UNDERWRITING/.test(r)));
   const specialist = wantsUnderwriter || wantsDirector;
   const [people, setPeople] = useState<{ id: string; name: string }[] | null>(null);
   const [error, setError] = useState<string | null>(null);

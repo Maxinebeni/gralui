@@ -218,6 +218,8 @@ export type BackendRenewal = {
     expiryDate: string;
     premium: number;
     terms: string;
+    /** Net premium, amount paid and commission (as a fraction, 0.1 = 10%). */
+    financials?: { netPremium: number; amountPaid: number; commissionRate: number };
   }[];
   proposalQuoteId?: string;
   /** Annual commission on the recommended quote; it decides the approval route. */
@@ -293,6 +295,8 @@ export type Claim = {
   uuid?: string;
   /** Backend version. Only set for backend claims. */
   version?: number;
+  /** The backend's lifecycle state, e.g. UNDER_FOLLOW_UP. Only set for backend claims. */
+  serverState?: string;
   clientId: string;
   client: string;
   policyId?: string; // unknown at registration is allowed

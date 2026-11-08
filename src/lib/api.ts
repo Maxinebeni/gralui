@@ -1,4 +1,5 @@
 import { CommandAttempt, OnboardingError, collectPages } from "./command-attempt";
+import { CLAIM_MESSAGES } from "./claim-workflow";
 // Data access for the screens. Every screen goes through these functions,
 // never through mock-data.ts directly.
 //
@@ -1139,6 +1140,7 @@ type RenewalQuoteView = {
   premium: number;
   currency: string;
   terms: string;
+  financials?: { netPremium: number | string; amountPaid: number | string; commissionRate: number | string } | null;
 };
 type RenewalEvidenceView = { purpose: string; occurredAt: string; detail?: string | null };
 /** Operational details added in the November renewals update. Older snapshots may leave them out. */
@@ -1314,6 +1316,13 @@ function toRenewalCase(
         expiryDate: q.expiryDate,
         premium: Number(q.premium),
         terms: q.terms,
+        financials: q.financials
+          ? {
+              netPremium: Number(q.financials.netPremium),
+              amountPaid: Number(q.financials.amountPaid),
+              commissionRate: Number(q.financials.commissionRate),
+            }
+          : undefined,
       })),
       proposalQuoteId: v.proposal?.quoteId,
       annualCommissionRwf:
@@ -2065,6 +2074,12 @@ async function toBackendApproval(h: BackendApprovalHistory, inInbox = false): Pr
       };
     }
   }
+  // Renewal approvals: name the client and show the annual commission that set the route.
+  let renewal: RenewalCase | null = null;
+  if (v.subjectType.toUpperCase() === "RENEWAL") {
+    renewal = await getBackendRenewal(v.subjectId).catch(() => null);
+    if (renewal) subject = { ref: `${renewal.client} · ${renewal.id}`, client: renewal.client, clientId: renewal.clientId };
+  }
   const steps: ApprovalStep[] = await Promise.all(
     [...h.steps]
       .sort((a, b) => a.number - b.number)
@@ -2117,8 +2132,9 @@ async function toBackendApproval(h: BackendApprovalHistory, inInbox = false): Pr
     summary: `Approval requested in the system for ${subject.ref}.`,
     clientId: subject.clientId,
     client: subject.client,
-    amount: onboardingTrack?.track.recommendation?.annualCommissionRwf,
-    amountLabel: onboardingTrack?.track.recommendation ? "Annual commission" : undefined,
+    amount: onboardingTrack?.track.recommendation?.annualCommissionRwf ?? renewal?.backend?.annualCommissionRwf,
+    amountLabel:
+      onboardingTrack?.track.recommendation || renewal?.backend?.annualCommissionRwf !== undefined ? "Annual commission" : undefined,
     policyVersion: v.policyVersion !== undefined ? `Policy v${v.policyVersion}` : "Backend policy",
     requestedBy: (await personName(v.initiatedBy)) ?? "Requested in the system",
     requestedAt,
@@ -3217,7 +3233,7 @@ export async function loadCommandHistory(type: "LEAD" | "ONBOARDING" | "KYC", id
 
 /** Uploads the proof under its record with the purpose the backend checks, and returns the reference. */
 async function uploadProof(
-  subject: { type: "LEAD" | "ONBOARDING" | "KYC" | "RENEWAL"; id: string },
+  subject: { type: "LEAD" | "ONBOARDING" | "KYC" | "RENEWAL" | "CLAIM"; id: string },
   input: EvidenceInput,
   purpose: string,
   classification: DocumentClassification = "CORRESPONDENCE",
@@ -4601,6 +4617,10 @@ function toClaim(v: ClaimView, clientRef: string, clientName: string, period: Po
     id: v.reference,
     uuid: v.id,
     version: v.version,
+    serverState: v.state,
+    // The backend's state decides the step shown for backend claims.
+    step: CLAIM_STEP_FOR_STATE[v.state] ?? existing?.step ?? "REGISTER",
+    stepStartedAt: (v.updatedAt ?? v.createdAt).slice(0, 10),
     clientId: clientRef,
     client: clientName,
     policyId: period?.externalPolicyNumber || undefined,
@@ -4615,6 +4635,125 @@ function toClaim(v: ClaimView, clientRef: string, clientName: string, period: Po
     handler: local?.handler ?? existing?.handler ?? "Not assigned",
     description: v.description,
   };
+}
+
+/** Where each backend claim state sits on the six-step stepper. */
+const CLAIM_STEP_FOR_STATE: Record<string, Claim["step"]> = {
+  REGISTERED: "DOCUMENTS",
+  DOCUMENTS_PENDING: "DOCUMENTS",
+  READY_FOR_SUBMISSION: "SUBMIT",
+  SUBMITTED_TO_INSURER: "FOLLOW_UP",
+  UNDER_FOLLOW_UP: "FOLLOW_UP",
+  DISPUTED_REJECTED: "FOLLOW_UP",
+  CLAIMS_COMMITTEE_REVIEW: "FOLLOW_UP",
+  APPEAL_IN_PROGRESS: "FOLLOW_UP",
+  SETTLEMENT_ADVISED: "SETTLEMENT",
+  FINAL_DECISION: "CLOSE",
+  SETTLED: "CLOSE",
+  CLOSED: "CLOSE",
+};
+
+/* ------------------ Claim lifecycle on the backend (CLM-03 to CLM-06) ------------------ */
+
+export type ClaimReadiness = { ready: boolean; missing: string[] };
+
+export async function getClaimReadiness(claim: Claim): Promise<ClaimReadiness | null> {
+  if (MOCK_AUTH || !claim.uuid) return null;
+  const view = await readOnboarding<{ ready: boolean; missingRequiredCodes: string[] }>(
+    `/api/v1/claims/${claim.uuid}/readiness`,
+    "Could not check whether the claim is ready.",
+  );
+  return view ? { ready: view.ready, missing: view.missingRequiredCodes ?? [] } : null;
+}
+
+export type ClaimHistoryEvent = {
+  id: string;
+  sequence: number;
+  action: string;
+  actorId: string;
+  occurredAt: string;
+  recordedAt: string;
+  summary?: string | null;
+  externalReference?: string | null;
+  nextDueDate?: string | null;
+  evidenceDocumentId?: string | null;
+  evidenceDocumentVersion?: number | null;
+  amount?: number | string | null;
+  currency?: string | null;
+  outcome?: string | null;
+};
+
+/** The claim's recorded steps, newest first. */
+export async function getClaimHistory(claim: Claim): Promise<ClaimHistoryEvent[]> {
+  if (MOCK_AUTH || !claim.uuid) return [];
+  const events: ClaimHistoryEvent[] = [];
+  for (let page = 0; page < 20; page++) {
+    const result = await readOnboarding<{ items: ClaimHistoryEvent[]; totalElements?: number; hasMore?: boolean }>(
+      `/api/v1/claims/${claim.uuid}/history?page=${page}&size=100`,
+      "Could not load the claim history.",
+    );
+    if (!result) break;
+    events.push(...(result.items ?? []));
+    const more = result.hasMore ?? (result.totalElements !== undefined && events.length < result.totalElements);
+    if (!more || !result.items?.length) break;
+  }
+  return events.sort((a, b) => b.sequence - a.sequence);
+}
+
+export type ClaimActionInput = {
+  occurredAt: string;
+  summary?: string;
+  externalReference?: string;
+  amount?: number;
+  outcome?: string;
+  file?: File;
+};
+
+/** Records one lifecycle step: uploads its document (if any), then posts the action. */
+export async function runClaimAction(
+  claim: Claim,
+  spec: { path: string; evidence?: { purpose: string; classification: DocumentClassification } },
+  input: ClaimActionInput,
+  attempt?: CommandAttempt,
+): Promise<Claim> {
+  if (!claim.uuid) throw new Error("This is a sample claim; its steps stay in this tab.");
+  const proof =
+    input.file && spec.evidence
+      ? await uploadProof(
+          { type: "CLAIM", id: claim.uuid },
+          { file: input.file, occurredAt: input.occurredAt },
+          spec.evidence.purpose,
+          spec.evidence.classification,
+          attempt,
+        )
+      : null;
+  const commandId = attempt ? attempt.value("claim-command", () => crypto.randomUUID()) : crypto.randomUUID();
+  const body = {
+    expectedVersion: claim.version ?? 0,
+    commandId,
+    occurredAt: instantFrom(input.occurredAt),
+    ...(input.summary?.trim() ? { summary: input.summary.trim() } : {}),
+    ...(input.externalReference?.trim() ? { externalReference: input.externalReference.trim() } : {}),
+    ...(input.amount !== undefined ? { amount: input.amount, currency: claim.currency ?? "RWF" } : {}),
+    ...(input.outcome ? { outcome: input.outcome } : {}),
+    ...(proof ? { evidenceDocumentId: proof.documentId, evidenceDocumentVersion: proof.documentVersion } : {}),
+  };
+  let view: ClaimView;
+  try {
+    view = await sendOnboarding<ClaimView>(
+      "POST",
+      `/api/v1/claims/${claim.uuid}/workflow/${spec.path}`,
+      body,
+      "Could not record this step.",
+      attempt,
+    );
+  } catch (err) {
+    if (err instanceof OnboardingError && err.code && CLAIM_MESSAGES[err.code]) {
+      throw new OnboardingError(CLAIM_MESSAGES[err.code]!, err.code, err.status);
+    }
+    throw err;
+  }
+  return rememberClaim(toClaim(view, claim.clientId, claim.client, await loadPeriod(view.policyPeriodId)));
 }
 
 /** Adds or replaces a backend claim in the in-memory list, so the claim steps can work on it. */
@@ -5378,4 +5517,72 @@ export async function listImportIssues(id: string): Promise<ImportIssue[]> {
     if (!res.ok) throw new Error(await importProblem(res, "Could not load the issues."));
     return (await res.json()) as Page<ImportIssue>;
   });
+}
+
+/* ------------------ Renewal Exit Register (REN-07) ------------------ */
+// GET /renewals/exits lists the renewals lost in a month (CRM and MD), with the
+// premium captured at the time of loss. PUT /renewals/exits/{renewalId} adds or
+// corrects the intelligence (why the client left and how GRAL knows); the money
+// and the loss date stay as they were captured.
+
+export type RenewalExitCategory = "PRICE" | "SERVICE" | "COMPETITOR" | "OTHER";
+
+export type RenewalExit = {
+  renewalId: string;
+  clientId?: string | null;
+  periodId?: string | null;
+  clientName: string;
+  premium?: number | null;
+  currency?: string | null;
+  lostAt: string;
+  category?: string | null;
+  detail?: string | null;
+  intelligenceSource?: string | null;
+  version: number;
+  historical: boolean;
+  enrichmentRequired: boolean;
+};
+
+export async function listRenewalExits(month: string, category?: string): Promise<RenewalExit[]> {
+  if (MOCK_AUTH) return [];
+  const filter = category ? `&category=${encodeURIComponent(category)}` : "";
+  const items: RenewalExit[] = [];
+  for (let page = 0; page < 50; page++) {
+    const result = await readOnboarding<{ items: RenewalExit[]; totalElements?: number; hasMore?: boolean }>(
+      `/api/v1/renewals/exits?month=${encodeURIComponent(month)}${filter}&page=${page}&size=100`,
+      "Could not load the Exit Register.",
+    );
+    if (!result) break;
+    items.push(...(result.items ?? []));
+    const more = result.hasMore ?? (result.totalElements !== undefined && items.length < result.totalElements);
+    if (!more || !result.items?.length) break;
+  }
+  return items;
+}
+
+export type RenewalExitInput = {
+  clientName: string;
+  category: RenewalExitCategory;
+  detail: string;
+  intelligenceSource: string;
+  reason: string;
+};
+
+export async function enrichRenewalExit(entry: RenewalExit, input: RenewalExitInput, attempt?: CommandAttempt): Promise<RenewalExit> {
+  const commandId = attempt ? attempt.value("exit-command", () => crypto.randomUUID()) : crypto.randomUUID();
+  return sendOnboarding<RenewalExit>(
+    "PUT",
+    `/api/v1/renewals/exits/${entry.renewalId}`,
+    {
+      commandId,
+      expectedVersion: entry.version,
+      clientName: input.clientName.trim(),
+      category: input.category,
+      detail: input.detail.trim(),
+      intelligenceSource: input.intelligenceSource.trim(),
+      reason: input.reason.trim(),
+    },
+    "Could not save the exit details.",
+    attempt,
+  );
 }
