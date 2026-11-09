@@ -64,8 +64,14 @@ export function daysToExpiry(c: RenewalCase) {
   return daysBetween(todayIso(), c.expiryDate);
 }
 
-/** The next milestone to complete, or null when the case is finished. */
+/** The client is not renewing: the case is closed and its milestones were cancelled. */
+export function isLostRenewal(c: RenewalCase) {
+  return c.backend?.state === "LOST_NON_RENEWED";
+}
+
+/** The next milestone to complete, or null when the case is finished or lost. */
 export function currentMilestone(c: RenewalCase): MilestoneDef | null {
+  if (isLostRenewal(c)) return null;
   return RENEWAL_MILESTONES[c.completed.length] ?? null;
 }
 
@@ -76,9 +82,10 @@ export function daysOverdue(c: RenewalCase) {
   return Math.max(0, daysBetween(milestoneDue(c, m), todayIso()));
 }
 
-export type RenewalHealth = "overdue" | "due-soon" | "on-track" | "completed";
+export type RenewalHealth = "overdue" | "due-soon" | "on-track" | "completed" | "lost";
 
 export function renewalHealth(c: RenewalCase): RenewalHealth {
+  if (isLostRenewal(c)) return "lost";
   if (!currentMilestone(c)) return "completed";
   if (daysOverdue(c) > 0) return "overdue";
   return daysToExpiry(c) <= 30 ? "due-soon" : "on-track";
@@ -91,6 +98,7 @@ export function renewalHealth(c: RenewalCase): RenewalHealth {
  */
 export function completionBlocker(c: RenewalCase): string | null {
   const m = currentMilestone(c);
+  if (isLostRenewal(c)) return "The client is not renewing.";
   if (!m) return "This renewal is already completed.";
   if (m.code === "QUOTES") {
     if (c.quotes.length === 0) return "Add at least one insurer quote first.";
@@ -111,6 +119,7 @@ export const RENEWAL_STAGES = [
 ] as const;
 
 export function renewalStage(c: RenewalCase): string {
+  if (isLostRenewal(c)) return "Lost";
   if (!currentMilestone(c)) return "Completed";
   const step = c.completed.length + 1;
   return RENEWAL_STAGES.find((s) => step >= s.from && step <= s.to)?.label ?? "Completed";

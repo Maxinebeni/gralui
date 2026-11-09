@@ -47,6 +47,7 @@ const INPUT =
 export function RenewalHealthChip({ renewal }: { renewal: RenewalCase }) {
   const health = renewalHealth(renewal);
   if (health === "completed") return <Chip tone="success">Completed</Chip>;
+  if (health === "lost") return <Chip>Lost</Chip>;
   if (health === "overdue") return <Chip tone="danger">Overdue {daysOverdue(renewal)}d</Chip>;
   if (health === "due-soon") return <Chip tone="warning">Due soon</Chip>;
   return <Chip tone="sky">On track</Chip>;

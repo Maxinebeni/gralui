@@ -283,7 +283,8 @@ export type ClaimSettlement = {
 export type ClaimClosure = {
   closedAt: string;
   by: string;
-  outcome: "SETTLED" | "REJECTION_ACCEPTED";
+  /** CLOSED: closed on the backend, whose claim list does not say how. */
+  outcome: "SETTLED" | "REJECTION_ACCEPTED" | "CLOSED";
   evidence: string;
 };
  

@@ -4634,7 +4634,22 @@ function toClaim(v: ClaimView, clientRef: string, clientName: string, period: Po
     priority: local?.priority ?? existing?.priority ?? "P2",
     handler: local?.handler ?? existing?.handler ?? "Not assigned",
     description: v.description,
+    ...claimStatusFromState(v),
   };
+}
+
+/** The queue's closed and disputed counts read these, so they follow the backend's state. */
+export function claimStatusFromState(v: Pick<ClaimView, "state" | "createdAt" | "updatedAt">): Pick<Claim, "closure" | "dispute"> {
+  const since = (v.updatedAt ?? v.createdAt).slice(0, 10);
+  const by = "Recorded in GRAL's system";
+  if (v.state === "CLOSED") return { closure: { closedAt: since, by, outcome: "CLOSED", evidence: "" }, dispute: undefined };
+  if (v.state === "DISPUTED_REJECTED" || v.state === "CLAIMS_COMMITTEE_REVIEW") {
+    return { closure: undefined, dispute: { raisedAt: since, reason: "Disputed or rejected by the insurer" } };
+  }
+  if (v.state === "APPEAL_IN_PROGRESS") {
+    return { closure: undefined, dispute: { raisedAt: since, reason: "Disputed or rejected by the insurer", decision: "APPEAL" } };
+  }
+  return { closure: undefined, dispute: undefined };
 }
 
 /** Where each backend claim state sits on the six-step stepper. */

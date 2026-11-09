@@ -32,6 +32,7 @@ import {
   daysToExpiry,
   filterRenewals,
   formatDate,
+  isLostRenewal,
   renewalHealth,
 } from "@/lib/renewals";
 import type { RenewalCase } from "@/lib/types";
@@ -65,7 +66,7 @@ export function RenewalsView() {
   // The filters apply to the whole page, so the counts match the list.
   const renewals = useMemo(() => {
     const chosen = (v: string) => (v === ALL_OPTION ? undefined : v);
-    return filterRenewals(allRenewals, {
+    return filterRenewals(allRenewals.filter((r) => !isLostRenewal(r)), {
       insurer: chosen(filters.insurer),
       owner: chosen(filters.owner),
       stage: chosen(filters.stage),
