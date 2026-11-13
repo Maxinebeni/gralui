@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { PageHeader } from "@/components/gral/shell";
 import { CardHeader, Chip, FloatCard, Loader, Person, SegmentedTabs } from "@/components/gral/ui";
+import { usePaged } from "@/components/gral/pager";
 import { activityFrom } from "@/lib/api";
 import { useClaims, useRenewals } from "@/lib/queries";
 import { useCurrentUser } from "@/lib/auth-context";
@@ -27,6 +28,7 @@ export function ActivityView() {
   const [tab, setTab] = useState<string>("All");
 
   const rows = useMemo(() => (items ?? []).filter((a) => tab === "All" || a.module === tab), [items, tab]);
+  const { items: pageRows, pager } = usePaged(rows, { resetKey: tab });
 
   return (
     <>
@@ -37,7 +39,7 @@ export function ActivityView() {
           right={tabs.length > 2 ? <SegmentedTabs tabs={tabs} value={tab} onChange={setTab} /> : null}
         />
         <ul className="mt-2 divide-y divide-border px-5 pb-3 sm:px-6">
-          {rows.map((a, i) => (
+          {pageRows.map((a, i) => (
             <li key={`${a.at}-${a.what}-${i}`}>
               <Link
                 href={a.href}
@@ -55,6 +57,7 @@ export function ActivityView() {
           {items === null ? <li className="py-4 text-xs text-muted-foreground"><Loader label="Loading" /></li> : null}
           {items !== null && rows.length === 0 ? <li className="py-4 text-xs text-muted-foreground">Nothing recorded yet.</li> : null}
         </ul>
+        {pager}
       </FloatCard>
     </>
   );

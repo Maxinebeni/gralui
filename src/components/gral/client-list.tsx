@@ -10,19 +10,46 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Search } from "lucide-react";
 import { ClientFile } from "@/components/gral/client-file";
 import { ClientFormPanel } from "@/components/gral/client-form";
+import { ALL_OPTION, FilterMenu, optionsFrom } from "@/components/gral/filter-menu";
 import { KycBadge } from "@/components/gral/kyc-badge";
+import { usePaged } from "@/components/gral/pager";
 import { SlideOver } from "@/components/gral/shell";
 import { Chip, Loader, NotRecorded, Person, Recorded, TextLink } from "@/components/gral/ui";
+import { downloadCsv } from "@/lib/csv";
 import { useClients, useRefresh } from "@/lib/queries";
 import type { Client } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 export const CLIENT_TABS = ["All", "KYC Pending", "Missing Docs", "Non-Compliant"] as const;
-export type ClientTab = (typeof CLIENT_TABS)[number];
+/** "KYC Complete" has no tab; its summary tile sets it. */
+export type ClientTab = (typeof CLIENT_TABS)[number] | "KYC Complete";
+const ALL_TABS: readonly ClientTab[] = [...CLIENT_TABS, "KYC Complete"];
 
-/** Loads the client book and applies the search query + filter tab. */
+/** Filters the client list the same way the tabs do. */
+export function filterClientsBy(clients: Client[], tab: ClientTab, sector = "") {
+  const inSector = sector ? clients.filter((c) => c.sector === sector) : clients;
+  if (tab === "KYC Pending") return inSector.filter((c) => !c.kyc);
+  if (tab === "KYC Complete") return inSector.filter((c) => c.kyc);
+  if (tab === "Missing Docs") return inSector.filter((c) => c.docsFiled < c.docsTotal);
+  if (tab === "Non-Compliant") return inSector.filter((c) => c.nonCompliant);
+  return inSector;
+}
+
+/** The filter as a query string, so "See all" opens the full list filtered the same way. */
+export function clientFilterQuery(tab: ClientTab, sector: string) {
+  const params = new URLSearchParams();
+  if (tab !== "All") params.set("view", tab);
+  if (sector) params.set("sector", sector);
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
+/** Loads the client book and applies the search query, filter tab and sector. */
 export function useClientList() {
-  const [tab, setTab] = useState<ClientTab>("All");
+  const searchParams = useSearchParams();
+  const fromUrl = searchParams.get("view") as ClientTab | null;
+  const [tab, setTab] = useState<ClientTab>(fromUrl && ALL_TABS.includes(fromUrl) ? fromUrl : "All");
+  const [sector, setSector] = useState(searchParams.get("sector") ?? "");
   const [query, setQuery] = useState("");
   const book = useClients("");
   const search = useClients(query);
@@ -34,12 +61,8 @@ export function useClientList() {
   const refresh = useRefresh();
   const reload = useCallback(() => refresh("clients"), [refresh]);
 
-  const rows = useMemo(() => {
-    if (tab === "KYC Pending") return matches.filter((c) => !c.kyc);
-    if (tab === "Missing Docs") return matches.filter((c) => c.docsFiled < c.docsTotal);
-    if (tab === "Non-Compliant") return matches.filter((c) => c.nonCompliant);
-    return matches;
-  }, [tab, matches]);
+  const rows = useMemo(() => filterClientsBy(matches, tab, sector), [tab, sector, matches]);
+  const sectors = useMemo(() => [...new Set(allClients.map((c) => c.sector).filter((s): s is string => !!s))].sort(), [allClients]);
 
   // While loading, the table shows this text in place of the empty message.
   // Rows already on screen stay visible during a reload or a new search.
@@ -48,7 +71,7 @@ export function useClientList() {
       ? <Loader label="Loading clients" />
       : `No clients match ${query ? `“${query}”` : "this filter"}.`;
 
-  return { allClients, rows, tab, setTab, query, setQuery, emptyMessage, reload, loading };
+  return { allClients, rows, tab, setTab, sector, setSector, sectors, query, setQuery, emptyMessage, reload, loading };
 }
 
 export function ClientSearch({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -78,7 +101,9 @@ export function ClientsTable({
   onView: (c: Client) => void;
   emptyMessage: React.ReactNode;
 }) {
+  const { items, pager } = usePaged(clients);
   return (
+    <>
     <div className="overflow-x-auto px-2 pb-4">
       <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left">
         <thead>
@@ -105,7 +130,7 @@ export function ClientsTable({
               </td>
             </tr>
           ) : (
-            clients.map((c) => (
+            items.map((c) => (
               <tr key={c.id}>
                 <Td>
                   <div className="max-w-[150px] truncate text-sm font-medium">{c.name}</div>
@@ -160,6 +185,8 @@ export function ClientsTable({
         </tbody>
       </table>
     </div>
+    {pager}
+    </>
   );
 }
 
@@ -250,4 +277,37 @@ function StatusDot({ ok, title }: { ok: boolean; title?: string }) {
 
 function Td({ children, className }: { children?: React.ReactNode; className?: string }) {
   return <td className={cn("border-b border-border px-3 py-3 align-middle", className)}>{children}</td>;
+}
+
+/** The clients as listed, for Download. */
+export function downloadClients(clients: Client[], fileName = "clients.csv") {
+  downloadCsv(fileName, [
+    ["Client ID", "Client", "Type", "Sector", "Address", "Contact person", "Contact email", "Contact phone", "Active policies", "KYC", "Non-compliant", "Documents filed", "Account manager"],
+    ...clients.map((c) => [
+      c.id,
+      c.name,
+      c.type,
+      c.sector,
+      c.address,
+      c.contact?.name,
+      c.contact?.email,
+      c.contact?.phone,
+      c.activePolicies,
+      c.kyc ? "Approved" : "Not approved",
+      c.nonCompliant ? "Yes" : "No",
+      `${c.docsFiled} / ${c.docsTotal}`,
+      c.manager,
+    ]),
+  ]);
+}
+
+export function SectorFilter({ value, sectors, onChange }: { value: string; sectors: string[]; onChange: (sector: string) => void }) {
+  return (
+    <FilterMenu
+      label="Sector"
+      value={value || ALL_OPTION}
+      options={optionsFrom(sectors, "All sectors")}
+      onChange={(v) => onChange(v === ALL_OPTION ? "" : v)}
+    />
+  );
 }

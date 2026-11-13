@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Printer } from "lucide-react";
 import { Td, Th } from "@/components/gral/claim-list";
 import { FilterMenu } from "@/components/gral/filter-menu";
+import { usePaged } from "@/components/gral/pager";
 import { PageHeader } from "@/components/gral/shell";
 import { CardHeader, Chip, FloatCard, NavyButton, OutlineButton, PageLoader, SegmentedTabs, StatTile } from "@/components/gral/ui";
 import { useCurrentUser } from "@/lib/auth-context";
@@ -13,12 +15,27 @@ import { claimStatus } from "@/lib/dashboard";
 import { displayToIso, formatRwf } from "@/lib/format";
 import { canAccessPath } from "@/lib/permissions";
 import { useClaims, useClients, useRenewals } from "@/lib/queries";
-import { claimsReport, clientReport, periodOptions, portfolioReport, renewalsReport, shortDate, type Period } from "@/lib/reports";
+import {
+  claimsReport,
+  clientReport,
+  customKey,
+  isCustomKey,
+  periodFor,
+  periodOptions,
+  portfolioReport,
+  rangeLabel,
+  renewalsReport,
+  shortDate,
+  type Period,
+} from "@/lib/reports";
 import { todayIso } from "@/lib/renewals";
 import type { Client } from "@/lib/types";
 
-const TABS = ["Client Report", "Renewals", "Claims", "Portfolio"] as const;
+const TABS = ["Client Report", "Renewals", "Claims", "All Business"] as const;
 type Tab = (typeof TABS)[number];
+/** Each tab's name in the URL (?report=client), so a report can be linked to. */
+const TAB_SLUGS: Record<Tab, string> = { "Client Report": "client", Renewals: "renewals", Claims: "claims", "All Business": "portfolio" };
+const CUSTOM = "custom";
 
 const money = (n: number | null | undefined) => (n === null || n === undefined ? "Not recorded" : formatRwf(n));
 const day = (display: string) => {
@@ -43,12 +60,31 @@ export function ReportsView() {
   const renewals = useMemo(() => (canRenewals ? (renewalsQuery.data ?? []) : []), [canRenewals, renewalsQuery.data]);
 
   const tabs = TABS.filter((t) => (t === "Claims" ? canClaims : t === "Renewals" ? canRenewals : true));
-  const [tab, setTab] = useState<Tab>("Client Report");
+
+  // The report, period and client live in the URL, so links and Back keep them.
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const setParam = (key: string, value: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set(key, value);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  };
+  const slug = searchParams.get("report");
+  const asked = TABS.find((t) => TAB_SLUGS[t] === slug);
+  const tab: Tab = asked && tabs.includes(asked) ? asked : tabs[0]!;
+  const setTab = (t: Tab) => setParam("report", TAB_SLUGS[t]);
+
   const periods = useMemo(() => periodOptions(), []);
-  const [periodKey, setPeriodKey] = useState(periods[0]!.key);
-  const period = periods.find((p) => p.key === periodKey) ?? periods[0]!;
-  const [clientId, setClientId] = useState("");
-  const client = clients.find((c) => c.id === clientId) ?? clients[0];
+  const period: Period = periodFor(searchParams.get("period") ?? "") ?? periods[0]!;
+  const custom = isCustomKey(period.key);
+  const setPeriod = (key: string) => setParam("period", key === CUSTOM ? customKey(period.from, period.to) : key);
+  const setCustomEnd = (end: "from" | "to", value: string) => {
+    if (value) setParam("period", customKey(end === "from" ? value : period.from, end === "to" ? value : period.to));
+  };
+
+  const client = clients.find((c) => c.id === searchParams.get("client")) ?? clients[0];
+  const setClientId = (id: string) => setParam("client", id);
 
   const loading = clientsQuery.isPending || (canClaims && claimsQuery.isPending) || (canRenewals && renewalsQuery.isPending);
 
@@ -68,10 +104,16 @@ export function ReportsView() {
     <>
       <PageHeader
         title="Reports"
+        subtitle={tab === "All Business" ? `As of ${shortDate(todayIso())}` : custom ? period.label : `${period.label} · ${rangeLabel(period)}`}
         extraPills={
           <>
-            {tab !== "Portfolio" ? (
-              <FilterMenu label="Period" value={period.key} options={periods.map((p) => ({ value: p.key, label: p.label }))} onChange={setPeriodKey} />
+            {tab !== "All Business" ? (
+              <FilterMenu
+                label="Period"
+                value={custom ? CUSTOM : period.key}
+                options={[...periods.map((p) => ({ value: p.key, label: p.label })), { value: CUSTOM, label: "Custom range" }]}
+                onChange={setPeriod}
+              />
             ) : null}
             {tab === "Client Report" && clients.length ? (
               <FilterMenu label="Client" value={client?.id ?? ""} options={clients.map((c) => ({ value: c.id, label: c.name }))} onChange={setClientId} />
@@ -92,14 +134,21 @@ export function ReportsView() {
         }
       />
 
-      <div className="mt-5 grid justify-items-start print:hidden">
-        <SegmentedTabs tabs={tabs} value={tabs.includes(tab) ? tab : tabs[0]!} onChange={setTab} />
+      <div className="mt-5 flex flex-wrap items-center gap-3 print:hidden">
+        <SegmentedTabs tabs={tabs} value={tab} onChange={setTab} />
+        {tab !== "All Business" && custom ? (
+          <span className="float-pill flex flex-wrap items-center gap-1.5 px-3.5 py-1.5 text-xs">
+            <input type="date" aria-label="From" value={period.from} max={period.to} onChange={(e) => setCustomEnd("from", e.target.value)} className="bg-transparent outline-none" />
+            <span className="text-muted-foreground">to</span>
+            <input type="date" aria-label="To" value={period.to} min={period.from} onChange={(e) => setCustomEnd("to", e.target.value)} className="bg-transparent outline-none" />
+          </span>
+        ) : null}
       </div>
 
       <p className="mt-4 hidden text-sm print:block">
         GRAL Operations Platform · {tab}
         {tab === "Client Report" && client ? ` · ${client.name}` : ""}
-        {tab !== "Portfolio" ? ` · ${period.label}` : ` · as of ${shortDate(todayIso())}`}
+        {tab !== "All Business" ? ` · ${custom ? period.label : `${period.label} (${rangeLabel(period)})`}` : ` · as of ${shortDate(todayIso())}`}
       </p>
 
       {built ? built.body : <PageLoader label="Loading the report" />}
@@ -124,6 +173,8 @@ function Tiles({ items }: { items: { label: string; value: string }[] }) {
 }
 
 function Table({ title, head, rows, empty }: { title: string; head: string[]; rows: ReactNode[][]; empty: string }) {
+  // Every row is rendered so a printout has them all; on screen only one page shows.
+  const { onPage, pager } = usePaged(rows);
   return (
     <FloatCard className="mt-4 overflow-hidden break-inside-avoid">
       <CardHeader title={title} />
@@ -145,7 +196,7 @@ function Table({ title, head, rows, empty }: { title: string; head: string[]; ro
             </thead>
             <tbody>
               {rows.map((r, i) => (
-                <tr key={i}>
+                <tr key={i} className={onPage(i) ? undefined : "hidden print:table-row"}>
                   {r.map((cell, j) => (
                     <Td key={j} className="text-sm">
                       {cell}
@@ -157,6 +208,7 @@ function Table({ title, head, rows, empty }: { title: string; head: string[]; ro
           </table>
         </div>
       )}
+      <div className="print:hidden">{pager}</div>
     </FloatCard>
   );
 }
@@ -187,42 +239,42 @@ function buildClientReport(client: Client, claims: Parameters<typeof clientRepor
     csv: [
       ["Client report", client.name, period.label],
       [],
-      ["Policies in force", "Class", "Insurer", "Cover", "Total premium (RWF)", "Paid (RWF)", "Balance (RWF)"],
+      ["Active policies", "Type of insurance", "Insurer", "Covered from - to", "Premium (RWF)", "Paid (RWF)", "Still to pay (RWF)"],
       ...r.policies.map(({ policy, premium, paid, balance }) => [policy.id, policy.classOfInsurance, policy.insurer, `${day(policy.start)} to ${day(policy.renewal)}`, premium, paid, balance]),
       [],
-      ["Claims", "Class", "Reported", "Amount (RWF)", "Status"],
+      ["Claims", "Type of insurance", "Reported on", "Amount claimed (RWF)", "Status"],
       ...r.claims.map((c) => [c.id, c.classOfInsurance, c.dateReported, c.amount, claimStatus(c)]),
       [],
-      ["Renewals coming up", "Class", "Insurer", "Cover ends"],
+      ["Policies ending in the next 120 days", "Type of insurance", "Insurer", "Ends on"],
       ...upcomingRows,
     ],
     body: (
       <>
         <Tiles
           items={[
-            { label: "Premium in Force", value: formatRwf(r.totals.premium) },
-            { label: "Paid", value: formatRwf(r.totals.paid) },
-            { label: "Balance Owed", value: formatRwf(r.totals.balance) },
-            { label: "Open Claims", value: String(r.totals.openClaims) },
+            { label: "Premium for Active Policies", value: formatRwf(r.totals.premium) },
+            { label: "Paid So Far", value: formatRwf(r.totals.paid) },
+            { label: "Still to Pay", value: formatRwf(r.totals.balance) },
+            { label: "Claims Not Yet Closed", value: String(r.totals.openClaims) },
           ]}
         />
         <Table
-          title="Policies in Force"
-          head={["Policy", "Class", "Insurer", "Cover", "Premium", "Paid", "Balance"]}
+          title="Active Policies"
+          head={["Policy", "Type of Insurance", "Insurer", "Covered", "Premium", "Paid", "Still to Pay"]}
           rows={policyRows.map((row) => [<RowLink key="p" href={clientHref(client.id)}>{row[0]}</RowLink>, ...row.slice(1)])}
-          empty="No cover in force in this period."
+          empty="No active policies in this period."
         />
         <Table
           title="Claims"
-          head={["Claim", "Class", "Reported", "Amount", "Status"]}
+          head={["Claim", "Type of Insurance", "Reported On", "Amount Claimed", "Status"]}
           rows={claimRows.map((row) => [<RowLink key="c" href={claimHref(String(row[0]))}>{row[0]}</RowLink>, ...row.slice(1, 4), <Chip key="s">{row[4]}</Chip>])}
           empty="No claims in this period."
         />
         <Table
-          title="Renewals Coming Up (Next 120 Days)"
-          head={["Policy", "Class", "Insurer", "Cover ends"]}
+          title="Policies Ending in the Next 120 Days"
+          head={["Policy", "Type of Insurance", "Insurer", "Ends On"]}
           rows={upcomingRows}
-          empty="No renewals due in the 120 days after this period."
+          empty="No policies end in the 120 days after this period."
         />
       </>
     ),
@@ -234,22 +286,22 @@ function buildRenewals(clients: Client[], cases: Parameters<typeof renewalsRepor
   return {
     fileName: `renewals-${period.key}.csv`,
     csv: [
-      ["Client", "Policy", "Class", "Insurer", "Cover ends", "Total premium (RWF)", "Renewal"],
+      ["Client", "Policy", "Type of insurance", "Insurer", "Ends on", "Premium (RWF)", "Renewal status"],
       ...r.lines.map((l) => [l.client.name, l.policy.id, l.policy.classOfInsurance, l.policy.insurer, l.expiry, l.premium, l.status]),
     ],
     body: (
       <>
         <Tiles
           items={[
-            { label: "Renewals Due", value: String(r.totals.due) },
+            { label: "Policies Ending", value: String(r.totals.due) },
             { label: "Renewed", value: String(r.totals.renewed) },
-            { label: "In Progress", value: String(r.totals.inProgress + r.totals.notStarted) },
-            { label: "Lost", value: String(r.totals.lost) },
+            { label: "Still Being Renewed", value: String(r.totals.inProgress + r.totals.notStarted) },
+            { label: "Not Renewed", value: String(r.totals.lost) },
           ]}
         />
         <Table
           title={`Policies Ending in ${period.label} · ${formatRwf(r.totals.premium)}`}
-          head={["Client", "Policy", "Class", "Insurer", "Cover ends", "Premium", "Renewal"]}
+          head={["Client", "Policy", "Type of Insurance", "Insurer", "Ends On", "Premium", "Renewal Status"]}
           rows={r.lines.map((l) => [
             <RowLink key="c" href={clientHref(l.client.id)}>{l.client.name}</RowLink>,
             l.policy.id,
@@ -257,7 +309,7 @@ function buildRenewals(clients: Client[], cases: Parameters<typeof renewalsRepor
             l.policy.insurer,
             shortDate(l.expiry),
             money(l.premium),
-            <Chip key="s" tone={l.status === "Completed" ? "success" : l.status === "Lost" ? "danger" : "neutral"}>{l.status}</Chip>,
+            <Chip key="s" tone={l.status === "Renewed" ? "success" : l.status === "Not renewed" ? "danger" : "neutral"}>{l.status}</Chip>,
           ])}
           empty="No policies end in this period."
         />
@@ -271,28 +323,28 @@ function buildClaims(claims: Parameters<typeof claimsReport>[0], period: Period)
   return {
     fileName: `claims-${period.key}.csv`,
     csv: [
-      ["Claim", "Client", "Class", "Insurer", "Reported", "Amount (RWF)", "Status"],
+      ["Claim", "Client", "Type of insurance", "Insurer", "Reported on", "Amount claimed (RWF)", "Status"],
       ...r.reported.map((c) => [c.id, c.client, c.classOfInsurance, c.insurer, c.dateReported, c.amount, claimStatus(c)]),
     ],
     body: (
       <>
         <Tiles
           items={[
-            { label: "Claims Reported", value: String(r.totals.reported) },
+            { label: "New Claims", value: String(r.totals.reported) },
             { label: "Amount Claimed", value: formatRwf(r.totals.amount) },
-            { label: "Settled in Period", value: String(r.totals.settled) },
-            { label: "Still Open", value: String(r.totals.stillOpen) },
+            { label: "Claims Paid Out", value: String(r.totals.settled) },
+            { label: "Not Yet Closed", value: String(r.totals.stillOpen) },
           ]}
         />
         <Table
-          title="By Status"
+          title="Where the New Claims Are"
           head={r.byStatus.map((s) => s.label)}
           rows={[r.byStatus.map((s) => s.count)]}
           empty="No claims."
         />
         <Table
           title={`Claims Reported in ${period.label}`}
-          head={["Claim", "Client", "Class", "Insurer", "Reported", "Amount", "Status"]}
+          head={["Claim", "Client", "Type of Insurance", "Insurer", "Reported On", "Amount Claimed", "Status"]}
           rows={r.reported.map((c) => [
             <RowLink key="c" href={claimHref(c.id)}>{c.id}</RowLink>,
             c.client,
@@ -316,22 +368,22 @@ function buildPortfolio(clients: Client[]): Built {
   return {
     fileName: `portfolio-${todayIso()}.csv`,
     csv: [
-      ["Group", "Name", "Policies", "Total premium (RWF)"],
-      ...r.byClass.map((x) => ["Class", x.label, x.policies, x.premium]),
+      ["Grouped by", "Name", "Active policies", "Premium (RWF)"],
+      ...r.byClass.map((x) => ["Type of insurance", x.label, x.policies, x.premium]),
       ...r.byInsurer.map((x) => ["Insurer", x.label, x.policies, x.premium]),
     ],
     body: (
       <>
         <Tiles
           items={[
-            { label: "Clients with Cover", value: String(r.totals.clients) },
-            { label: "Policies in Force", value: String(r.totals.policies) },
-            { label: "Premium in Force", value: formatRwf(r.totals.premium) },
-            { label: "KYC Approved", value: `${r.totals.kycApproved} of ${r.totals.allClients}` },
+            { label: "Clients with Active Policies", value: String(r.totals.clients) },
+            { label: "Active Policies", value: String(r.totals.policies) },
+            { label: "Premium for Active Policies", value: formatRwf(r.totals.premium) },
+            { label: "Clients with KYC Approved", value: `${r.totals.kycApproved} of ${r.totals.allClients}` },
           ]}
         />
-        <Table title="By Class of Insurance" head={["Class", "Policies", "Premium", "Share"]} rows={groupRows(r.byClass)} empty="No policies in force." />
-        <Table title="By Insurer" head={["Insurer", "Policies", "Premium", "Share"]} rows={groupRows(r.byInsurer)} empty="No policies in force." />
+        <Table title="By Type of Insurance" head={["Type of Insurance", "Active Policies", "Premium", "Share of Premium"]} rows={groupRows(r.byClass)} empty="No active policies." />
+        <Table title="By Insurer" head={["Insurer", "Active Policies", "Premium", "Share of Premium"]} rows={groupRows(r.byInsurer)} empty="No active policies." />
       </>
     ),
   };

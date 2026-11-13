@@ -50,6 +50,8 @@ export function StatTile({
   delta,
   tone = "up",
   delay = 0,
+  onClick,
+  active = false,
 }: {
   /** Kept for existing callers; tiles no longer show an icon. */
   icon?: LucideIcon;
@@ -58,9 +60,37 @@ export function StatTile({
   delta?: string;
   tone?: "up" | "down";
   delay?: number;
+  /** Makes the tile a button, e.g. to filter the list below it. */
+  onClick?: () => void;
+  /** The tile's filter is the one applied. */
+  active?: boolean;
 }) {
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        aria-pressed={active}
+        className={cn(
+          "float-card rise-in block w-full min-w-0 px-4 py-4 text-left transition-shadow hover:shadow-[var(--shadow-float)]",
+          active && "ring-2 ring-sky",
+        )}
+        style={{ animationDelay: `${delay}ms` }}
+      >
+        <StatTileBody label={label} value={value} delta={delta} tone={tone} />
+      </button>
+    );
+  }
   return (
     <FloatCard className="px-4 py-4" delay={delay}>
+      <StatTileBody label={label} value={value} delta={delta} tone={tone} />
+    </FloatCard>
+  );
+}
+
+function StatTileBody({ label, value, delta, tone }: { label: string; value: string; delta?: string; tone: "up" | "down" }) {
+  return (
+    <>
       <span className="text-xs font-medium text-muted-foreground">{label}</span>
       <div className="mt-3 flex items-end justify-between gap-2">
         <span className="min-w-0 break-words text-2xl leading-none font-semibold tracking-tight sm:text-3xl">
@@ -77,7 +107,7 @@ export function StatTile({
           </span>
         ) : null}
       </div>
-    </FloatCard>
+    </>
   );
 }
 

@@ -9,6 +9,7 @@ import { DATE_RANGE_OPTIONS, withinRange, type DateRange } from "@/lib/date-rang
 import { ApprovalPanel } from "@/components/gral/approval-panel";
 import { Td, Th } from "@/components/gral/claim-list";
 import { CardHeader, Chip, FloatCard, SegmentedTabs, StatTile, TextLink } from "@/components/gral/ui";
+import { usePaged } from "@/components/gral/pager";
 import { cn } from "@/lib/utils";
 import { useApprovals, useRefresh } from "@/lib/queries";
 import { SUBJECT_LABEL, canDecide, statusLabel, statusTone } from "@/lib/approvals";
@@ -65,6 +66,7 @@ export function ApprovalsView() {
             : visible;
     return [...list].sort((a, b) => (tab === "Waiting for me" ? a.dueAt.localeCompare(b.dueAt) : b.requestedAt.localeCompare(a.requestedAt)));
   }, [tab, mine, visible, decided, user.name]);
+  const { items: pageRows, pager } = usePaged(rows, { resetKey: tab });
 
   const openId = searchParams.get("request");
   const open = requests.find((r) => r.id === openId) ?? null;
@@ -113,7 +115,7 @@ export function ApprovalsView() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
+              {pageRows.map((r) => {
                 const late = r.status === "PENDING" && r.dueAt < todayIso();
                 return (
                   <tr key={r.id} className="cursor-pointer hover:bg-pale/50" onClick={() => setOpen(r)}>
@@ -149,6 +151,7 @@ export function ApprovalsView() {
             </tbody>
           </table>
         </div>
+        {pager}
       </FloatCard>
 
       <SlideOver open={!!open} onClose={() => setOpen(null)}>

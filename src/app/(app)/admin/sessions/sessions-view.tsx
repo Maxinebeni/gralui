@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/gral/shell";
 import { Td, Th } from "@/components/gral/claim-list";
 import { CardHeader, Chip, Dot, FloatCard, Loader, NavyButton, OutlineButton, StatTile } from "@/components/gral/ui";
+import { usePaged } from "@/components/gral/pager";
 import { adminSelfId, endAllSessionsFor, endSession, listActiveSessions } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { adminPermissions } from "@/lib/permissions";
@@ -80,6 +81,7 @@ export function SessionsView() {
       .filter((s) => !q || s.fullName.toLowerCase().includes(q) || s.email.toLowerCase().includes(q))
       .sort((a, b) => (b.lastAccessedAt ?? "").localeCompare(a.lastAccessedAt ?? ""));
   }, [all, query]);
+  const { items: pageRows, pager } = usePaged(rows);
 
   const people = new Set(all.map((s) => s.userId)).size;
   const activeNow = all.filter((s) => activityTone(s.lastAccessedAt) === "success").length;
@@ -151,7 +153,7 @@ export function SessionsView() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((s) => {
+              {pageRows.map((s) => {
                 const self = s.userId === selfId;
                 const isEnding = ending?.kind === "one" && ending.session.sessionReference === s.sessionReference;
                 return (
@@ -206,6 +208,7 @@ export function SessionsView() {
             </tbody>
           </table>
         </div>
+        {pager}
       </FloatCard>
     </>
   );

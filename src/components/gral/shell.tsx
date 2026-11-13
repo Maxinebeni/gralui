@@ -398,9 +398,9 @@ export function PageHeader({
   const { user, roles, setRole } = useCurrentUser();
 
   return (
-    <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+    <div className="grid gap-3 sm:grid-cols-[minmax(min-content,1fr)_auto] sm:items-center">
       <div className="min-w-0">
-        <h1 className="text-2xl font-semibold tracking-tight [overflow-wrap:anywhere] sm:text-3xl">{title}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight [overflow-wrap:anywhere] sm:text-3xl sm:[overflow-wrap:break-word]">{title}</h1>
         {subtitle ? <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p> : null}
       </div>
 

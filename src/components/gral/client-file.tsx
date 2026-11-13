@@ -9,6 +9,7 @@ import { formatRwf } from "@/lib/format";
 import { listClientClaims, listClientPolicies } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { canAccessPath, clientEditPermissions, clientPermissions, documentPermissions } from "@/lib/permissions";
+import { clientReportHref } from "@/lib/reports";
 import type { Client, ClientClaim, Policy } from "@/lib/types";
 import { KycBadge } from "@/components/gral/kyc-badge";
 import { Chip, Dot, Loader, NavyButton, NotRecorded, OutlineButton, Recorded, SegmentedTabs, TextLink } from "./ui";
@@ -44,6 +45,7 @@ export function ClientFile({
   const [loadingPolicies, setLoadingPolicies] = useState(Boolean(client.uuid));
   const { user } = useCurrentUser();
   const canOpenClaims = canAccessPath(user, "/claims");
+  const canOpenReports = canAccessPath(user, "/reports");
   const { canUpload: canUploadDocuments, canReplace: canReplaceDocuments } = documentPermissions(user);
   const { canFlagNonCompliant, seesDocumentDetail } = clientPermissions(user.role);
   // Edit Client follows CLIENT_UPDATE; Add and Edit Policy follow POLICY_CREATE.
@@ -103,6 +105,14 @@ export function ClientFile({
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            {canOpenReports ? (
+              <Link
+                href={clientReportHref(client.id)}
+                className="inline-flex min-h-9 items-center rounded-full border border-border bg-card px-3.5 py-1.5 text-xs font-medium whitespace-nowrap transition-colors hover:bg-secondary sm:min-h-0"
+              >
+                Client Report
+              </Link>
+            ) : null}
             {canEditClient && onEdit ? (
               <OutlineButton onClick={onEdit}>
                 <Pencil className="size-3.5" /> Edit

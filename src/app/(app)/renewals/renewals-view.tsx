@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft } from "lucide-react";
 import { PageHeader } from "@/components/gral/shell";
+import { usePaged } from "@/components/gral/pager";
 import { ALL_OPTION, ClearFilters, FilterMenu, optionsFrom } from "@/components/gral/filter-menu";
 import { RenewalCasePanel, RenewalHealthChip } from "@/components/gral/renewal-case";
 import {
@@ -21,6 +22,7 @@ import {
   StatTile,
 } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
+import { downloadCsv } from "@/lib/csv";
 import { formatRwf } from "@/lib/format";
 import { useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query";
@@ -35,12 +37,15 @@ import {
   formatDate,
   isLostRenewal,
   renewalHealth,
+  renewalStage,
 } from "@/lib/renewals";
 import type { RenewalCase } from "@/lib/types";
 import { useCurrentUser } from "@/lib/auth-context";
 import { hasPermission, usesBackendPermissions } from "@/lib/permissions";
 
 const TABS = ["Overdue", "Next 30 days", "Next 60 days", "All"] as const;
+/** "On track" has no tab; its summary tile sets it. */
+type View = (typeof TABS)[number] | "On track";
 const NO_FILTERS = { insurer: ALL_OPTION, owner: ALL_OPTION, stage: ALL_OPTION, classOfInsurance: ALL_OPTION };
 const STAGE_OPTIONS = [
   { value: ALL_OPTION, label: "All stages" },
@@ -54,7 +59,7 @@ export function RenewalsView() {
   const searchParams = useSearchParams();
   const openId = searchParams.get("case");
 
-  const [tab, setTab] = useState<(typeof TABS)[number]>("All");
+  const [tab, setTab] = useState<View>("All");
   const queryClient = useQueryClient();
   const { data: allRenewals = [], isLoading, error, refetch } = useRenewals();
   const { user } = useCurrentUser();
@@ -91,8 +96,10 @@ export function RenewalsView() {
     if (tab === "Overdue") return sorted.filter((r) => renewalHealth(r) === "overdue");
     if (tab === "Next 30 days") return sorted.filter((r) => daysToExpiry(r) >= 0 && daysToExpiry(r) <= 30);
     if (tab === "Next 60 days") return sorted.filter((r) => daysToExpiry(r) >= 0 && daysToExpiry(r) <= 60);
+    if (tab === "On track") return sorted.filter((r) => renewalHealth(r) === "on-track");
     return sorted;
   }, [renewals, tab]);
+  const { items: pageRows, pager: renewalPager } = usePaged(rows, { resetKey: tab });
 
   const overdue = renewals.filter((r) => renewalHealth(r) === "overdue").length;
   const dueIn30 = renewals.filter((r) => daysToExpiry(r) >= 0 && daysToExpiry(r) <= 30).length;
@@ -153,18 +160,28 @@ export function RenewalsView() {
       />
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Due in 30 Days" value={String(dueIn30)} />
-        <StatTile label="Overdue" value={String(overdue)} delay={60} />
-        <StatTile label="On Track" value={String(onTrack)} delay={120} />
-        <StatTile label="Premium Up for Renewal (RWF)" value={`${(totalPremium / 1000000).toFixed(1)}M`} delay={180} />
+        <StatTile label="Due in 30 Days" value={String(dueIn30)} onClick={() => setTab("Next 30 days")} active={tab === "Next 30 days"} />
+        <StatTile label="Overdue" value={String(overdue)} delay={60} onClick={() => setTab("Overdue")} active={tab === "Overdue"} />
+        <StatTile label="On Track" value={String(onTrack)} delay={120} onClick={() => setTab("On track")} active={tab === "On track"} />
+        <StatTile label="Premium Due for Renewal (RWF)" value={`${(totalPremium / 1000000).toFixed(1)}M`} delay={180} onClick={() => setTab("All")} active={tab === "All"} />
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
         <div className="min-w-0 space-y-4">
           <FloatCard className="overflow-hidden" delay={120}>
-            <CardHeader title="Renewal Pipeline" right={<SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />} />
+            <CardHeader
+              title={tab === "On track" ? "On Track" : "Renewal Pipeline"}
+              right={
+                <div className="flex flex-wrap items-center gap-2">
+                  <SegmentedTabs tabs={TABS} value={tab as (typeof TABS)[number]} onChange={setTab} />
+                  <OutlineButton disabled={rows.length === 0} onClick={() => downloadRenewals(rows)}>
+                    Download
+                  </OutlineButton>
+                </div>
+              }
+            />
             <div className="mt-4 grid gap-4 p-4 pt-0 sm:grid-cols-2 sm:p-5 sm:pt-0">
-              {rows.map((r) => (
+              {pageRows.map((r) => (
                 <RenewalCard key={r.id} renewal={r} onOpen={() => setOpen(r)} />
               ))}
               {error ? (
@@ -178,6 +195,7 @@ export function RenewalsView() {
                 <p className="text-xs text-muted-foreground">{isLoading ? <Loader label="Loading renewals" /> : "No renewals in this view."}</p>
               ) : null}
             </div>
+            {renewalPager}
           </FloatCard>
         </div>
 
@@ -211,6 +229,13 @@ export function RenewalsView() {
 
     </>
   );
+}
+
+function downloadRenewals(rows: RenewalCase[]) {
+  downloadCsv("renewals.csv", [
+    ["Policy", "Client", "Class", "Insurer", "Expiry", "Days to renewal", "Premium (RWF)", "Stage", "Owner"],
+    ...rows.map((r) => [r.policyId, r.client, r.classOfInsurance, r.insurer, r.expiryDate, daysToExpiry(r), r.premium, renewalStage(r), r.owner]),
+  ]);
 }
 
 function RenewalCard({ renewal: r, onOpen }: { renewal: RenewalCase; onOpen: () => void }) {

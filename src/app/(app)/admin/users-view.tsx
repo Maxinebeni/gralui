@@ -15,6 +15,7 @@ import {
   roleName,
 } from "@/components/gral/admin-users";
 import { CardHeader, Chip, FloatCard, Loader, NavyButton, SegmentedTabs, StatTile, TextLink } from "@/components/gral/ui";
+import { usePaged } from "@/components/gral/pager";
 import { adminSelfId, listManagedRoles, listManagedUsers } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { adminPermissions } from "@/lib/permissions";
@@ -78,6 +79,7 @@ export function UsersView() {
       )
       .sort((a, b) => a.fullName.localeCompare(b.fullName));
   }, [all, tab, query, roles, roleFilter, typeFilter]);
+  const { items: pageRows, pager } = usePaged(rows, { resetKey: tab });
 
   const openId = searchParams.get("user");
   const open = all.find((u) => u.id === openId) ?? null;
@@ -175,7 +177,7 @@ export function UsersView() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((u) => (
+              {pageRows.map((u) => (
                 <tr key={u.id} className="cursor-pointer hover:bg-pale/50" onClick={() => setOpen(u)}>
                   <Td>
                     <div className="flex items-center gap-2 text-sm font-medium">
@@ -213,6 +215,7 @@ export function UsersView() {
             </tbody>
           </table>
         </div>
+        {pager}
       </FloatCard>
 
       <SlideOver open={!!open} onClose={() => setOpen(null)}>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, BadgeCheck, Plus } from "lucide-react";
+import { AlertTriangle, BadgeCheck, Download, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader } from "@/components/gral/shell";
@@ -11,6 +11,10 @@ import {
   ClientFileSlideOver,
   ClientSearch,
   ClientsTable,
+  SectorFilter,
+  clientFilterQuery,
+  downloadClients,
+  filterClientsBy,
   useClientList,
   useOpenClient,
 } from "@/components/gral/client-list";
@@ -19,7 +23,6 @@ import {
   CardHeader,
   ChartCard,
   DistributionRow,
-  FilterPill,
   FloatCard,
   NavyButton,
   OutlineButton,
@@ -38,7 +41,7 @@ const CLIENT_TYPES: ClientType[] = ["Corporate", "State Enterprise", "NGO", "Fin
 const PREVIEW_ROWS = 4;
 
 export function ClientsView() {
-  const { allClients, rows, tab, setTab, query, setQuery, emptyMessage, reload } = useClientList();
+  const { allClients, rows, tab, setTab, sector, setSector, sectors, query, setQuery, emptyMessage, reload } = useClientList();
   const { open, setOpen } = useOpenClient(allClients);
   const { user } = useCurrentUser();
   const [insurers, setInsurers] = useState<InsurerSummary[]>([]);
@@ -51,8 +54,10 @@ export function ClientsView() {
   // The Add Client form loads the manager list from the backend by itself,
   // so this page no longer builds one.
 
-  const kycComplete = allClients.filter((c) => c.kyc).length;
-  const flags = allClients.filter((c) => c.nonCompliant).length;
+  // The tiles count the chosen sector, and each one filters the table below.
+  const inSector = filterClientsBy(allClients, "All", sector);
+  const kycComplete = inSector.filter((c) => c.kyc).length;
+  const flags = inSector.filter((c) => c.nonCompliant).length;
   const complete = allClients.filter((c) => c.docsFiled === c.docsTotal).length;
   const missing = allClients.filter((c) => c.docsFiled <= 2).length;
   const partial = allClients.length - complete - missing;
@@ -66,32 +71,37 @@ export function ClientsView() {
     <>
       <PageHeader
         title="Client Records"
-        extraPills={<FilterPill label="Sector" value="All sectors" />}
+        extraPills={<SectorFilter value={sector} sectors={sectors} onChange={setSector} />}
         action={
-             canManageClients(user) ? (
-            <NavyButton className="px-4 py-2 text-sm" onClick={() => setAdding(true)}>
-              <Plus className="size-4" /> Add Client
-            </NavyButton>
-          ) : undefined
+          <>
+            <OutlineButton className="px-4 py-2 text-sm" disabled={allClients.length === 0} onClick={() => downloadClients(allClients)}>
+              <Download className="size-4" /> Download All Clients
+            </OutlineButton>
+            {canManageClients(user) ? (
+              <NavyButton className="px-4 py-2 text-sm" onClick={() => setAdding(true)}>
+                <Plus className="size-4" /> Add Client
+              </NavyButton>
+            ) : null}
+          </>
         }
       />
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Total Clients" value={String(allClients.length)} />
-        <StatTile label="KYC Complete" value={String(kycComplete)} delay={60} />
-        <StatTile label="KYC Pending" value={String(allClients.length - kycComplete)} delay={120} />
-        <StatTile label="Non-Compliant Flags" value={String(flags)} delay={180} />
+        <StatTile label="Total Clients" value={String(inSector.length)} onClick={() => setTab("All")} active={tab === "All"} />
+        <StatTile label="KYC Complete" value={String(kycComplete)} delay={60} onClick={() => setTab("KYC Complete")} active={tab === "KYC Complete"} />
+        <StatTile label="KYC Pending" value={String(inSector.length - kycComplete)} delay={120} onClick={() => setTab("KYC Pending")} active={tab === "KYC Pending"} />
+        <StatTile label="Non-Compliant Flags" value={String(flags)} delay={180} onClick={() => setTab("Non-Compliant")} active={tab === "Non-Compliant"} />
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
         <div className="min-w-0 space-y-4">
           <FloatCard className="overflow-hidden" delay={120}>
             <CardHeader
-              title="Client Records"
+              title={tab === "KYC Complete" ? "KYC Complete" : "Client Records"}
               right={
                 <div className="flex flex-wrap items-center gap-2">
                   <ClientSearch value={query} onChange={setQuery} />
-                  <SegmentedTabs tabs={CLIENT_TABS} value={tab} onChange={setTab} />
+                  <SegmentedTabs tabs={CLIENT_TABS} value={tab as (typeof CLIENT_TABS)[number]} onChange={setTab} />
                 </div>
               }
             />
@@ -104,10 +114,10 @@ export function ClientsView() {
             </div>
             <div className="border-t border-border px-5 py-4 text-center">
               <Link
-                href="/clients/all"
+                href={`/clients/all${clientFilterQuery(tab, sector)}`}
                 className="text-xs font-semibold text-primary underline underline-offset-4 hover:opacity-70"
               >
-                See all clients
+                {rows.length > PREVIEW_ROWS ? `See all ${rows.length} in this view` : "See all clients"}
               </Link>
             </div>
           </FloatCard>

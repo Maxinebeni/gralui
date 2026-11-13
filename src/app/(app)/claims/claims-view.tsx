@@ -15,7 +15,9 @@ import {
   Td,
   Th,
   byUrgency,
+  downloadClaims,
   filterClaims,
+  type ClaimTab,
   useClaimFilters,
   useClaims,
   useOpenClaim,
@@ -75,7 +77,7 @@ export function ClaimsView() {
   const [range, setRange] = useState<DateRange>("all");
   const { matching, pills } = useClaimFilters(allClaims);
   const claims = useMemo(() => matching.filter((c) => withinRange(c.dateReported, range)), [matching, range]);
-  const [tab, setTab] = useState<(typeof CLAIM_TABS)[number]>("Breached");
+  const [tab, setTab] = useState<ClaimTab>("Breached");
   const [newOpen, setNewOpen] = useState(false);
   const monthly = useMemo(() => claimsPerMonth(allClaims), [allClaims]);
 
@@ -132,9 +134,9 @@ export function ClaimsView() {
       />
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Open Claims" value={shown(openClaims.length)} />
-        <StatTile label="SLA Breached" value={shown(breached)} delay={60} />
-        <StatTile label="Awaiting Sign-off" value={shown(awaitingSignOff)} delay={120} />
+        <StatTile label="Open Claims" value={shown(openClaims.length)} onClick={() => setTab("Open")} active={tab === "Open"} />
+        <StatTile label="SLA Breached" value={shown(breached)} delay={60} onClick={() => setTab("Breached")} active={tab === "Breached"} />
+        <StatTile label="Awaiting Sign-off" value={shown(awaitingSignOff)} delay={120} onClick={() => setTab("Awaiting Sign-off")} active={tab === "Awaiting Sign-off"} />
         <StatTile label="Avg Working Days Open" value={shown(avgDays)} delay={180} />
       </div>
 
@@ -142,8 +144,15 @@ export function ClaimsView() {
         <div className="min-w-0 space-y-4">
           <FloatCard className="overflow-hidden" delay={120}>
             <CardHeader
-              title="Claims Queue"
-              right={<SegmentedTabs tabs={CLAIM_TABS} value={tab} onChange={setTab} />}
+              title={tab === "Open" ? "Open Claims" : tab === "Awaiting Sign-off" ? "Awaiting Sign-off" : "Claims Queue"}
+              right={
+                <div className="flex flex-wrap items-center gap-2">
+                  <SegmentedTabs tabs={CLAIM_TABS} value={tab as (typeof CLAIM_TABS)[number]} onChange={setTab} />
+                  <OutlineButton disabled={rows.length === 0} onClick={() => downloadClaims(rows)}>
+                    Download
+                  </OutlineButton>
+                </div>
+              }
             />
             <div className="mt-6">
               <ClaimsTable
@@ -154,7 +163,7 @@ export function ClaimsView() {
             </div>
             <div className="border-t border-border px-5 py-4 text-center">
               <Link
-                href="/claims/all"
+                href={`/claims/all?view=${encodeURIComponent(tab)}`}
                 className="text-xs font-semibold text-primary underline underline-offset-4 hover:opacity-70"
               >
                 {rows.length > QUEUE_ROWS ? `See all ${rows.length} in this view` : "See all claims"}

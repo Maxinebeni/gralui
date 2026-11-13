@@ -11,6 +11,7 @@ import { inputClass } from "@/components/gral/client-form";
 import { ALL_OPTION, FilterMenu, optionsFrom } from "@/components/gral/filter-menu";
 import { PageHeader, SlideOver } from "@/components/gral/shell";
 import { CardHeader, Chip, FloatCard, Loader, NavyButton, OutlineButton, PageLoader, SegmentedTabs, StatTile, TextLink } from "@/components/gral/ui";
+import { usePaged } from "@/components/gral/pager";
 import { getImportBatch, listImportIssues, uploadImport, validateImport } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import {
@@ -46,6 +47,7 @@ export function ImportsView() {
   const { user } = useCurrentUser();
   const { canUpload } = importPermissions(user);
   const { data: batches = [], isPending, error } = useImports();
+  const { items: pageBatches, pager: batchPager } = usePaged(batches);
   const [uploadOpen, setUploadOpen] = useState(false);
   const openId = searchParams.get("batch");
   // Errors & Flags lives in the URL too (?view=issues), so Back returns to it from a file.
@@ -115,7 +117,7 @@ export function ImportsView() {
                 </tr>
               </thead>
               <tbody>
-                {batches.map((b) => {
+                {pageBatches.map((b) => {
                   const t = importTotals(b);
                   const checked = b.status === "VALIDATED";
                   return (
@@ -152,6 +154,7 @@ export function ImportsView() {
             </tbody>
           </table>
         </div>
+        {batchPager}
       </FloatCard>
       ) : null}
       {upload}
@@ -183,6 +186,7 @@ function AllIssues({ batches, loading, onOpen }: { batches: ImportBatch[]; loadi
         .sort((a, b) => Number(b.blocking) - Number(a.blocking) || a.fileName.localeCompare(b.fileName) || a.sourceSheet.localeCompare(b.sourceSheet) || a.sourceRow - b.sourceRow),
     [issues, tab, file, sheet, code],
   );
+  const { items: pageRows, pager } = usePaged(rows, { resetKey: tab });
 
   function download() {
     const url = URL.createObjectURL(new Blob([issuesToCsv(rows)], { type: "text/csv;charset=utf-8" }));
@@ -266,7 +270,7 @@ function AllIssues({ batches, loading, onOpen }: { batches: ImportBatch[]; loadi
               </tr>
             </thead>
             <tbody>
-              {rows.map((i) => (
+              {pageRows.map((i) => (
                 <tr key={`${i.batchId}:${i.sourceSheet}:${i.sourceRow}:${i.field}:${i.code}`}>
                   <Td className="text-sm">
                     <TextLink onClick={() => onOpen(i.batchId)}>{i.fileName}</TextLink>
@@ -289,6 +293,7 @@ function AllIssues({ batches, loading, onOpen }: { batches: ImportBatch[]; loadi
             </tbody>
           </table>
         </div>
+        {pager}
       </FloatCard>
     </>
   );
@@ -536,6 +541,7 @@ function IssueList({ batch, issues, loading, error }: { batch: ImportBatch; issu
         .sort((a, b) => Number(b.blocking) - Number(a.blocking) || a.sourceSheet.localeCompare(b.sourceSheet) || a.sourceRow - b.sourceRow),
     [issues, tab, sheet],
   );
+  const { items: pageRows, pager } = usePaged(rows, { resetKey: tab });
 
   function download() {
     const url = URL.createObjectURL(new Blob([issuesToCsv(rows)], { type: "text/csv;charset=utf-8" }));
@@ -573,7 +579,7 @@ function IssueList({ batch, issues, loading, error }: { batch: ImportBatch; issu
             </tr>
           </thead>
           <tbody>
-            {rows.map((i) => (
+            {pageRows.map((i) => (
               <tr key={`${i.sourceSheet}:${i.sourceRow}:${i.field}:${i.code}`}>
                 <Td className="text-sm">{i.sourceSheet}</Td>
                 <Td className="text-sm">{i.sourceRow}</Td>
@@ -593,6 +599,7 @@ function IssueList({ batch, issues, loading, error }: { batch: ImportBatch; issu
           </tbody>
         </table>
       </div>
+      {pager}
     </FloatCard>
   );
 }

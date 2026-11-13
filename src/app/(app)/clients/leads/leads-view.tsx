@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Plus, Search } from "lucide-react";
 import { PageHeader, SlideOver } from "@/components/gral/shell";
 import { FilterMenu } from "@/components/gral/filter-menu";
+import { usePaged } from "@/components/gral/pager";
 import { LeadForm } from "@/components/gral/lead-form";
 import { HealthChip, dateOf } from "@/components/gral/onboarding-ui";
 import { CardHeader, FloatCard, Loader, NavyButton, SegmentedTabs, StageBar, StatTile } from "@/components/gral/ui";
@@ -92,6 +93,7 @@ export function LeadsView() {
               : active;
     return [...list].sort((a, b) => a.lead.receivedAt.localeCompare(b.lead.receivedAt));
   }, [tab, active, overdue, journeys]);
+  const { items: pageRows, pager } = usePaged(rows, { resetKey: tab });
 
   const perStep = JOURNEY_STEPS.map((s) => ({ label: `${s.n}. ${s.name}`, count: active.filter((j) => j.step === s.n).length }));
   const countBy = (key: (j: Journey) => string) =>
@@ -139,7 +141,7 @@ export function LeadsView() {
             </label>
           </div>
           <div className="mt-5 grid gap-4 p-4 pt-0 sm:grid-cols-2 sm:p-5 sm:pt-0">
-            {rows.map((j) => (
+            {pageRows.map((j) => (
               <CaseCard key={j.lead.id} value={j} />
             ))}
             {loadError ? (
@@ -155,6 +157,7 @@ export function LeadsView() {
               </p>
             ) : null}
           </div>
+          {pager}
         </FloatCard>
 
         <div className="min-w-0 space-y-4">

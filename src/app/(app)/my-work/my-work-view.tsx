@@ -10,6 +10,7 @@ import { PageHeader, SlideOver } from "@/components/gral/shell";
 import { Td, Th } from "@/components/gral/claim-list";
 import { Field, Section, describedBy, inputClass } from "@/components/gral/client-form";
 import { CardHeader, Chip, FloatCard, NavyButton, OutlineButton, Person, SegmentedTabs, StatTile, TextLink } from "@/components/gral/ui";
+import { usePaged } from "@/components/gral/pager";
 import { cn } from "@/lib/utils";
 import {
   completeTask,
@@ -95,6 +96,7 @@ export function MyWorkView() {
             : scope;
     return [...list].sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   }, [tab, visible, open, mine, scope, managesTeamWork, weekEnd]);
+  const { items: pageRows, pager } = usePaged(rows, { resetKey: tab });
 
   const selectedId = searchParams.get("task");
   const selected = tasks.find((t) => t.id === selectedId) ?? null;
@@ -146,7 +148,7 @@ export function MyWorkView() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((t) => (
+              {pageRows.map((t) => (
                 <tr
                   key={t.key}
                   className="cursor-pointer hover:bg-pale/50"
@@ -204,6 +206,7 @@ export function MyWorkView() {
             </tbody>
           </table>
         </div>
+        {pager}
       </FloatCard>
 
       <SlideOver open={!!selected} onClose={() => setSelected(null)}>

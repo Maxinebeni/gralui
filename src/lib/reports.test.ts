@@ -83,7 +83,7 @@ describe("renewals report", () => {
       { policyId: "B", completed: [], backend: { state: "LOST_NON_RENEWED" } },
     ] as unknown as RenewalCase[];
     const r = renewalsReport(clients, cases, periodFor("2026-11")!);
-    expect(r.lines.map((l) => `${l.policy.id}:${l.status}`)).toEqual(["A:Completed", "B:Lost", "C:No renewal case"]);
+    expect(r.lines.map((l) => `${l.policy.id}:${l.status}`)).toEqual(["A:Renewed", "B:Not renewed", "C:Not started"]);
     expect(r.totals).toMatchObject({ due: 3, renewed: 1, lost: 1, notStarted: 1, inProgress: 0, premium: 3_000_000 });
   });
 });
@@ -113,5 +113,13 @@ describe("portfolio report", () => {
     expect(r.totals).toEqual({ clients: 2, policies: 3, premium: 5_000_000, kycApproved: 1, allClients: 2 });
     expect(r.byInsurer[0]).toEqual({ label: "RADIANT", policies: 1, premium: 3_000_000 });
     expect(r.byClass.find((x) => x.label === "Motor")?.policies).toBe(2);
+  });
+});
+
+describe("custom range", () => {
+  it("reads a from_to key, in either order", () => {
+    expect(periodFor("2026-01-05_2026-03-01")).toMatchObject({ from: "2026-01-05", to: "2026-03-01", label: "5 Jan 2026 – 1 Mar 2026" });
+    expect(periodFor("2026-03-01_2026-01-05")).toMatchObject({ key: "2026-01-05_2026-03-01" });
+    expect(periodFor("2026-02-30_2026-03-01")).toBeNull();
   });
 });

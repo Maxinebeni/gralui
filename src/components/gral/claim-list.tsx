@@ -8,9 +8,11 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Search } from "lucide-react";
 import { ClaimDetailPanel } from "@/components/gral/claim-detail";
+import { usePaged } from "@/components/gral/pager";
 import { ALL_OPTION, ClearFilters, FilterMenu, optionsFrom } from "@/components/gral/filter-menu";
 import { Chip, FloatCard, Person, PriorityPill } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
+import { downloadCsv } from "@/lib/csv";
 import { useClaims as useClaimsQuery, useRefresh } from "@/lib/queries";
 import {
   CLAIM_STEP_DEFS,
@@ -20,6 +22,7 @@ import {
   isDisputed,
   missingDocuments,
   needsEscalation,
+  nextSigner,
   slaLabel,
   stageLabel,
   workingDaysLeft,
@@ -34,7 +37,22 @@ export const CLAIM_TABS = [
   "Escalation",
   "Disputed",
 ] as const;
-export type ClaimTab = (typeof CLAIM_TABS)[number] | "All" | "Closed";
+/** "Open" and "Awaiting Sign-off" have no tab on the queue; their summary tiles set them. */
+export type ClaimTab = (typeof CLAIM_TABS)[number] | "All" | "Open" | "Awaiting Sign-off" | "Closed";
+const ALL_CLAIM_TABS: readonly ClaimTab[] = [...CLAIM_TABS, "All", "Open", "Awaiting Sign-off", "Closed"];
+
+/** A view named in the URL (?view=Breached), or the fallback. */
+export function claimTabFrom(value: string | null, fallback: ClaimTab): ClaimTab {
+  return value && ALL_CLAIM_TABS.includes(value as ClaimTab) ? (value as ClaimTab) : fallback;
+}
+
+/** The claims as listed, for Download. */
+export function downloadClaims(claims: Claim[], fileName = "claims.csv") {
+  downloadCsv(fileName, [
+    ["Claim", "Client", "Class", "Insurer", "Reported", "Priority", "Working days open", "Amount (RWF)", "Step", "Handler"],
+    ...claims.map((c) => [c.id, c.client, c.classOfInsurance, c.insurer, c.dateReported, c.priority, daysOpen(c), c.amount, stageLabel(c), c.handler]),
+  ]);
+}
 
 /** Most urgent first: overdue, then due soonest, then priority. */
 export function byUrgency(a: Claim, b: Claim) {
@@ -57,6 +75,10 @@ export function filterClaims(claims: Claim[], tab: ClaimTab) {
       return open.filter(needsEscalation);
     case "Disputed":
       return open.filter(isDisputed);
+    case "Open":
+      return open;
+    case "Awaiting Sign-off":
+      return open.filter((c) => nextSigner(c) !== null);
     case "Closed":
       return claims.filter(isClosed);
     default:
@@ -200,8 +222,9 @@ export function ClaimsTable({
   onView: (c: Claim) => void;
   emptyMessage?: ReactNode;
 }) {
-  const rows = claims;
+  const { items: rows, pager } = usePaged(claims);
   return (
+    <>
     <div className="overflow-x-auto px-3 pb-4 sm:px-4">
       <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left">
         <thead>
@@ -248,6 +271,8 @@ export function ClaimsTable({
         </tbody>
       </table>
     </div>
+    {pager}
+    </>
   );
 }
 

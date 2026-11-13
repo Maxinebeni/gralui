@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/gral/shell";
 import { FilterMenu } from "@/components/gral/filter-menu";
 import { DATE_RANGE_OPTIONS, withinRange, type DateRange } from "@/lib/date-range";
@@ -10,6 +11,8 @@ import {
   ClaimPage,
   ClaimsTable,
   byUrgency,
+  claimTabFrom,
+  downloadClaims,
   filterClaims,
   matchesClaim,
   useClaimFilters,
@@ -17,14 +20,15 @@ import {
   useOpenClaim,
   type ClaimTab,
 } from "@/components/gral/claim-list";
-import { CardHeader, FloatCard, Loader, PageLoader, SegmentedTabs } from "@/components/gral/ui";
+import { CardHeader, FloatCard, Loader, OutlineButton, PageLoader, SegmentedTabs } from "@/components/gral/ui";
 
-const TABS = ["All", ...CLAIM_TABS, "Closed"] as const;
+const TABS = ["All", "Open", ...CLAIM_TABS, "Awaiting Sign-off", "Closed"] as const;
 
 export function AllClaimsView() {
   const { claims, loaded, reload } = useClaims();
   const { open, openId, backHref, setOpen } = useOpenClaim(claims);
-  const [tab, setTab] = useState<ClaimTab>("All");
+  const searchParams = useSearchParams();
+  const [tab, setTab] = useState<ClaimTab>(() => claimTabFrom(searchParams.get("view"), "All"));
   const [query, setQuery] = useState("");
 
   const [range, setRange] = useState<DateRange>("all");
@@ -65,6 +69,9 @@ export function AllClaimsView() {
             <div className="flex flex-wrap items-center gap-2">
               <ClaimSearch value={query} onChange={setQuery} />
               <SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />
+              <OutlineButton disabled={rows.length === 0} onClick={() => downloadClaims(rows)}>
+                Download
+              </OutlineButton>
             </div>
           }
         />
