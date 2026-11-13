@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActionForm, Label, SelectInput, TextInput } from "@/components/gral/onboarding-ui";
 import { PageHeader } from "@/components/gral/shell";
-import { FloatCard, OutlineButton } from "@/components/gral/ui";
+import { FloatCard, Loader, OutlineButton } from "@/components/gral/ui";
 import { addCatalogProduct, addInsurer, getInsurerProductCatalog, linkProductToInsurer, unlinkProductFromInsurer, type InsurerProductCatalog } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { hasPermission, usesBackendPermissions } from "@/lib/permissions";
@@ -68,7 +68,7 @@ export function InsurerProductsView() {
           <button type="button" onClick={() => void load()} className="mt-3 text-xs font-medium text-primary underline underline-offset-2">Try again</button>
         </FloatCard>
       ) : loading || !catalog ? (
-        <FloatCard className="mt-5 p-5"><p className="text-sm text-muted-foreground">Loading insurer product catalog…</p></FloatCard>
+        <FloatCard className="mt-5 p-5"><p className="text-sm text-muted-foreground"><Loader label="Loading insurer product catalog" /></p></FloatCard>
       ) : (
         <div className="mt-5 space-y-4">
           <FloatCard className="p-5">

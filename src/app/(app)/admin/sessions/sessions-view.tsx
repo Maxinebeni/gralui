@@ -9,7 +9,7 @@ import { RefreshCw, Search } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/gral/shell";
 import { Td, Th } from "@/components/gral/claim-list";
-import { CardHeader, Chip, Dot, FloatCard, NavyButton, OutlineButton, StatTile } from "@/components/gral/ui";
+import { CardHeader, Chip, Dot, FloatCard, Loader, NavyButton, OutlineButton, StatTile } from "@/components/gral/ui";
 import { adminSelfId, endAllSessionsFor, endSession, listActiveSessions } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { adminPermissions } from "@/lib/permissions";
@@ -199,7 +199,7 @@ export function SessionsView() {
               {rows.length === 0 ? (
                 <tr>
                   <Td className={error ? "text-sm text-danger" : "text-sm text-muted-foreground"} colSpan={5}>
-                    {error ?? (sessions === null ? "Loading sessions…" : query ? `Nobody matches "${query}".` : "Nobody is signed in.")}
+                    {error ?? (sessions === null ? <Loader label="Loading sessions" /> : query ? `Nobody matches "${query}".` : "Nobody is signed in.")}
                   </Td>
                 </tr>
               ) : null}

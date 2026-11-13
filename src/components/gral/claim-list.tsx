@@ -198,7 +198,7 @@ export function ClaimsTable({
 }: {
   claims: Claim[];
   onView: (c: Claim) => void;
-  emptyMessage?: string;
+  emptyMessage?: ReactNode;
 }) {
   const rows = claims;
   return (

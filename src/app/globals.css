@@ -108,6 +108,15 @@
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
   }
+
+  /* Keyboard users always see where they are, even on controls styled with outline-none. */
+  a:focus-visible,
+  button:focus-visible,
+  [role="tab"]:focus-visible,
+  [role="menuitem"]:focus-visible {
+    outline: 2px solid var(--sky) !important;
+    outline-offset: 2px;
+  }
 }
 
 /* Floating white card surface */

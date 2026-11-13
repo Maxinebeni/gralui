@@ -12,7 +12,7 @@ import { ClientFile } from "@/components/gral/client-file";
 import { ClientFormPanel } from "@/components/gral/client-form";
 import { KycBadge } from "@/components/gral/kyc-badge";
 import { SlideOver } from "@/components/gral/shell";
-import { Chip, NotRecorded, Person, Recorded, TextLink } from "@/components/gral/ui";
+import { Chip, Loader, NotRecorded, Person, Recorded, TextLink } from "@/components/gral/ui";
 import { useClients, useRefresh } from "@/lib/queries";
 import type { Client } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -45,7 +45,7 @@ export function useClientList() {
   // Rows already on screen stay visible during a reload or a new search.
   const emptyMessage =
     loading && matches.length === 0
-      ? "Loading clients…"
+      ? <Loader label="Loading clients" />
       : `No clients match ${query ? `“${query}”` : "this filter"}.`;
 
   return { allClients, rows, tab, setTab, query, setQuery, emptyMessage, reload, loading };
@@ -76,7 +76,7 @@ export function ClientsTable({
 }: {
   clients: Client[];
   onView: (c: Client) => void;
-  emptyMessage: string;
+  emptyMessage: React.ReactNode;
 }) {
   return (
     <div className="overflow-x-auto px-2 pb-4">

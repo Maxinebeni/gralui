@@ -82,6 +82,6 @@ describe("claim figures", () => {
   it("finds open claims older than 30 days and counts settlements by month", () => {
     const old = { ...base, dateReported: "2026-09-01" };
     expect(overdueClaims([base, old, settled], TODAY)).toEqual([old]);
-    expect(settledPerMonth([settled], 6, TODAY).at(-1)).toEqual({ month: "Oct", count: 1 });
+    expect(settledPerMonth([settled], 6, TODAY).at(-1)).toEqual({ key: "2026-10", month: "Oct", count: 1 });
   });
 });

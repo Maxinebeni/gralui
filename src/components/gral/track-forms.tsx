@@ -34,7 +34,7 @@ import {
   type ActionDisclosureControls,
 } from "./onboarding-ui";
 import { DeadlineForm, SingleSourceRequest, SingleSourceStatus, TrackAssignmentForm } from "./track-workflow-actions";
-import { Chip, FloatCard, OutlineButton } from "./ui";
+import { Chip, FloatCard, Loader, OutlineButton } from "./ui";
 
 const PROOF_LABELS: Record<string, string> = {
   RISK_SURVEY: "Risk survey report",
@@ -447,7 +447,7 @@ function RfqForm({ title, track: t, options, run: execute, destination, onCancel
       <fieldset className="sm:col-span-2">
         <Label>Insurers asked ({chosen.length} chosen)</Label>
         <div className="mt-1.5 grid max-h-56 gap-1 overflow-y-auto rounded-xl border border-border p-2 sm:grid-cols-2">
-          {productInsurers === null ? <p className="p-2 text-xs text-muted-foreground">Loading insurers that offer this product…</p> : productInsurers.length ? productInsurers.map((i) => (
+          {productInsurers === null ? <p className="p-2 text-xs text-muted-foreground"><Loader label="Loading insurers that offer this product" /></p> : productInsurers.length ? productInsurers.map((i) => (
             <label key={i.id} className="flex items-center gap-2 rounded-lg px-2 py-1 text-xs hover:bg-secondary/60">
               <input type="checkbox" checked={chosen.includes(i.id)} onChange={(e) => setChosen((c) => (e.target.checked ? [...c, i.id] : c.filter((x) => x !== i.id)))} />
               {i.name}

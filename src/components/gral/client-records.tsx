@@ -17,7 +17,7 @@ import {
 } from "@/lib/api";
 import { formatDate } from "@/lib/renewals";
 import type { Client, ClientContact } from "@/lib/types";
-import { Chip, NavyButton, OutlineButton, TextLink } from "./ui";
+import { Chip, Loader, NavyButton, OutlineButton, TextLink } from "./ui";
 import { Field, Section, describedBy, inputClass } from "./client-form";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -97,7 +97,7 @@ export function ContactsPanel({
         </div>
       ) : null}
       {error ? <p className="py-4 text-sm text-danger">{error}</p> : null}
-      {!contacts && !error ? <p className="py-4 text-sm text-muted-foreground">Loading contacts…</p> : null}
+      {!contacts && !error ? <p className="py-4 text-sm text-muted-foreground"><Loader label="Loading contacts" /></p> : null}
       {contacts?.length === 0 ? <p className="py-4 text-sm text-muted-foreground">No contacts on record.</p> : null}
       <div className="space-y-2.5">
         {contacts?.map((entry) => (
@@ -258,7 +258,7 @@ export function InteractionsPanel({ client, canRecord }: { client: Client; canRe
         </div>
       ) : null}
       {error ? <p className="py-4 text-sm text-danger">{error}</p> : null}
-      {!items && !error ? <p className="py-4 text-sm text-muted-foreground">Loading interactions…</p> : null}
+      {!items && !error ? <p className="py-4 text-sm text-muted-foreground"><Loader label="Loading interactions" /></p> : null}
       {items?.length === 0 ? <p className="py-4 text-sm text-muted-foreground">No interactions on record.</p> : null}
       <div className="space-y-2.5">
         {items

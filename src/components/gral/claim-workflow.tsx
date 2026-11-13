@@ -23,7 +23,7 @@ import { formatDate } from "@/lib/renewals";
 import type { Claim } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { FilePickButton } from "./documents";
-import { NavyButton, OutlineButton } from "./ui";
+import { Loader, NavyButton, OutlineButton } from "./ui";
 
 const INPUT =
   "w-full rounded-xl border border-input bg-card px-3 py-2 text-xs outline-none focus:border-sky focus:ring-2 focus:ring-sky/30";
@@ -256,7 +256,7 @@ export function ClaimHistoryList({ claim, only }: { claim: Claim; only?: string[
   }, [claim]);
 
   if (error) return <p className="mt-4 text-xs text-danger">{error}</p>;
-  if (events === null) return <p className="mt-4 text-xs text-muted-foreground">Loading…</p>;
+  if (events === null) return <p className="mt-4 text-xs text-muted-foreground"><Loader label="Loading" /></p>;
   const shown = only ? events.filter((e) => only.includes(e.action)) : events;
   if (shown.length === 0) return <p className="mt-4 text-xs text-muted-foreground">Nothing recorded yet.</p>;
 

@@ -2,9 +2,11 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { X } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { PageHeader } from "@/components/gral/shell";
+import { KycBadge } from "@/components/gral/kyc-badge";
+import { PageHeader, SlideOver } from "@/components/gral/shell";
 import {
   ChartCard,
   Chip,
@@ -25,6 +27,7 @@ import { useCurrentUser } from "@/lib/auth-context";
 import { canAccessPath } from "@/lib/permissions";
 import { currentMilestone, daysBetween, daysOverdue, daysToExpiry, formatDate, renewalHealth, todayIso } from "@/lib/renewals";
 import {
+  claimStatus,
   claimsByStatus,
   claimsOpenedThisMonth,
   clientsByCategory,
@@ -276,11 +279,90 @@ export function OverviewView() {
 
 /* ---------------------------------- Shared ----------------------------------- */
 
+/* -------------------------------- Drill-downs -------------------------------- */
+// Each figure opens the exact records it counts, in a side panel that follows the
+// URL (?show=due-30), so the Back button closes it and the view can be shared.
+
+type Drill = { title: string; count: number; body: ReactNode; more?: { href: string; label: string } };
+
+const showHref = (key: string) => `/?show=${encodeURIComponent(key)}`;
+
+function DrillPanel({ drills }: { drills: Record<string, Drill> }) {
+  const router = useRouter();
+  const show = useSearchParams().get("show");
+  const d = show ? drills[show] : undefined;
+  const close = () => router.replace("/", { scroll: false });
+  return (
+    <SlideOver open={!!d} onClose={close}>
+      {d ? (
+        <div>
+          <div className="flex items-start justify-between gap-3 border-b border-border px-5 pt-7 pb-5 sm:px-8">
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold tracking-tight">{d.title}</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {d.count} {d.count === 1 ? "record" : "records"}
+              </p>
+            </div>
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={close}
+              className="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground hover:text-foreground"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
+          <div className="px-5 py-5 sm:px-8">
+            {d.body}
+            {d.more ? (
+              <Link href={d.more.href} className="mt-5 inline-block text-xs font-semibold text-primary underline underline-offset-4 hover:opacity-70">
+                {d.more.label}
+              </Link>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </SlideOver>
+  );
+}
+
+const CLIENT_HEAD = ["Client", "Category", "Account manager", "KYC"];
+const CLIENT_COLS = "minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.2fr) 6.5rem";
+const clientCells = (c: Client) => [
+  c.name,
+  c.type,
+  c.manager || "Not assigned",
+  <KycBadge key="k" short kyc={c.kyc} status={c.kycStatus} gateStatus={c.kycGateStatus} />,
+];
+
+const CLAIM_HEAD = ["Claim", "Client", "Class", "Reported", "Status"];
+const CLAIM_COLS = "minmax(0,1fr) minmax(0,1.6fr) minmax(0,1.2fr) minmax(0,0.9fr) 7.5rem";
+const claimCells = (c: Claim) => [c.id, c.client, c.classOfInsurance, formatDate(c.dateReported), <Chip key="s">{claimStatus(c)}</Chip>];
+const claimHref = (c: Claim) => `/claims?claim=${encodeURIComponent(c.id)}`;
+
+function clientDrill(title: string, list: Client[]): Drill {
+  return {
+    title,
+    count: list.length,
+    body: <Rows head={CLIENT_HEAD} rows={list} cols={CLIENT_COLS} cells={clientCells} href={(c) => clientHref(c.id)} empty="None." />,
+    more: { href: "/clients", label: "Open Clients" },
+  };
+}
+
+function claimDrill(title: string, list: Claim[]): Drill {
+  return {
+    title,
+    count: list.length,
+    body: <Rows head={CLAIM_HEAD} rows={list} cols={CLAIM_COLS} cells={claimCells} href={claimHref} empty="None." />,
+    more: { href: "/claims/all", label: "Open All Claims" },
+  };
+}
+
 function Tiles({ items }: { items: { label: string; value: number | string; href: string }[] }) {
   return (
     <div className={cn("mt-4 grid gap-4 sm:grid-cols-2", items.length === 5 ? "xl:grid-cols-5" : "xl:grid-cols-4")}>
       {items.map((t, i) => (
-        <Link key={t.label} href={t.href} className="block">
+        <Link key={t.label} href={t.href} scroll={false} className="block">
           <div className="lift-card">
             <StatTile label={t.label} value={String(t.value)} delay={i * 50} />
           </div>
@@ -417,18 +499,47 @@ function RenewalsView({ clients }: { clients: Client[] }) {
   const due60 = expiringBetween(rows, 31, 60);
   const overdue = overdueRenewals(rows);
   const unpaid = unpaidPolicies(rows, today);
+  const active = inForce(rows);
+
+  const policyDrill = (title: string, list: PolicyRow[]): Drill => ({
+    title,
+    count: list.length,
+    body: <Rows head={POLICY_HEAD} rows={list} cols={POLICY_COLS} cells={policyCells} href={(r) => clientHref(r.clientId)} empty="None." />,
+    more: { href: "/renewals", label: "Open the Renewals Pipeline" },
+  });
+  const drills: Record<string, Drill> = {
+    "active-policies": policyDrill("Active Policies", active),
+    "due-30": policyDrill("Expiring in the Next 30 Days", due30),
+    "due-60": policyDrill("Expiring in 31-60 Days", due60),
+    "overdue-renewals": policyDrill("Overdue Renewals", overdue),
+    unpaid: {
+      title: "Unpaid Policies",
+      count: unpaid.length,
+      body: (
+        <Rows
+          head={["Client", "Policy number", "Class", "Balance"]}
+          rows={unpaid}
+          cols="minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.2fr) minmax(0,1fr)"
+          cells={(r) => [r.client, r.policy.id, r.policy.classOfInsurance, <span key="b" className="font-medium">{formatRwf(r.balance ?? 0)}</span>]}
+          href={(r) => clientHref(r.clientId)}
+          empty="None."
+        />
+      ),
+    },
+  };
 
   return (
     <>
       <Tiles
         items={[
-          { label: "Total Active Policies", value: inForce(rows).length, href: "/clients" },
-          { label: "Expiring in Next 30 Days", value: due30.length, href: "/renewals" },
-          { label: "Expiring in 31-60 Days", value: due60.length, href: "/renewals" },
-          { label: "Overdue Renewals", value: overdue.length, href: "/renewals" },
-          { label: "Unpaid Policies", value: unpaid.length, href: "/clients" },
+          { label: "Total Active Policies", value: active.length, href: showHref("active-policies") },
+          { label: "Expiring in Next 30 Days", value: due30.length, href: showHref("due-30") },
+          { label: "Expiring in 31-60 Days", value: due60.length, href: showHref("due-60") },
+          { label: "Overdue Renewals", value: overdue.length, href: showHref("overdue-renewals") },
+          { label: "Unpaid Policies", value: unpaid.length, href: showHref("unpaid") },
         ]}
       />
+      <DrillPanel drills={drills} />
 
       <Row>
         <SectionCard title="Expiring in the Next 30 Days" delay={120}>
@@ -476,17 +587,28 @@ function ClientsView({ clients }: { clients: Client[] }) {
   const categories = clientsByCategory(clients);
   const completeFiles = clients.filter((c) => c.docsFiled === c.docsTotal && !c.nonCompliant).length;
   const nonCompliant = clients.filter((c) => c.nonCompliant).length;
+  const router = useRouter();
+
+  const drills: Record<string, Drill> = {
+    "active-clients": clientDrill("Active Clients", active),
+    "new-clients": clientDrill("New Clients This Month", fresh),
+    "no-policy": clientDrill("Clients with No Active Policy", noPolicy),
+    ...Object.fromEntries(
+      categories.map((cat) => [`category:${cat.label}`, clientDrill(`${cat.label} Clients`, clients.filter((c) => c.type === cat.label))]),
+    ),
+  };
 
   return (
     <>
       <Tiles
         items={[
-          { label: "Total Active Clients", value: active.length, href: "/clients" },
-          { label: "New Clients This Month", value: fresh.length, href: "/clients" },
-          { label: "Clients with No Active Policy", value: noPolicy.length, href: "/clients" },
+          { label: "Total Active Clients", value: active.length, href: showHref("active-clients") },
+          { label: "New Clients This Month", value: fresh.length, href: showHref("new-clients") },
+          { label: "Clients with No Active Policy", value: noPolicy.length, href: showHref("no-policy") },
           { label: "SLA Agreements Due", value: "–", href: "/clients" },
         ]}
       />
+      <DrillPanel drills={drills} />
 
       <Row>
         <SectionCard title="Top Clients by Premium" delay={120}>
@@ -502,7 +624,7 @@ function ClientsView({ clients }: { clients: Client[] }) {
 
         <div className="min-w-0 space-y-4">
           <SectionCard title="Clients by Category" delay={160}>
-            <StageBar wideLabels stages={categories} />
+            <StageBar wideLabels stages={categories} onSelect={(label) => router.replace(showHref(`category:${label}`), { scroll: false })} />
           </SectionCard>
           <SectionCard title="Client File Status" delay={200}>
             <DistributionRow
@@ -543,17 +665,31 @@ function ClaimsView({ claims }: { claims: Claim[] }) {
   const open = claims.filter((c) => !isClosed(c));
   const overdue = overdueClaims(claims, today);
   const monthly = settledPerMonth(claims, 6, today);
+  const opened = claimsOpenedThisMonth(claims, today);
+  const settledIn = (key: string) => claims.filter((c) => c.closure?.outcome === "SETTLED" && c.closure.closedAt.startsWith(key));
+  const thisMonth = monthly.at(-1)!;
+
+  const drills: Record<string, Drill> = {
+    "open-claims": claimDrill("Open Claims", open),
+    "opened-month": claimDrill("Claims Opened This Month", opened),
+    "overdue-claims": claimDrill("Overdue Claims", overdue),
+    ...Object.fromEntries(monthly.map((m) => [`settled:${m.key}`, claimDrill(`Claims Settled in ${m.month}`, settledIn(m.key))])),
+    ...Object.fromEntries(
+      claimsByStatus(claims).map((s) => [`status:${s.label}`, claimDrill(`${s.label} Claims`, claims.filter((c) => claimStatus(c) === s.label))]),
+    ),
+  };
 
   return (
     <>
       <Tiles
         items={[
-          { label: "Total Open Claims", value: open.length, href: "/claims" },
-          { label: "Claims Opened This Month", value: claimsOpenedThisMonth(claims, today).length, href: "/claims" },
-          { label: "Overdue Claims", value: overdue.length, href: "/claims" },
-          { label: "Claims Settled This Month", value: monthly.at(-1)?.count ?? 0, href: "/claims" },
+          { label: "Total Open Claims", value: open.length, href: showHref("open-claims") },
+          { label: "Claims Opened This Month", value: opened.length, href: showHref("opened-month") },
+          { label: "Overdue Claims", value: overdue.length, href: showHref("overdue-claims") },
+          { label: "Claims Settled This Month", value: thisMonth.count, href: showHref(`settled:${thisMonth.key}`) },
         ]}
       />
+      <DrillPanel drills={drills} />
 
       <Row>
         <SectionCard title="Overdue Claims" delay={120}>
@@ -575,7 +711,7 @@ function ClaimsView({ claims }: { claims: Claim[] }) {
           />
         </SectionCard>
         <SectionCard title="Claims by Status" delay={160}>
-          <StageBar wideLabels stages={claimsByStatus(claims)} onSelect={() => router.push("/claims")} />
+          <StageBar wideLabels stages={claimsByStatus(claims)} onSelect={(label) => router.replace(showHref(`status:${label}`), { scroll: false })} />
         </SectionCard>
       </Row>
     </>
@@ -584,6 +720,7 @@ function ClaimsView({ claims }: { claims: Claim[] }) {
 
 /** Sits below Needs Your Attention and Recent Activity on the Claims view. */
 function SettledChart({ claims }: { claims: Claim[] }) {
+  const router = useRouter();
   const monthly = settledPerMonth(claims, 6, todayIso());
   return (
     <div className="mt-4">
@@ -594,7 +731,17 @@ function SettledChart({ claims }: { claims: Claim[] }) {
             <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
             <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
             <Tooltip cursor={{ fill: "var(--secondary)" }} contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", fontSize: 11 }} />
-            <Bar dataKey="count" name="Claims settled" fill="var(--primary)" radius={[6, 6, 0, 0]} maxBarSize={36} />
+            <Bar
+              dataKey="count"
+              name="Claims settled"
+              fill="var(--primary)"
+              radius={[6, 6, 0, 0]}
+              maxBarSize={36}
+              cursor="pointer"
+              onClick={(bar: { payload?: { key?: string } }) => {
+                if (bar.payload?.key) router.replace(showHref(`settled:${bar.payload.key}`), { scroll: false });
+              }}
+            />
           </BarChart>
         </ResponsiveContainer>
       </ChartCard>

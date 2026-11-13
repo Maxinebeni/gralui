@@ -21,7 +21,7 @@ import {
   uploadDocument,
 } from "@/lib/api";
 import type { DocumentClassification, DocumentSubject, StoredDocument } from "@/lib/types";
-import { Chip, NavyButton, OutlineButton } from "./ui";
+import { Chip, Loader, NavyButton, OutlineButton } from "./ui";
 
 export const CLASSIFICATION_LABEL: Record<DocumentClassification, string> = {
   KYC: "KYC",
@@ -349,7 +349,7 @@ export function DocumentPanel({
       ) : null}
 
       <div className="mt-3 space-y-2">
-        {documents === null ? <p className="text-xs text-muted-foreground">Loading documents…</p> : null}
+        {documents === null ? <p className="text-xs text-muted-foreground"><Loader label="Loading documents" /></p> : null}
         {error ? <p className="text-xs text-danger">{error}</p> : null}
         {documents && documents.length === 0 && !error ? <p className="text-xs text-muted-foreground">{emptyText}</p> : null}
         {documents?.map((d) => (

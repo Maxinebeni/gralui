@@ -22,7 +22,7 @@ import { RENEWAL_MILESTONES, formatDate } from "@/lib/renewals";
 import type { RenewalCase, RenewalMilestoneCode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { FilePickButton } from "./documents";
-import { NavyButton, OutlineButton } from "./ui";
+import { Loader, NavyButton, OutlineButton } from "./ui";
 
 const INPUT =
   "w-full rounded-xl border border-input bg-card px-3 py-2 text-xs outline-none focus:border-sky focus:ring-2 focus:ring-sky/30";
@@ -321,7 +321,7 @@ function FieldInput({
     case "insurers": {
       const chosen = Array.isArray(value) ? value : [];
       input = loading ? (
-        <p className="text-[11px] text-subtle">Loading insurers…</p>
+        <Loader size="sm" label="Loading insurers" className="justify-start" />
       ) : (
         <div className="grid gap-1.5 sm:grid-cols-2">
           {(choices?.insurers ?? []).map((o) => (

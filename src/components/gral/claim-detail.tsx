@@ -48,7 +48,7 @@ import { ClaimSlaChip } from "./claim-list";
 import { BackendClaimWorkflow, ClaimHistoryList } from "./claim-workflow";
 import { DocumentPanel, FilePickButton } from "./documents";
 import { ReviewDialog } from "./review-dialog";
-import { Chip, Dot, NavyButton, OutlineButton, Person, PriorityPill, SegmentedTabs } from "./ui";
+import { Chip, Dot, Loader, NavyButton, OutlineButton, Person, PriorityPill, SegmentedTabs } from "./ui";
 
 const TABS = ["Documents", "Follow-ups", "Activity Log", "Internal Notes"] as const;
 type Tab = (typeof TABS)[number];
@@ -626,7 +626,7 @@ function DocumentsTab({ claim, canUpdate, userName, run }: { claim: Claim; canUp
             </button>
           </p>
         ) : checklist === undefined ? (
-          <p className="text-xs text-muted-foreground">Loading the documents checklist…</p>
+          <p className="text-xs text-muted-foreground"><Loader label="Loading the documents checklist" /></p>
         ) : (
           <BackendChecklist
             claim={claim}

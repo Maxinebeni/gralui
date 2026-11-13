@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { PageHeader } from "@/components/gral/shell";
-import { CardHeader, Chip, FloatCard, Person, SegmentedTabs } from "@/components/gral/ui";
+import { CardHeader, Chip, FloatCard, Loader, Person, SegmentedTabs } from "@/components/gral/ui";
 import { activityFrom } from "@/lib/api";
 import { useClaims, useRenewals } from "@/lib/queries";
 import { useCurrentUser } from "@/lib/auth-context";
@@ -52,7 +52,7 @@ export function ActivityView() {
               </Link>
             </li>
           ))}
-          {items === null ? <li className="py-4 text-xs text-muted-foreground">Loading…</li> : null}
+          {items === null ? <li className="py-4 text-xs text-muted-foreground"><Loader label="Loading" /></li> : null}
           {items !== null && rows.length === 0 ? <li className="py-4 text-xs text-muted-foreground">Nothing recorded yet.</li> : null}
         </ul>
       </FloatCard>

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getTrack, type TrackDetail } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { TrackWorkspace } from "@/components/gral/track-workspace";
-import { OutlineButton } from "@/components/gral/ui";
+import { OutlineButton, PageLoader } from "@/components/gral/ui";
 export function TrackView({ trackId }: { trackId: string }) {
   const { user } = useCurrentUser();
   const [detail, setDetail] = useState<TrackDetail | null>(null);
@@ -17,6 +17,6 @@ export function TrackView({ trackId }: { trackId: string }) {
   }, [trackId, user.id, user.role]);
   useEffect(() => { setDetail(null); void reload(); }, [reload]);
   if (error) return <div className="space-y-3"><p role="alert" className="text-sm text-danger">{error}</p><OutlineButton onClick={() => void reload()}>Try again</OutlineButton></div>;
-  if (!detail) return <p className="text-sm text-muted-foreground">Loading policy track…</p>;
+  if (!detail) return <PageLoader label="Loading policy track" />;
   return <TrackWorkspace key={trackId + (user.id ?? user.role)} detail={detail} onChanged={reload} />;
 }

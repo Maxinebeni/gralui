@@ -21,7 +21,7 @@ export function AllClientsView() {
         title="All Client Records"
         subtitle={
           loading && rows.length === 0
-            ? "Loading…"
+            ? undefined
             : `${rows.length} ${rows.length === 1 ? "record" : "records"}`
         }
       />

@@ -28,8 +28,10 @@ import {
   Chip,
   DistributionRow,
   FloatCard,
+  Loader,
   NavyButton,
   OutlineButton,
+  PageLoader,
   QuickAction,
   QuickActionRow,
   SegmentedTabs,
@@ -102,7 +104,7 @@ export function ClaimsView() {
   // A claim is a long process, so it opens as its own full page.
   if (openId) {
     if (open) return <ClaimPage claim={open} backHref={backHref} backLabel="Claims Queue" onChanged={reload} />;
-    return <p className="text-sm text-muted-foreground">{loaded ? "This claim could not be found." : "Loading claim…"}</p>;
+    return loaded ? <p className="text-sm text-muted-foreground">This claim could not be found.</p> : <PageLoader label="Loading claim" />;
   }
 
   return (
@@ -147,7 +149,7 @@ export function ClaimsView() {
               <ClaimsTable
                 claims={rows.slice(0, QUEUE_ROWS)}
                 onView={setOpen}
-                emptyMessage={loaded ? "No claims in this view." : "Loading claims…"}
+                emptyMessage={loaded ? "No claims in this view." : <Loader label="Loading claims" />}
               />
             </div>
             <div className="border-t border-border px-5 py-4 text-center">
@@ -163,7 +165,7 @@ export function ClaimsView() {
           <FloatCard className="overflow-hidden" delay={200}>
             <CardHeader title="Needs Action" right={blocked.length ? <Chip tone="warning">{blocked.length} blocked</Chip> : null} />
             {blocked.length === 0 ? (
-              <p className="px-4 pt-3 pb-5 text-xs text-muted-foreground sm:px-5">{loaded ? "Nothing is blocked." : "Loading claims…"}</p>
+              <p className="px-4 pt-3 pb-5 text-xs text-muted-foreground sm:px-5">{loaded ? "Nothing is blocked." : <Loader label="Loading claims" />}</p>
             ) : (
               <div className="mt-6 overflow-x-auto px-3 pb-4 sm:px-4">
                 <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left">

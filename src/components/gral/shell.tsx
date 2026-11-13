@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Bell, ChevronDown, LogOut, Search, Settings } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { initials, timeAgo } from "@/lib/format";
@@ -155,7 +155,7 @@ export function Shell({ children }: { children: ReactNode }) {
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-[1280px] px-3 pt-6 pb-4 sm:px-6 sm:py-6">
         {/* Phones: logo + icons on row 1, full-width scrollable menu on row 2. */}
-        <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-4 lg:flex lg:justify-between">
+        <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-4 lg:flex lg:justify-between print:hidden">
           <Link href="/" className="flex min-w-0 items-center">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -400,11 +400,11 @@ export function PageHeader({
   return (
     <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
       <div className="min-w-0">
-        <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight [overflow-wrap:anywhere] sm:text-3xl">{title}</h1>
         {subtitle ? <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p> : null}
       </div>
 
-      <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end print:hidden">
         {/* Demo-only role switcher (from the design). Hidden once the backend sends
             real permissions, because switching roles would no longer change anything. */}
         {!usesBackendPermissions(user) ? (
@@ -439,6 +439,31 @@ export function PageHeader({
   );
 }
 
+/**
+ * Keyboard and screen-reader behaviour shared by the side panel and the pop-up:
+ * focus moves into the dialog when it opens, Escape closes it, and focus goes
+ * back to whatever opened it.
+ */
+function useDialog(open: boolean, onClose: () => void) {
+  const panel = useRef<HTMLDivElement>(null);
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    if (!open) return;
+    const opener = document.activeElement as HTMLElement | null;
+    panel.current?.focus({ preventScroll: true });
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) close.current();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      opener?.focus?.({ preventScroll: true });
+    };
+  }, [open]);
+  return panel;
+}
+
 export function SlideOver({
   open,
   onClose,
@@ -451,18 +476,24 @@ export function SlideOver({
   wide?: boolean;
   children: ReactNode;
 }) {
+  const panel = useDialog(open, onClose);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       <button
         type="button"
+        tabIndex={-1}
         aria-label="Close panel"
         onClick={onClose}
         className="absolute inset-0 bg-foreground/25 backdrop-blur-[2px]"
       />
       <div
+        ref={panel}
+        role="dialog"
+        aria-modal="true"
+        tabIndex={-1}
         className={cn(
-          "relative h-full w-full overflow-y-auto bg-card shadow-[var(--shadow-float)] duration-300 animate-in slide-in-from-right sm:rounded-l-3xl",
+          "relative h-full w-full overflow-y-auto bg-card shadow-[var(--shadow-float)] outline-none duration-300 animate-in slide-in-from-right sm:rounded-l-3xl",
           wide ? "max-w-[720px]" : "max-w-[620px]",
         )}
       >
@@ -493,19 +524,23 @@ export function CenteredModal({
   onClose: () => void;
   children: ReactNode;
 }) {
+  const panel = useDialog(open, onClose);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-16 pb-8 sm:pt-24">
       <button
         type="button"
+        tabIndex={-1}
         aria-label="Close"
         onClick={onClose}
         className="absolute inset-0 bg-foreground/25 backdrop-blur-[2px]"
       />
       <div
+        ref={panel}
         role="dialog"
         aria-modal="true"
-        className="relative max-h-[calc(100dvh-8rem)] w-full max-w-[720px] overflow-y-auto rounded-3xl bg-card shadow-[var(--shadow-float)] duration-200 animate-in fade-in zoom-in-95 sm:max-h-[calc(100dvh-10rem)]"
+        tabIndex={-1}
+        className="relative max-h-[calc(100dvh-8rem)] w-full max-w-[720px] overflow-y-auto rounded-3xl bg-card shadow-[var(--shadow-float)] outline-none duration-200 animate-in fade-in zoom-in-95 sm:max-h-[calc(100dvh-10rem)]"
       >
         {children}
       </div>

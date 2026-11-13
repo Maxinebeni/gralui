@@ -1,6 +1,8 @@
 // Data import (IMP-02, IMP-03): a filled template is uploaded, then checked row
 // by row in a dry run that writes nothing. Saving the good rows comes later (IMP-05).
 
+import { toCsv } from "./csv";
+
 export type ImportMode = "HISTORICAL" | "NEW";
 export type ImportStatus = "UPLOADED" | "VALIDATING" | "VALIDATED" | "FAILED";
 
@@ -66,16 +68,27 @@ export function importTotals(batch: Pick<ImportBatch, "sheets">) {
   );
 }
 
-const csvCell = (value: string | number) => {
-  const text = String(value);
-  // A leading = + - or @ would run as a formula when the list is opened in Excel.
-  const safe = /^[=+\-@]/.test(text) ? `'${text}` : text;
-  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-};
-
 /** The error list GRAL corrects before importing again. */
 export function issuesToCsv(issues: ImportIssue[]) {
   const header = ["Sheet", "Row", "Field", "Value", "Problem", "Result"];
   const rows = issues.map((i) => [i.sourceSheet, i.sourceRow, i.field, i.normalizedValue ?? "", i.message, i.blocking ? "Blocked" : "Flagged"]);
-  return [header, ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n");
+  return toCsv([header, ...rows]);
+}
+
+/** An issue with the file it came from, for the list across every checked file. */
+export type FileIssue = ImportIssue & { batchId: string; fileName: string };
+
+export type IssueGroup = { code: string; message: string; blocking: boolean; count: number; sheets: string[] };
+
+/** The same problem across rows and files counted once, blocking problems first, then the most common. */
+export function groupIssues(issues: ImportIssue[]): IssueGroup[] {
+  const groups = new Map<string, IssueGroup>();
+  for (const i of issues) {
+    const g = groups.get(i.code) ?? { code: i.code, message: i.message, blocking: i.blocking, count: 0, sheets: [] };
+    g.count += 1;
+    g.blocking ||= i.blocking;
+    if (!g.sheets.includes(i.sourceSheet)) g.sheets.push(i.sourceSheet);
+    groups.set(i.code, g);
+  }
+  return [...groups.values()].sort((a, b) => Number(b.blocking) - Number(a.blocking) || b.count - a.count || a.code.localeCompare(b.code));
 }

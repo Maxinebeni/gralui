@@ -3,6 +3,7 @@
 import { useEffect, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { NoAccess, Shell } from "@/components/gral/shell";
+import { Loader } from "@/components/gral/ui";
 import { useAuth } from "@/lib/auth-context";
 import { canAccessPath, homePathFor } from "@/lib/permissions";
 
@@ -24,7 +25,13 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     if (redirectHome) router.replace(home);
   }, [redirectHome, home, router]);
 
-  if (!ready || !user || redirectHome) return <div className="min-h-screen bg-background" />;
+  if (!ready || !user || redirectHome) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader size="lg" label="Loading GRAL" />
+      </div>
+    );
+  }
 
   return <Shell>{canAccessPath(user, pathname) ? children : <NoAccess />}</Shell>;
 }

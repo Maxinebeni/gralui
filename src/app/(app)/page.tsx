@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { OverviewView } from "./overview-view";
 
 export const metadata: Metadata = {
@@ -7,5 +8,10 @@ export const metadata: Metadata = {
 };
 
 export default function OverviewPage() {
-  return <OverviewView />;
+  // Suspense is required because OverviewView reads the URL (?show=...).
+  return (
+    <Suspense>
+      <OverviewView />
+    </Suspense>
+  );
 }

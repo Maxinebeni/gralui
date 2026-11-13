@@ -11,7 +11,7 @@ import { useCurrentUser } from "@/lib/auth-context";
 import { canAccessPath, clientEditPermissions, clientPermissions, documentPermissions } from "@/lib/permissions";
 import type { Client, ClientClaim, Policy } from "@/lib/types";
 import { KycBadge } from "@/components/gral/kyc-badge";
-import { Chip, Dot, NavyButton, NotRecorded, OutlineButton, Recorded, SegmentedTabs, TextLink } from "./ui";
+import { Chip, Dot, Loader, NavyButton, NotRecorded, OutlineButton, Recorded, SegmentedTabs, TextLink } from "./ui";
 import { PolicyForm } from "./policy-form";
 import { DocumentPanel } from "./documents";
 import { ContactsPanel, InteractionsPanel } from "./client-records";
@@ -249,7 +249,7 @@ export function ClientFile({
               ) : null}
 
               {loadingPolicies ? (
-                <p className="px-1 py-4 text-xs text-muted-foreground">Loading policies…</p>
+                <p className="px-1 py-4 text-xs text-muted-foreground"><Loader label="Loading policies" /></p>
               ) : policyError ? (
                 <p className="rounded-xl border border-dashed border-border px-4 py-6 text-center text-xs text-danger">
                   {policyError}

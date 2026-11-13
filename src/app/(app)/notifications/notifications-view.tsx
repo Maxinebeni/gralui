@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { PageHeader, notificationHref } from "@/components/gral/shell";
-import { CardHeader, Chip, FloatCard, OutlineButton, SegmentedTabs } from "@/components/gral/ui";
+import { CardHeader, Chip, FloatCard, Loader, OutlineButton, SegmentedTabs } from "@/components/gral/ui";
 import { listNotifications, markNotificationRead, type InboxNotification } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -80,7 +80,7 @@ export function NotificationsView() {
               </button>
             </li>
           ))}
-          {query.isPending ? <li className="py-4 text-sm text-muted-foreground">Loading…</li> : null}
+          {query.isPending ? <li className="py-4 text-sm text-muted-foreground"><Loader label="Loading" /></li> : null}
           {query.isError ? <li className="py-4 text-sm text-danger">{query.error.message}</li> : null}
           {query.isSuccess && items.length === 0 ? (
             <li className="py-4 text-sm text-muted-foreground">{unreadOnly ? "No unread notifications." : "No notifications yet."}</li>
@@ -89,7 +89,7 @@ export function NotificationsView() {
         {query.hasNextPage ? (
           <div className="px-5 pb-5 sm:px-6">
             <OutlineButton disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>
-              {query.isFetchingNextPage ? "Loading…" : "Show older"}
+              {query.isFetchingNextPage ? <Loader label="Loading" /> : "Show older"}
             </OutlineButton>
           </div>
         ) : null}

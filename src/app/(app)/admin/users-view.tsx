@@ -14,7 +14,7 @@ import {
   formatDay,
   roleName,
 } from "@/components/gral/admin-users";
-import { CardHeader, Chip, FloatCard, NavyButton, SegmentedTabs, StatTile, TextLink } from "@/components/gral/ui";
+import { CardHeader, Chip, FloatCard, Loader, NavyButton, SegmentedTabs, StatTile, TextLink } from "@/components/gral/ui";
 import { adminSelfId, listManagedRoles, listManagedUsers } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { adminPermissions } from "@/lib/permissions";
@@ -206,7 +206,7 @@ export function UsersView() {
               {rows.length === 0 ? (
                 <tr>
                   <Td className={error ? "text-sm text-danger" : "text-sm text-muted-foreground"} colSpan={6}>
-                    {error ?? (users === null ? "Loading users…" : query ? `No users match "${query}".` : "No users in this view.")}
+                    {error ?? (users === null ? <Loader label="Loading users" /> : query ? `No users match "${query}".` : "No users in this view.")}
                   </Td>
                 </tr>
               ) : null}

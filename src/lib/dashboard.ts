@@ -165,6 +165,7 @@ export function settledPerMonth(claims: Claim[], months = 6, today = todayIso())
     const key = d.toISOString().slice(0, 7);
     const settled = claims.filter((c) => c.closure?.outcome === "SETTLED" && c.closure.closedAt.startsWith(key));
     return {
+      key,
       month: MONTHS[d.getUTCMonth()]!,
       count: settled.length,
     };

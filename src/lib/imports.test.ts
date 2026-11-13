@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { importFileProblem, importTotals, issuesToCsv, type ImportIssue } from "./imports";
+import { groupIssues, importFileProblem, importTotals, issuesToCsv, type ImportIssue } from "./imports";
 import { DEMO_DRY_RUN_ISSUES, DEMO_DRY_RUN_SHEETS } from "./mock-imports";
 
 describe("import file checks", () => {
@@ -48,5 +48,16 @@ describe("error list", () => {
     const csv = issuesToCsv([issue({ normalizedValue: "=HYPERLINK(1)", blocking: false })]);
     expect(csv.split("\r\n")[1]).toContain("'=HYPERLINK(1)");
     expect(csv.split("\r\n")[1]).toContain("Flagged");
+  });
+});
+
+describe("errors and flags across files", () => {
+  it("counts each problem once, blocking problems first", () => {
+    const groups = groupIssues(DEMO_DRY_RUN_ISSUES);
+    expect(groups[0]!.blocking).toBe(true);
+    expect(groups.find((g) => g.code === "MISSING_CONTACT")).toMatchObject({ count: 3, sheets: ["Clients"], blocking: false });
+    expect(groups.reduce((s, g) => s + g.count, 0)).toBe(DEMO_DRY_RUN_ISSUES.length);
+    const firstFlagged = groups.findIndex((g) => !g.blocking);
+    expect(groups.slice(firstFlagged).every((g) => !g.blocking)).toBe(true);
   });
 });

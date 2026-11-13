@@ -8,7 +8,7 @@ import { PageHeader, SlideOver } from "@/components/gral/shell";
 import { FilterMenu } from "@/components/gral/filter-menu";
 import { LeadForm } from "@/components/gral/lead-form";
 import { HealthChip, dateOf } from "@/components/gral/onboarding-ui";
-import { CardHeader, FloatCard, NavyButton, SegmentedTabs, StageBar, StatTile } from "@/components/gral/ui";
+import { CardHeader, FloatCard, Loader, NavyButton, SegmentedTabs, StageBar, StatTile } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
 import { useLeads, useRefresh } from "@/lib/queries";
 import { useCurrentUser } from "@/lib/auth-context";
@@ -151,7 +151,7 @@ export function LeadsView() {
               </p>
             ) : rows.length === 0 ? (
               <p className="py-10 text-center text-xs text-muted-foreground sm:col-span-2">
-                {loading ? "Loading leads…" : query ? `No leads match "${query.trim()}".` : "No leads in this view."}
+                {loading ? <Loader label="Loading leads" /> : query ? `No leads match "${query.trim()}".` : "No leads in this view."}
               </p>
             ) : null}
           </div>

@@ -54,6 +54,9 @@ const ONBOARDING_ROLES: readonly Role[] = [
   "Internal Audit Manager",
 ];
 
+/** The backend's permission matrix (REPORT_READ). Reports are worked out from lists each role can already see. */
+const REPORT_ROLES: readonly Role[] = ["CRM Manager", "GI Underwriting Manager", "Claims Manager", "Technical Director", "MD", "DMD", "Risk & Compliance Manager", "Internal Audit Manager"];
+
 /** The backend's permission matrix: these roles read imports; the first three also upload and check them. */
 const IMPORT_ROLES: readonly Role[] = ["CRM Manager", "GI Underwriting Manager", "Claims Manager", "Risk & Compliance Manager", "Internal Audit Manager"];
 const IMPORT_AUTHORS: readonly Role[] = ["CRM Manager", "GI Underwriting Manager", "Claims Manager"];
@@ -90,6 +93,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "All Clients", href: "/clients/all", permission: "CLIENT_READ", roles: ROLES, parent: "/clients", businessOnly: true },
   { label: "Leads", href: "/clients/leads", permission: "LEAD_READ", roles: ONBOARDING_ROLES, parent: "/clients", businessOnly: true },
   { label: "Renewals", href: "/renewals", permission: "RENEWAL_READ", roles: RENEWAL_ROLES, businessOnly: true },
+  { label: "Reports", href: "/reports", permission: "REPORT_READ", roles: REPORT_ROLES, businessOnly: true },
   // Admin pages sit in the name (account) menu, not the top bar. Real backend
   // permissions; in demo mode only the MD sees them.
   { label: "Data Import", href: "/imports", permission: "IMPORT_READ", roles: IMPORT_ROLES, parent: ACCOUNT_MENU, businessOnly: true },

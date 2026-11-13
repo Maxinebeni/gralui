@@ -411,3 +411,33 @@ export function Dot({ tone = "subtle", className }: { tone?: "danger" | "warning
     </span>
   );
 }
+
+/** A spinner in place of "Loading…" text. It is a span, so it can sit inside text and table cells. */
+export function Loader({
+  label = "Loading",
+  size = "md",
+  className,
+}: {
+  /** Read out by screen readers. */
+  label?: string;
+  size?: "sm" | "md" | "lg";
+  className?: string;
+}) {
+  return (
+    <span role="status" className={cn("flex items-center justify-center py-3", className)}>
+      <span
+        aria-hidden
+        className={cn(
+          "rounded-full border-2 border-primary/15 border-t-primary motion-safe:animate-spin",
+          size === "sm" ? "size-4" : size === "lg" ? "size-9 border-[3px]" : "size-6",
+        )}
+      />
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+}
+
+/** A full-page spinner, for a page whose data has not arrived yet. */
+export function PageLoader({ label }: { label?: string }) {
+  return <Loader size="lg" label={label} className="min-h-[50vh]" />;
+}

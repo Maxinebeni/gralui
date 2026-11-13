@@ -6,7 +6,7 @@ import { Plus } from "lucide-react";
 import { PageHeader, SlideOver } from "@/components/gral/shell";
 import { Td, Th } from "@/components/gral/claim-list";
 import { NewRoleForm, RolePanel } from "@/components/gral/admin-roles";
-import { CardHeader, Chip, FloatCard, NavyButton, SegmentedTabs, TextLink } from "@/components/gral/ui";
+import { CardHeader, Chip, FloatCard, Loader, NavyButton, SegmentedTabs, TextLink } from "@/components/gral/ui";
 import { MOCK_AUTH, listManagedRoles, listManagedUsers, listPermissionDefinitions } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { adminPermissions } from "@/lib/permissions";
@@ -105,7 +105,7 @@ export function RolesView() {
               {rows.length === 0 ? (
                 <tr>
                   <Td className={error ? "text-sm text-danger" : "text-sm text-muted-foreground"} colSpan={4}>
-                    {error ?? (roles === null ? "Loading roles…" : "No roles of this type yet.")}
+                    {error ?? (roles === null ? <Loader label="Loading roles" /> : "No roles of this type yet.")}
                   </Td>
                 </tr>
               ) : null}

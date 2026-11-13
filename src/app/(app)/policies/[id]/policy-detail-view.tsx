@@ -6,7 +6,7 @@ import { ArrowLeft } from "lucide-react";
 import { PageHeader } from "@/components/gral/shell";
 import { DocumentPanel } from "@/components/gral/documents";
 import { Td, Th } from "@/components/gral/claim-list";
-import { CardHeader, Chip, FloatCard, NotRecorded, Recorded } from "@/components/gral/ui";
+import { CardHeader, Chip, FloatCard, NotRecorded, PageLoader, Recorded } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
 import { getPolicyDetail } from "@/lib/api";
@@ -52,7 +52,7 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
     };
   }, [policyId, policyUuid]);
 
-  if (detail === undefined) return <p className="text-sm text-muted-foreground">Loading policy…</p>;
+  if (detail === undefined) return <PageLoader label="Loading policy" />;
   if (detail === null) {
     return (
       <div className="flex justify-center pt-16">

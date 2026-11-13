@@ -53,7 +53,7 @@ import {
   type ActionDisclosureControls,
 } from "./onboarding-ui";
 import { PageHeader } from "./shell";
-import { Chip, Dot, FloatCard, OutlineButton, SegmentedTabs } from "./ui";
+import { Chip, Dot, FloatCard, Loader, OutlineButton, SegmentedTabs } from "./ui";
 
 const EVIDENCE_LABELS: Record<string, string> = { SCREENING: "Screening record", KYC_APPROVAL: "Signed KYC Approval Form", KYC_ESCALATION: "Escalation note" };
 
@@ -409,7 +409,7 @@ export function StartKycReview({ clientId, clientName, reviews, onStarted }: { c
       <div className="mt-5 grid gap-4 xl:grid-cols-[1fr_340px]">
         <div className="min-w-0 space-y-4">
           {templateError ? <FloatCard className="space-y-2 p-5"><p role="alert" className="text-xs text-danger">{templateError}</p><OutlineButton onClick={load}>Try again</OutlineButton></FloatCard> : templates === null ? (
-            <p className="text-sm text-muted-foreground">Loading GRAL&apos;s checklists…</p>
+            <p className="text-sm text-muted-foreground"><Loader label="Loading GRAL&apos;s checklists" /></p>
           ) : templates.length === 0 ? (
             <FloatCard className="p-5">
               <h2 className="text-base font-semibold tracking-tight">No KYC checklist set up yet</h2>

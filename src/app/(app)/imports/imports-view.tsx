@@ -10,7 +10,7 @@ import { Td, Th } from "@/components/gral/claim-list";
 import { inputClass } from "@/components/gral/client-form";
 import { ALL_OPTION, FilterMenu, optionsFrom } from "@/components/gral/filter-menu";
 import { PageHeader, SlideOver } from "@/components/gral/shell";
-import { CardHeader, Chip, FloatCard, NavyButton, OutlineButton, SegmentedTabs, StatTile, TextLink } from "@/components/gral/ui";
+import { CardHeader, Chip, FloatCard, Loader, NavyButton, OutlineButton, PageLoader, SegmentedTabs, StatTile, TextLink } from "@/components/gral/ui";
 import { getImportBatch, listImportIssues, uploadImport, validateImport } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import {
@@ -18,8 +18,10 @@ import {
   IMPORT_MODE_LABEL,
   IMPORT_STATUS_LABEL,
   importFileProblem,
+  groupIssues,
   importTotals,
   issuesToCsv,
+  type FileIssue,
   type ImportBatch,
   type ImportIssue,
   type ImportMode,
@@ -30,6 +32,7 @@ import { queryKeys } from "@/lib/query";
 import { formatDate } from "@/lib/renewals";
 
 const ISSUE_TABS = ["All", "Blocked", "Flagged"] as const;
+const VIEWS = ["Imports", "Errors & Flags"] as const;
 
 function StatusChip({ batch }: { batch: ImportBatch }) {
   const tone = batch.status === "VALIDATED" ? "success" : batch.status === "FAILED" ? "danger" : "sky";
@@ -45,6 +48,9 @@ export function ImportsView() {
   const { data: batches = [], isPending, error } = useImports();
   const [uploadOpen, setUploadOpen] = useState(false);
   const openId = searchParams.get("batch");
+  // Errors & Flags lives in the URL too (?view=issues), so Back returns to it from a file.
+  const view: (typeof VIEWS)[number] = searchParams.get("view") === "issues" ? "Errors & Flags" : "Imports";
+  const setView = (v: (typeof VIEWS)[number]) => router.replace(v === "Imports" ? pathname : `${pathname}?view=issues`, { scroll: false });
 
   const open = (id: string) => router.replace(`${pathname}?batch=${encodeURIComponent(id)}`, { scroll: false });
 
@@ -84,55 +90,199 @@ export function ImportsView() {
         }
       />
 
-      <FloatCard className="mt-5 overflow-hidden">
-        <CardHeader title="Imports" />
+      <div className="mt-5 grid justify-items-start">
+        <SegmentedTabs tabs={VIEWS} value={view} onChange={setView} />
+      </div>
+
+      {view === "Errors & Flags" ? <AllIssues batches={batches} loading={isPending} onOpen={open} /> : null}
+
+      {view === "Imports" ? (
+        <FloatCard className="mt-5 overflow-hidden">
+          <CardHeader title="Imports" />
+          <div className="mt-4 overflow-x-auto px-2 pb-4">
+            <table className="w-full min-w-[760px] border-separate border-spacing-0 text-left">
+              <thead>
+                <tr className="bg-pale text-[11px] text-muted-foreground">
+                  <Th className="rounded-l-xl">File</Th>
+                  <Th>Type</Th>
+                  <Th>Uploaded</Th>
+                  <Th>Status</Th>
+                  <Th>Rows</Th>
+                  <Th>Ready</Th>
+                  <Th>Flagged</Th>
+                  <Th>Blocked</Th>
+                  <Th className="rounded-r-xl">Action</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {batches.map((b) => {
+                  const t = importTotals(b);
+                  const checked = b.status === "VALIDATED";
+                  return (
+                    <tr key={b.id} className="cursor-pointer hover:bg-pale/50" onClick={() => open(b.id)}>
+                      <Td>
+                        <div className="max-w-[220px] truncate text-sm font-medium">{b.fileName}</div>
+                        <div className="text-xs text-muted-foreground">{b.id}</div>
+                      </Td>
+                      <Td className="text-sm whitespace-nowrap">{IMPORT_MODE_LABEL[b.mode]}</Td>
+                      <Td className="text-sm whitespace-nowrap">
+                        {formatDate(b.uploadedAt.slice(0, 10))}
+                        <div className="text-xs text-muted-foreground">{b.uploadedBy}</div>
+                      </Td>
+                      <Td>
+                        <StatusChip batch={b} />
+                      </Td>
+                      <Td className="text-sm">{checked ? t.rows : "-"}</Td>
+                      <Td className="text-sm">{checked ? t.ready : "-"}</Td>
+                      <Td className="text-sm">{checked ? t.flagged : "-"}</Td>
+                      <Td className="text-sm">{checked ? t.blocked : "-"}</Td>
+                      <Td>
+                        <TextLink>View</TextLink>
+                      </Td>
+                    </tr>
+                  );
+                })}
+                {batches.length === 0 ? (
+                  <tr>
+                    <Td className={error ? "text-sm text-danger" : "text-sm text-muted-foreground"} colSpan={9}>
+                      {error instanceof Error ? error.message : isPending ? <Loader label="Loading imports" /> : "No imports yet."}
+                    </Td>
+                  </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </FloatCard>
+      ) : null}
+      {upload}
+    </>
+  );
+}
+
+/** Every problem found across the checked files, grouped by kind, to fix before importing again. */
+function AllIssues({ batches, loading, onOpen }: { batches: ImportBatch[]; loading: boolean; onOpen: (id: string) => void }) {
+  const checked = batches.filter((b) => b.status === "VALIDATED");
+  const issuesQuery = useQuery({
+    queryKey: [...queryKeys.imports, "all-issues", checked.map((b) => b.id).join(",")],
+    queryFn: async (): Promise<FileIssue[]> =>
+      (await Promise.all(checked.map(async (b) => (await listImportIssues(b.id)).map((i) => ({ ...i, batchId: b.id, fileName: b.fileName }))))).flat(),
+    enabled: !loading,
+  });
+  const issues = useMemo(() => issuesQuery.data ?? [], [issuesQuery.data]);
+  const [tab, setTab] = useState<(typeof ISSUE_TABS)[number]>("All");
+  const [file, setFile] = useState(ALL_OPTION);
+  const [sheet, setSheet] = useState(ALL_OPTION);
+  const [code, setCode] = useState(ALL_OPTION);
+  const groups = useMemo(() => groupIssues(issues), [issues]);
+
+  const rows = useMemo(
+    () =>
+      issues
+        .filter((i) => tab === "All" || (tab === "Blocked" ? i.blocking : !i.blocking))
+        .filter((i) => (file === ALL_OPTION || i.batchId === file) && (sheet === ALL_OPTION || i.sourceSheet === sheet) && (code === ALL_OPTION || i.code === code))
+        .sort((a, b) => Number(b.blocking) - Number(a.blocking) || a.fileName.localeCompare(b.fileName) || a.sourceSheet.localeCompare(b.sourceSheet) || a.sourceRow - b.sourceRow),
+    [issues, tab, file, sheet, code],
+  );
+
+  function download() {
+    const url = URL.createObjectURL(new Blob([issuesToCsv(rows)], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "import-errors-and-flags.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  if (loading || issuesQuery.isPending) return <PageLoader label="Loading the issues" />;
+  if (issuesQuery.error) return <p className="mt-5 text-sm text-danger">{issuesQuery.error instanceof Error ? issuesQuery.error.message : "Could not load the issues."}</p>;
+  if (checked.length === 0) return <p className="mt-5 text-sm text-muted-foreground">No file has been checked yet.</p>;
+
+  const blocked = issues.filter((i) => i.blocking).length;
+  return (
+    <>
+      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatTile label="Files Checked" value={String(checked.length)} />
+        <StatTile label="Blocked Rows" value={String(blocked)} delay={60} />
+        <StatTile label="Flagged Rows" value={String(issues.length - blocked)} delay={120} />
+        <StatTile label="Kinds of Problem" value={String(groups.length)} delay={180} />
+      </div>
+
+      <FloatCard className="mt-4 overflow-hidden" delay={120}>
+        <CardHeader title="By Problem" />
         <div className="mt-4 overflow-x-auto px-2 pb-4">
-          <table className="w-full min-w-[760px] border-separate border-spacing-0 text-left">
+          <table className="w-full min-w-[640px] border-separate border-spacing-0 text-left">
             <thead>
               <tr className="bg-pale text-[11px] text-muted-foreground">
-                <Th className="rounded-l-xl">File</Th>
-                <Th>Type</Th>
-                <Th>Uploaded</Th>
-                <Th>Status</Th>
+                <Th className="rounded-l-xl">Problem</Th>
+                <Th>Sheets</Th>
                 <Th>Rows</Th>
-                <Th>Ready</Th>
-                <Th>Flagged</Th>
-                <Th>Blocked</Th>
-                <Th className="rounded-r-xl">Action</Th>
+                <Th>Result</Th>
+                <Th className="rounded-r-xl" />
               </tr>
             </thead>
             <tbody>
-              {batches.map((b) => {
-                const t = importTotals(b);
-                const checked = b.status === "VALIDATED";
-                return (
-                  <tr key={b.id} className="cursor-pointer hover:bg-pale/50" onClick={() => open(b.id)}>
-                    <Td>
-                      <div className="max-w-[220px] truncate text-sm font-medium">{b.fileName}</div>
-                      <div className="text-xs text-muted-foreground">{b.id}</div>
-                    </Td>
-                    <Td className="text-sm whitespace-nowrap">{IMPORT_MODE_LABEL[b.mode]}</Td>
-                    <Td className="text-sm whitespace-nowrap">
-                      {formatDate(b.uploadedAt.slice(0, 10))}
-                      <div className="text-xs text-muted-foreground">{b.uploadedBy}</div>
-                    </Td>
-                    <Td>
-                      <StatusChip batch={b} />
-                    </Td>
-                    <Td className="text-sm">{checked ? t.rows : "-"}</Td>
-                    <Td className="text-sm">{checked ? t.ready : "-"}</Td>
-                    <Td className="text-sm">{checked ? t.flagged : "-"}</Td>
-                    <Td className="text-sm">{checked ? t.blocked : "-"}</Td>
-                    <Td>
-                      <TextLink>View</TextLink>
-                    </Td>
-                  </tr>
-                );
-              })}
-              {batches.length === 0 ? (
+              {groups.map((g) => (
+                <tr key={g.code}>
+                  <Td className="text-sm">{g.message}</Td>
+                  <Td className="text-sm">{g.sheets.join(", ")}</Td>
+                  <Td className="text-sm">{g.count}</Td>
+                  <Td>{g.blocking ? <Chip tone="danger">Blocked</Chip> : <Chip tone="warning">Flagged</Chip>}</Td>
+                  <Td className="text-right">
+                    <TextLink onClick={() => setCode(g.code)}>Show rows</TextLink>
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </FloatCard>
+
+      <FloatCard className="mt-4 overflow-hidden" delay={180}>
+        <CardHeader
+          title={`${rows.length} ${rows.length === 1 ? "row" : "rows"}`}
+          right={
+            <div className="flex flex-wrap items-center gap-2">
+              <FilterMenu label="File" value={file} options={[{ value: ALL_OPTION, label: "All files" }, ...checked.map((b) => ({ value: b.id, label: b.fileName }))]} onChange={setFile} />
+              <FilterMenu label="Sheet" value={sheet} options={optionsFrom(issues.map((i) => i.sourceSheet), "All sheets")} onChange={setSheet} />
+              <FilterMenu label="Problem" value={code} options={[{ value: ALL_OPTION, label: "All problems" }, ...groups.map((g) => ({ value: g.code, label: g.message }))]} onChange={setCode} />
+              <SegmentedTabs tabs={ISSUE_TABS} value={tab} onChange={setTab} />
+              <OutlineButton disabled={rows.length === 0} onClick={download}>
+                Download List
+              </OutlineButton>
+            </div>
+          }
+        />
+        <div className="mt-4 overflow-x-auto px-2 pb-4">
+          <table className="w-full min-w-[820px] border-separate border-spacing-0 text-left">
+            <thead>
+              <tr className="bg-pale text-[11px] text-muted-foreground">
+                <Th className="rounded-l-xl">File</Th>
+                <Th>Sheet</Th>
+                <Th>Row</Th>
+                <Th>Field</Th>
+                <Th>Value</Th>
+                <Th>Problem</Th>
+                <Th className="rounded-r-xl">Result</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((i) => (
+                <tr key={`${i.batchId}:${i.sourceSheet}:${i.sourceRow}:${i.field}:${i.code}`}>
+                  <Td className="text-sm">
+                    <TextLink onClick={() => onOpen(i.batchId)}>{i.fileName}</TextLink>
+                  </Td>
+                  <Td className="text-sm">{i.sourceSheet}</Td>
+                  <Td className="text-sm">{i.sourceRow}</Td>
+                  <Td className="text-sm whitespace-nowrap">{i.field}</Td>
+                  <Td className="text-sm">{i.normalizedValue || "-"}</Td>
+                  <Td className="text-sm">{i.message}</Td>
+                  <Td>{i.blocking ? <Chip tone="danger">Blocked</Chip> : <Chip tone="warning">Flagged</Chip>}</Td>
+                </tr>
+              ))}
+              {rows.length === 0 ? (
                 <tr>
-                  <Td className={error ? "text-sm text-danger" : "text-sm text-muted-foreground"} colSpan={9}>
-                    {error instanceof Error ? error.message : isPending ? "Loading imports…" : "No imports yet."}
+                  <Td className="text-sm text-muted-foreground" colSpan={7}>
+                    No rows in this view.
                   </Td>
                 </tr>
               ) : null}
@@ -140,7 +290,6 @@ export function ImportsView() {
           </table>
         </div>
       </FloatCard>
-      {upload}
     </>
   );
 }
@@ -283,7 +432,7 @@ function BatchPage({ id, backHref, onUploadAgain }: { id: string; backHref: stri
       <>
         {back}
         <p className={batchQuery.error ? "mt-4 text-sm text-danger" : "mt-4 text-sm text-muted-foreground"}>
-          {batchQuery.error instanceof Error ? batchQuery.error.message : batchQuery.isPending ? "Loading import…" : "This import could not be found."}
+          {batchQuery.error instanceof Error ? batchQuery.error.message : batchQuery.isPending ? <Loader label="Loading import" /> : "This import could not be found."}
         </p>
       </>
     );
@@ -437,7 +586,7 @@ function IssueList({ batch, issues, loading, error }: { batch: ImportBatch; issu
             {rows.length === 0 ? (
               <tr>
                 <Td className={error ? "text-sm text-danger" : "text-sm text-muted-foreground"} colSpan={6}>
-                  {error instanceof Error ? error.message : loading ? "Loading issues…" : "No issues in this view."}
+                  {error instanceof Error ? error.message : loading ? <Loader label="Loading issues" /> : "No issues in this view."}
                 </Td>
               </tr>
             ) : null}

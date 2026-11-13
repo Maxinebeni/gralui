@@ -9,6 +9,7 @@ import { useCurrentUser } from "@/lib/auth-context";
 import { primaryTrack } from "@/lib/onboarding";
 import type { Lead, PolicyTrack } from "@/lib/types";
 import { useRefresh } from "@/lib/queries";
+import { PageLoader } from "@/components/gral/ui";
 
 export function LeadView({ caseId }: { caseId: string }) {
   const router = useRouter();
@@ -68,7 +69,7 @@ export function LeadView({ caseId }: { caseId: string }) {
       </p>
     );
   }
-  if (detail === undefined) return <p className="text-sm text-muted-foreground">Loading lead…</p>;
+  if (detail === undefined) return <PageLoader label="Loading lead" />;
   if (detail === null) {
     return (
       <div className="flex justify-center pt-16">

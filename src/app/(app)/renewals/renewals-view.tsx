@@ -12,6 +12,7 @@ import {
   Chip,
   DistributionRow,
   FloatCard,
+  Loader,
   OutlineButton,
   QuickAction,
   QuickActionRow,
@@ -174,7 +175,7 @@ export function RenewalsView() {
                   </button>
                 </p>
               ) : rows.length === 0 ? (
-                <p className="text-xs text-muted-foreground">{isLoading ? "Loading renewals…" : "No renewals in this view."}</p>
+                <p className="text-xs text-muted-foreground">{isLoading ? <Loader label="Loading renewals" /> : "No renewals in this view."}</p>
               ) : null}
             </div>
           </FloatCard>

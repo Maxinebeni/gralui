@@ -9,7 +9,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { NoAccess, PageHeader } from "@/components/gral/shell";
-import { Chip, FloatCard, NavyButton, OutlineButton, StatTile } from "@/components/gral/ui";
+import { Chip, FloatCard, Loader, NavyButton, OutlineButton, StatTile } from "@/components/gral/ui";
 import {
   enrichRenewalExit,
   listRenewalExits,
@@ -112,7 +112,7 @@ export function ExitRegisterView() {
             </button>
           </p>
         ) : exits === null ? (
-          <p className="text-xs text-muted-foreground">Loading…</p>
+          <p className="text-xs text-muted-foreground"><Loader label="Loading" /></p>
         ) : list.length === 0 ? (
           <p className="text-xs text-muted-foreground">No renewals were lost in this month{category ? " for this reason" : ""}.</p>
         ) : (

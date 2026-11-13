@@ -17,7 +17,7 @@ import {
   useOpenClaim,
   type ClaimTab,
 } from "@/components/gral/claim-list";
-import { CardHeader, FloatCard, SegmentedTabs } from "@/components/gral/ui";
+import { CardHeader, FloatCard, Loader, PageLoader, SegmentedTabs } from "@/components/gral/ui";
 
 const TABS = ["All", ...CLAIM_TABS, "Closed"] as const;
 
@@ -39,7 +39,7 @@ export function AllClaimsView() {
 
   if (openId) {
     if (open) return <ClaimPage claim={open} backHref={backHref} backLabel="All Claims" onChanged={reload} />;
-    return <p className="text-sm text-muted-foreground">{loaded ? "This claim could not be found." : "Loading claim…"}</p>;
+    return loaded ? <p className="text-sm text-muted-foreground">This claim could not be found.</p> : <PageLoader label="Loading claim" />;
   }
 
   return (
@@ -72,7 +72,7 @@ export function AllClaimsView() {
           <ClaimsTable
             claims={rows}
             onView={setOpen}
-            emptyMessage={!loaded ? "Loading claims…" : query ? `No claims match "${query}".` : "No claims in this view."}
+            emptyMessage={!loaded ? <Loader label="Loading claims" /> : query ? `No claims match "${query}".` : "No claims in this view."}
           />
         </div>
       </FloatCard>

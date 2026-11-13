@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 import { inputClass } from "./client-form";
 import { FilePickButton } from "./documents";
 import { DocumentPreviewButton } from "./document-preview";
-import { Chip, Dot, NavyButton, OutlineButton } from "./ui";
+import { Chip, Dot, Loader, NavyButton, OutlineButton } from "./ui";
 
 /** "2026-10-23T09:00:00Z" as "23 Oct 2026". */
 export function dateOf(iso?: string) {
@@ -413,7 +413,7 @@ export function ProofList({ items, labels, subject }: {
           {subject && p.documentId && documents ? (() => {
             const doc = documents.find((candidate) => candidate.id === p.documentId);
             return doc ? <DocumentPreviewButton subject={subject} document={{ ...doc, version: p.documentVersion ?? doc.version }} /> : <span className="text-subtle">Preview unavailable</span>;
-          })() : subject && p.documentId ? <span className="text-subtle">Loading preview…</span> : null}
+          })() : subject && p.documentId ? <Loader size="sm" label="Loading preview" className="inline-flex py-0" /> : null}
         </li>
       ))}
     </ul>
