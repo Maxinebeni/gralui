@@ -104,7 +104,39 @@ export function ClientsTable({
   const { items, pager } = usePaged(clients);
   return (
     <>
-    <div className="overflow-x-auto px-2 pb-4">
+    {/* Phones: one card per client instead of a wide table. */}
+    <div className="divide-y divide-border px-4 sm:hidden">
+      {items.map((c) => (
+        <article key={c.id} className="py-4">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">{c.name}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {[c.id, c.sector].filter(Boolean).join(" · ")}
+              </p>
+            </div>
+            {c.nonCompliant ? <Chip tone="danger">Flagged</Chip> : <KycBadge short kyc={c.kyc} status={c.kycStatus} gateStatus={c.kycGateStatus} />}
+          </div>
+          <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3">
+            <div className="min-w-0 text-xs text-muted-foreground">
+              <p>
+                {c.activePolicies} active {c.activePolicies === 1 ? "policy" : "policies"} · {c.docsFiled}/{c.docsTotal} documents
+              </p>
+              {c.manager ? <p className="mt-0.5 truncate">{c.manager}</p> : null}
+            </div>
+            <button
+              type="button"
+              onClick={() => onView(c)}
+              className="rounded-full border border-border bg-card px-3.5 py-2 text-xs font-medium hover:bg-secondary"
+            >
+              View File
+            </button>
+          </div>
+        </article>
+      ))}
+      {clients.length === 0 ? <div className="py-6 text-center text-sm text-muted-foreground">{emptyMessage}</div> : null}
+    </div>
+    <div className="hidden overflow-x-auto px-2 pb-4 sm:block">
       <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left">
         <thead>
           <tr className="bg-pale text-[11px] text-muted-foreground">

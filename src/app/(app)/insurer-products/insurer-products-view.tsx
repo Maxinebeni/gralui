@@ -102,7 +102,7 @@ export function InsurerProductsView() {
               </div>
             ) : null}
             <div className="mt-4 overflow-x-auto">
-              <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left">
+              <table className="stack-table w-full min-w-[720px] border-separate border-spacing-0 text-left">
                 <thead>
                   <tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
                     <th className="border-b border-border px-3 py-2 font-medium">Insurer</th>
@@ -118,8 +118,8 @@ export function InsurerProductsView() {
                     return (
                       <tr key={insurer.id} className={selectedInsurerId === insurer.id ? "bg-muted/30" : ""}>
                         <td className="border-b border-border px-3 py-3 text-sm font-medium">{insurer.name}</td>
-                        <td className="border-b border-border px-3 py-3 text-sm text-muted-foreground">{insurerType?.name ?? insurer.typeCode}</td>
-                        <td className="border-b border-border px-3 py-3 text-sm text-muted-foreground">
+                        <td data-label="Type" className="border-b border-border px-3 py-3 text-sm text-muted-foreground">{insurerType?.name ?? insurer.typeCode}</td>
+                        <td data-label="Products" className="border-b border-border px-3 py-3 text-sm text-muted-foreground">
                           {products.length ? products.map((product) => product.name).join(", ") : "No products linked"}
                         </td>
                         <td className="border-b border-border px-3 py-3">

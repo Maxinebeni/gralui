@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { LeadsView } from "./leads-view";
 
 export const metadata: Metadata = {
@@ -7,5 +8,10 @@ export const metadata: Metadata = {
 };
 
 export default function LeadsPage() {
-  return <LeadsView />;
+  // Suspense is required because LeadsView reads the URL (?view=...).
+  return (
+    <Suspense>
+      <LeadsView />
+    </Suspense>
+  );
 }

@@ -164,7 +164,7 @@ function Empty({ children }: { children: ReactNode }) {
 
 function Tiles({ items }: { items: { label: string; value: string }[] }) {
   return (
-    <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
       {items.map((t, i) => (
         <StatTile key={t.label} label={t.label} value={t.value} delay={i * 50} />
       ))}
@@ -184,7 +184,7 @@ function Table({ title, head, rows, empty }: { title: string; head: string[]; ro
         </div>
       ) : (
         <div className="mt-4 overflow-x-auto px-2 pb-4">
-          <table className="w-full min-w-[640px] border-separate border-spacing-0 text-left">
+          <table className="stack-table w-full min-w-[640px] border-separate border-spacing-0 text-left">
             <thead>
               <tr className="bg-pale text-[11px] text-muted-foreground">
                 {head.map((h, i) => (
@@ -198,7 +198,7 @@ function Table({ title, head, rows, empty }: { title: string; head: string[]; ro
               {rows.map((r, i) => (
                 <tr key={i} className={onPage(i) ? undefined : "hidden print:table-row"}>
                   {r.map((cell, j) => (
-                    <Td key={j} className="text-sm">
+                    <Td key={j} label={j === 0 ? undefined : head[j]} className={j === 0 ? "text-sm font-medium" : "text-sm"}>
                       {cell}
                     </Td>
                   ))}

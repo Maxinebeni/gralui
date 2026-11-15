@@ -102,7 +102,7 @@ export function ImportsView() {
         <FloatCard className="mt-5 overflow-hidden">
           <CardHeader title="Imports" />
           <div className="mt-4 overflow-x-auto px-2 pb-4">
-            <table className="w-full min-w-[760px] border-separate border-spacing-0 text-left">
+            <table className="stack-table w-full min-w-[760px] border-separate border-spacing-0 text-left">
               <thead>
                 <tr className="bg-pale text-[11px] text-muted-foreground">
                   <Th className="rounded-l-xl">File</Th>
@@ -126,18 +126,18 @@ export function ImportsView() {
                         <div className="max-w-[220px] truncate text-sm font-medium">{b.fileName}</div>
                         <div className="text-xs text-muted-foreground">{b.id}</div>
                       </Td>
-                      <Td className="text-sm whitespace-nowrap">{IMPORT_MODE_LABEL[b.mode]}</Td>
-                      <Td className="text-sm whitespace-nowrap">
+                      <Td label="Type" className="text-sm whitespace-nowrap">{IMPORT_MODE_LABEL[b.mode]}</Td>
+                      <Td label="Uploaded" className="text-sm whitespace-nowrap">
                         {formatDate(b.uploadedAt.slice(0, 10))}
                         <div className="text-xs text-muted-foreground">{b.uploadedBy}</div>
                       </Td>
-                      <Td>
+                      <Td label="Status">
                         <StatusChip batch={b} />
                       </Td>
-                      <Td className="text-sm">{checked ? t.rows : "-"}</Td>
-                      <Td className="text-sm">{checked ? t.ready : "-"}</Td>
-                      <Td className="text-sm">{checked ? t.flagged : "-"}</Td>
-                      <Td className="text-sm">{checked ? t.blocked : "-"}</Td>
+                      <Td label="Rows" className="text-sm">{checked ? t.rows : "-"}</Td>
+                      <Td label="Ready" className="text-sm">{checked ? t.ready : "-"}</Td>
+                      <Td label="Flagged" className="text-sm">{checked ? t.flagged : "-"}</Td>
+                      <Td label="Blocked" className="text-sm">{checked ? t.blocked : "-"}</Td>
                       <Td>
                         <TextLink>View</TextLink>
                       </Td>
@@ -204,17 +204,17 @@ function AllIssues({ batches, loading, onOpen }: { batches: ImportBatch[]; loadi
   const blocked = issues.filter((i) => i.blocking).length;
   return (
     <>
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Files Checked" value={String(checked.length)} />
-        <StatTile label="Blocked Rows" value={String(blocked)} delay={60} />
-        <StatTile label="Flagged Rows" value={String(issues.length - blocked)} delay={120} />
+      <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+        <StatTile label="Files Checked" value={String(checked.length)} onClick={() => setTab("All")} active={tab === "All"} />
+        <StatTile label="Blocked Rows" value={String(blocked)} delay={60} onClick={() => setTab("Blocked")} active={tab === "Blocked"} />
+        <StatTile label="Flagged Rows" value={String(issues.length - blocked)} delay={120} onClick={() => setTab("Flagged")} active={tab === "Flagged"} />
         <StatTile label="Kinds of Problem" value={String(groups.length)} delay={180} />
       </div>
 
       <FloatCard className="mt-4 overflow-hidden" delay={120}>
         <CardHeader title="By Problem" />
         <div className="mt-4 overflow-x-auto px-2 pb-4">
-          <table className="w-full min-w-[640px] border-separate border-spacing-0 text-left">
+          <table className="stack-table w-full min-w-[640px] border-separate border-spacing-0 text-left">
             <thead>
               <tr className="bg-pale text-[11px] text-muted-foreground">
                 <Th className="rounded-l-xl">Problem</Th>
@@ -228,9 +228,9 @@ function AllIssues({ batches, loading, onOpen }: { batches: ImportBatch[]; loadi
               {groups.map((g) => (
                 <tr key={g.code}>
                   <Td className="text-sm">{g.message}</Td>
-                  <Td className="text-sm">{g.sheets.join(", ")}</Td>
-                  <Td className="text-sm">{g.count}</Td>
-                  <Td>{g.blocking ? <Chip tone="danger">Blocked</Chip> : <Chip tone="warning">Flagged</Chip>}</Td>
+                  <Td label="Sheets" className="text-sm">{g.sheets.join(", ")}</Td>
+                  <Td label="Rows" className="text-sm">{g.count}</Td>
+                  <Td label="Result">{g.blocking ? <Chip tone="danger">Blocked</Chip> : <Chip tone="warning">Flagged</Chip>}</Td>
                   <Td className="text-right">
                     <TextLink onClick={() => setCode(g.code)}>Show rows</TextLink>
                   </Td>
@@ -257,7 +257,7 @@ function AllIssues({ batches, loading, onOpen }: { batches: ImportBatch[]; loadi
           }
         />
         <div className="mt-4 overflow-x-auto px-2 pb-4">
-          <table className="w-full min-w-[820px] border-separate border-spacing-0 text-left">
+          <table className="stack-table w-full min-w-[820px] border-separate border-spacing-0 text-left">
             <thead>
               <tr className="bg-pale text-[11px] text-muted-foreground">
                 <Th className="rounded-l-xl">File</Th>
@@ -275,12 +275,12 @@ function AllIssues({ batches, loading, onOpen }: { batches: ImportBatch[]; loadi
                   <Td className="text-sm">
                     <TextLink onClick={() => onOpen(i.batchId)}>{i.fileName}</TextLink>
                   </Td>
-                  <Td className="text-sm">{i.sourceSheet}</Td>
-                  <Td className="text-sm">{i.sourceRow}</Td>
-                  <Td className="text-sm whitespace-nowrap">{i.field}</Td>
-                  <Td className="text-sm">{i.normalizedValue || "-"}</Td>
-                  <Td className="text-sm">{i.message}</Td>
-                  <Td>{i.blocking ? <Chip tone="danger">Blocked</Chip> : <Chip tone="warning">Flagged</Chip>}</Td>
+                  <Td label="Sheet" className="text-sm">{i.sourceSheet}</Td>
+                  <Td label="Row" className="text-sm">{i.sourceRow}</Td>
+                  <Td label="Field" className="text-sm whitespace-nowrap">{i.field}</Td>
+                  <Td label="Value" className="text-sm">{i.normalizedValue || "-"}</Td>
+                  <Td label="Problem" className="text-sm">{i.message}</Td>
+                  <Td label="Result">{i.blocking ? <Chip tone="danger">Blocked</Chip> : <Chip tone="warning">Flagged</Chip>}</Td>
                 </tr>
               ))}
               {rows.length === 0 ? (
@@ -488,7 +488,7 @@ function BatchPage({ id, backHref, onUploadAgain }: { id: string; backHref: stri
 
       {checked ? (
         <>
-          <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
             <StatTile label="Rows Checked" value={String(totals.rows)} />
             <StatTile label="Ready" value={String(totals.ready)} delay={60} />
             <StatTile label="Ready with Flags" value={String(totals.flagged)} delay={120} />
@@ -498,7 +498,7 @@ function BatchPage({ id, backHref, onUploadAgain }: { id: string; backHref: stri
           <FloatCard className="mt-4 overflow-hidden" delay={120}>
             <CardHeader title="By Sheet" />
             <div className="mt-4 overflow-x-auto px-2 pb-4">
-              <table className="w-full min-w-[480px] border-separate border-spacing-0 text-left">
+              <table className="stack-table w-full min-w-[480px] border-separate border-spacing-0 text-left">
                 <thead>
                   <tr className="bg-pale text-[11px] text-muted-foreground">
                     <Th className="rounded-l-xl">Sheet</Th>
@@ -512,10 +512,10 @@ function BatchPage({ id, backHref, onUploadAgain }: { id: string; backHref: stri
                   {batch.sheets.map((s) => (
                     <tr key={s.sheet}>
                       <Td className="text-sm font-medium">{s.sheet}</Td>
-                      <Td className="text-sm">{s.rows}</Td>
-                      <Td className="text-sm">{s.ready}</Td>
-                      <Td className="text-sm">{s.flagged}</Td>
-                      <Td className="text-sm">{s.blocked}</Td>
+                      <Td label="Rows" className="text-sm">{s.rows}</Td>
+                      <Td label="Ready" className="text-sm">{s.ready}</Td>
+                      <Td label="Flagged" className="text-sm">{s.flagged}</Td>
+                      <Td label="Blocked" className="text-sm">{s.blocked}</Td>
                     </tr>
                   ))}
                 </tbody>
@@ -567,7 +567,7 @@ function IssueList({ batch, issues, loading, error }: { batch: ImportBatch; issu
         }
       />
       <div className="mt-4 overflow-x-auto px-2 pb-4">
-        <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left">
+        <table className="stack-table w-full min-w-[720px] border-separate border-spacing-0 text-left">
           <thead>
             <tr className="bg-pale text-[11px] text-muted-foreground">
               <Th className="rounded-l-xl">Sheet</Th>
@@ -581,12 +581,12 @@ function IssueList({ batch, issues, loading, error }: { batch: ImportBatch; issu
           <tbody>
             {pageRows.map((i) => (
               <tr key={`${i.sourceSheet}:${i.sourceRow}:${i.field}:${i.code}`}>
-                <Td className="text-sm">{i.sourceSheet}</Td>
-                <Td className="text-sm">{i.sourceRow}</Td>
-                <Td className="text-sm whitespace-nowrap">{i.field}</Td>
-                <Td className="text-sm">{i.normalizedValue || "-"}</Td>
-                <Td className="text-sm">{i.message}</Td>
-                <Td>{i.blocking ? <Chip tone="danger">Blocked</Chip> : <Chip tone="warning">Flagged</Chip>}</Td>
+                <Td label="Sheet" className="text-sm">{i.sourceSheet}</Td>
+                <Td label="Row" className="text-sm">{i.sourceRow}</Td>
+                <Td label="Field" className="text-sm whitespace-nowrap">{i.field}</Td>
+                <Td label="Value" className="text-sm">{i.normalizedValue || "-"}</Td>
+                <Td label="Problem" className="text-sm">{i.message}</Td>
+                <Td label="Result">{i.blocking ? <Chip tone="danger">Blocked</Chip> : <Chip tone="warning">Flagged</Chip>}</Td>
               </tr>
             ))}
             {rows.length === 0 ? (

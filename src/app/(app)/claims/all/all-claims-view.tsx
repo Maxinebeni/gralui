@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { PageHeader } from "@/components/gral/shell";
 import { FilterMenu } from "@/components/gral/filter-menu";
 import { DATE_RANGE_OPTIONS, withinRange, type DateRange } from "@/lib/date-range";
@@ -48,6 +50,9 @@ export function AllClaimsView() {
 
   return (
     <>
+      <Link href="/claims" className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary">
+        <ArrowLeft className="size-3.5" /> Claims Queue
+      </Link>
       <PageHeader
         title="All Claims"
         extraPills={

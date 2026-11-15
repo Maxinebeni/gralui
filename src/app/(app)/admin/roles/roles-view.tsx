@@ -76,7 +76,7 @@ export function RolesView() {
       <FloatCard className="mt-5 overflow-hidden">
         <CardHeader title="Roles" right={<SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />} />
         <div className="mt-4 overflow-x-auto px-2 pb-4">
-          <table className="w-full min-w-[640px] border-separate border-spacing-0 text-left">
+          <table className="stack-table w-full min-w-[640px] border-separate border-spacing-0 text-left">
             <thead>
               <tr className="bg-pale text-[11px] text-muted-foreground">
                 <Th className="rounded-l-xl">Role</Th>
@@ -95,8 +95,8 @@ export function RolesView() {
                     </div>
                     <div className="text-xs text-muted-foreground">{r.code}</div>
                   </Td>
-                  <Td className="text-sm">{r.permissions.length}</Td>
-                  <Td className="text-sm">{people(r.code)}</Td>
+                  <Td label="Permissions" className="text-sm">{r.permissions.length}</Td>
+                  <Td label="People" className="text-sm">{people(r.code)}</Td>
                   <Td>
                     <TextLink>{canUpdateRole && r.code !== "ADMINISTRATOR" ? "Edit" : "View"}</TextLink>
                   </Td>

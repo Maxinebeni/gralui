@@ -121,22 +121,24 @@ export function MyWorkView() {
         }
       />
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile icon={ListTodo} label="My Open Tasks" value={String(mine.length)} />
-        <StatTile icon={AlarmClock} label="Overdue" value={String(mine.filter((t) => t.dueDate < today).length)} tone="down" delay={60} />
+      <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+        <StatTile icon={ListTodo} label="My Open Tasks" value={String(mine.length)} onClick={() => setTab("Mine")} active={tab === "Mine"} />
+        <StatTile icon={AlarmClock} label="Overdue" value={String(mine.filter((t) => t.dueDate < today).length)} tone="down" delay={60} onClick={() => setTab("Overdue")} active={tab === "Overdue"} />
         <StatTile icon={CalendarDays} label="Due Today" value={String(mine.filter((t) => t.dueDate === today).length)} delay={120} />
         <StatTile
           icon={CheckCircle2}
           label={managesTeamWork ? "Team Open Tasks" : "Done"}
           value={String(managesTeamWork ? open.length : visible.filter((t) => t.status === "DONE").length)}
           delay={180}
+          onClick={() => setTab(managesTeamWork ? "Team" : "Done")}
+          active={tab === (managesTeamWork ? "Team" : "Done")}
         />
       </div>
 
       <FloatCard className="mt-4 overflow-hidden" delay={120}>
         <CardHeader title="Task List" right={<SegmentedTabs tabs={tabs} value={tab} onChange={setTab} />} />
         <div className="mt-4 overflow-x-auto px-2 pb-4">
-          <table className="w-full min-w-[780px] border-separate border-spacing-0 text-left">
+          <table className="stack-table w-full min-w-[780px] border-separate border-spacing-0 text-left">
             <thead>
               <tr className="bg-pale text-[11px] text-muted-foreground">
                 <Th className="rounded-l-xl">Task</Th>
@@ -160,17 +162,17 @@ export function MyWorkView() {
                     </div>
                     {t.detail ? <div className="max-w-[280px] truncate text-xs text-muted-foreground">{t.detail}</div> : null}
                   </Td>
-                  <Td>
+                  <Td label="Record">
                     <div className="text-sm whitespace-nowrap">{t.resourceRef}</div>
                     <div className="max-w-[160px] truncate text-xs text-muted-foreground">{t.client ?? ""}</div>
                   </Td>
-                  <Td>
+                  <Td label="Type">
                     <Chip tone={t.source === "MANUAL" ? "neutral" : "sky"}>{TYPE_LABEL[t.type]}</Chip>
                   </Td>
-                  <Td>
+                  <Td label="Assigned to">
                     <div className="max-w-[150px] truncate">{t.owner ? <Person name={t.owner} /> : <span className="text-sm">{t.ownerRole}</span>}</div>
                   </Td>
-                  <Td>
+                  <Td label="Due">
                     {t.status === "DONE" ? (
                       <Chip tone="success">Done</Chip>
                     ) : (

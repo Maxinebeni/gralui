@@ -360,7 +360,7 @@ function claimDrill(title: string, list: Claim[]): Drill {
 
 function Tiles({ items }: { items: { label: string; value: number | string; href: string }[] }) {
   return (
-    <div className={cn("mt-4 grid gap-4 sm:grid-cols-2", items.length === 5 ? "xl:grid-cols-5" : "xl:grid-cols-4")}>
+    <div className={cn("mt-4 grid grid-cols-2 gap-3 sm:gap-4", items.length === 5 ? "xl:grid-cols-5" : "xl:grid-cols-4")}>
       {items.map((t, i) => (
         <Link key={t.label} href={t.href} scroll={false} className="block">
           <div className="lift-card">

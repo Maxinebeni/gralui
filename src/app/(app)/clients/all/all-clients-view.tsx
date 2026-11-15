@@ -1,6 +1,7 @@
 "use client";
 
-import { Download } from "lucide-react";
+import Link from "next/link";
+import { ArrowLeft, Download } from "lucide-react";
 import { PageHeader } from "@/components/gral/shell";
 import {
   CLIENT_TABS,
@@ -20,6 +21,9 @@ export function AllClientsView() {
 
   return (
     <>
+      <Link href="/clients" className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary">
+        <ArrowLeft className="size-3.5" /> Client Records
+      </Link>
       <PageHeader
         title="All Client Records"
         subtitle={
@@ -30,7 +34,7 @@ export function AllClientsView() {
         extraPills={<SectorFilter value={sector} sectors={sectors} onChange={setSector} />}
         action={
           <OutlineButton className="px-4 py-2 text-sm" disabled={rows.length === 0} onClick={() => downloadClients(rows)}>
-            <Download className="size-4" /> Download {rows.length === allClients.length ? "All" : rows.length} Clients
+            <Download className="size-4" /> <span>Download<span className="hidden sm:inline"> {rows.length === allClients.length ? "All" : rows.length} Clients</span></span>
           </OutlineButton>
         }
       />

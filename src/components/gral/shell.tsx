@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, ChevronDown, LogOut, Search, Settings } from "lucide-react";
+import { Bell, ChevronDown, LogOut, Menu, Search, Settings, SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { initials, timeAgo } from "@/lib/format";
@@ -150,24 +151,60 @@ export function Shell({ children }: { children: ReactNode }) {
   );
   // Admin pages live in the name menu, not the top bar.
   const adminLinks = navChildrenFor(user, ACCOUNT_MENU);
+  const doSignOut = async () => {
+    try {
+      await signOut();
+    } finally {
+      router.replace("/login");
+    }
+  };
+  const listed = new Set(tabs.flatMap((t) => [t.href, ...navChildrenFor(user, t.href).map((c) => c.href)]));
+  const personalLinks = [
+    { label: "My Work", href: "/my-work" },
+    { label: "Approvals", href: "/approvals" },
+  ].filter((l) => !listed.has(l.href));
+  // The phone menu: each top-bar page (with its own pages, if any), then My Work and
+  // Approvals if no section lists them, Admin, and Settings.
+  const [menuGroup, setMenuGroup] = useState<string | null>(null);
+  const phoneGroups = [
+    ...tabs.map((t) => {
+      const children = navChildrenFor(user, t.href);
+      const items = children.length ? [{ label: firstLabel(t), href: t.href }, ...children] : [{ label: t.label, href: t.href }];
+      return { key: t.href, label: t.label, items, active: items.some((c) => isActive(c.href)) };
+    }),
+    ...personalLinks.map((l) => ({ key: l.href, label: l.label, items: [l], active: isActive(l.href) })),
+    ...(adminLinks.length ? [{ key: "admin", label: "Admin", items: adminLinks.map((a) => ({ label: a.label, href: a.href })), active: adminLinks.some((a) => isActive(a.href)) }] : []),
+    { key: "/settings", label: "Settings", items: [{ label: "Settings", href: "/settings" }], active: isActive("/settings") },
+  ];
+  const phoneItem = (active: boolean) => cn("justify-between rounded-xl px-3 py-2.5 text-sm", active && "bg-pale font-medium text-primary");
+  const waitingBadge = waiting > 0 ? (
+    <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-semibold text-primary-foreground">{waiting}</span>
+  ) : null;
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="mx-auto max-w-[1280px] px-3 pt-6 pb-4 sm:px-6 sm:py-6">
-        {/* Phones: logo + icons on row 1, full-width scrollable menu on row 2. */}
+      <div className="mx-auto max-w-[1280px] px-4 pt-5 pb-4 sm:px-6 sm:py-6">
+        {/* Phones: logo and icons, with every page in the menu button. Tablets: the menu
+            pills go on a second row. Desktop: one row. */}
         <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-4 lg:flex lg:justify-between print:hidden">
-          <Link href="/" className="flex min-w-0 items-center">
+          {/* The logo goes to this person's home page (Overview, or Users for admin accounts). */}
+          <Link
+            href={homePathFor(user)}
+            aria-label="Global Risk Advisors Ltd, go to the home page"
+            title="Home"
+            className="flex shrink-0 items-center justify-self-start rounded-xl transition-opacity outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-sky"
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src="/favicon_io/android-chrome-512x512.png"
-              alt="Global Risk Advisors Ltd"
-              className="h-11 w-auto sm:h-12"
+              alt=""
+              className="h-14 w-auto sm:h-16"
             />
           </Link>
 
           {/* Administration accounts have no top-bar pages; their pages are in the name menu. */}
           {tabs.length > 0 ? (
-          <nav className="float-pill col-span-2 row-start-2 flex w-full min-w-0 items-center justify-between gap-0.5 overflow-x-auto p-1.5 lg:col-auto lg:row-auto lg:w-auto lg:justify-start lg:gap-1">
+          <nav aria-label="Main menu" className="float-pill col-span-2 row-start-2 hidden w-full min-w-0 sm:flex items-center justify-between gap-0.5 overflow-x-auto p-1.5 lg:col-auto lg:row-auto lg:w-auto lg:justify-start lg:gap-1">
             {tabs.map((t) => {
               const children = navChildrenFor(user, t.href);
               const active = isActive(t.href) || children.some((c) => isActive(c.href));
@@ -217,6 +254,56 @@ export function Shell({ children }: { children: ReactNode }) {
           ) : null}
 
           <div className="flex shrink-0 items-center gap-2">
+            {/* Phones only: a short list of the main pages. A section with more pages
+                (Clients: Client Records, All Clients, Leads) opens in place. */}
+            <DropdownMenu onOpenChange={(o) => { if (o) setMenuGroup(null); }}>
+              <DropdownMenuTrigger
+                aria-label="Open menu"
+                className="relative order-last flex size-10 items-center justify-center rounded-full bg-card text-primary shadow-[var(--shadow-pill)] outline-none sm:hidden"
+              >
+                <Menu className="size-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" sideOffset={8} collisionPadding={16} className="max-h-[75vh] w-56 overflow-y-auto rounded-2xl p-2 shadow-[var(--shadow-float)]">
+                {phoneGroups.map((g) =>
+                  g.items.length === 1 ? (
+                    <DropdownMenuItem key={g.key} onSelect={() => router.push(g.items[0]!.href)} className={phoneItem(g.active)}>
+                      {g.label}
+                      {g.items[0]!.href === "/approvals" ? waitingBadge : null}
+                    </DropdownMenuItem>
+                  ) : (
+                    <div key={g.key}>
+                      <DropdownMenuItem
+                        aria-expanded={menuGroup === g.key}
+                        onSelect={(e) => {
+                          e.preventDefault();
+                          setMenuGroup((cur) => (cur === g.key ? null : g.key));
+                        }}
+                        className={phoneItem(g.active)}
+                      >
+                        {g.label}
+                        <ChevronDown className={cn("size-4 opacity-60 transition-transform", menuGroup === g.key && "rotate-180")} />
+                      </DropdownMenuItem>
+                      {menuGroup === g.key
+                        ? g.items.map((c) => (
+                            <DropdownMenuItem
+                              key={c.href}
+                              onSelect={() => router.push(c.href)}
+                              className={cn("ml-3 justify-between rounded-xl px-3 py-2 text-sm text-muted-foreground", isActiveExact(c.href) && "font-medium text-primary")}
+                            >
+                              {c.label}
+                              {c.href === "/approvals" ? waitingBadge : null}
+                            </DropdownMenuItem>
+                          ))
+                        : null}
+                    </div>
+                  ),
+                )}
+                <div className="my-1 h-px bg-border" />
+                <DropdownMenuItem onSelect={doSignOut} className="rounded-xl px-3 py-2.5 text-sm">
+                  <LogOut className="size-4" /> Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <IconBtn label="Search (Ctrl+K)" mobile onClick={() => setSearchOpen(true)}>
               <Search className="size-4" />
             </IconBtn>
@@ -287,7 +374,7 @@ export function Shell({ children }: { children: ReactNode }) {
               href="/settings"
               aria-label="Settings"
               className={cn(
-                "flex size-10 items-center justify-center rounded-full shadow-[var(--shadow-pill)] transition-colors hover:text-primary",
+                "hidden size-10 items-center sm:flex justify-center rounded-full shadow-[var(--shadow-pill)] transition-colors hover:text-primary",
                 pathname.startsWith("/settings") ? "bg-primary text-primary-foreground hover:text-primary-foreground" : "bg-card text-muted-foreground",
               )}
             >
@@ -297,7 +384,7 @@ export function Shell({ children }: { children: ReactNode }) {
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label={`${user.name}, ${user.role}. Open your menu`}
-                className="flex size-10 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground shadow-[var(--shadow-pill)] outline-none"
+                className="hidden size-10 sm:flex items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground shadow-[var(--shadow-pill)] outline-none"
               >
                 {initials(user.name).toUpperCase()}
               </DropdownMenuTrigger>
@@ -332,16 +419,7 @@ export function Shell({ children }: { children: ReactNode }) {
                   </>
                 ) : null}
                 <div className="my-1 h-px bg-border" />
-                <DropdownMenuItem
-                  onSelect={async () => {
-                    try {
-                      await signOut();
-                    } finally {
-                      router.replace("/login");
-                    }
-                  }}
-                  className="rounded-xl px-3 py-2.5 text-sm"
-                >
+                <DropdownMenuItem onSelect={doSignOut} className="rounded-xl px-3 py-2.5 text-sm">
                   <LogOut className="size-4" /> Sign out
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -349,7 +427,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main className="mt-10 pb-24 sm:mt-14">{children}</main>
+        <main className="mt-8 pb-12 sm:mt-14 sm:pb-24">{children}</main>
       </div>
       <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
       <NotificationRealtime userId={user.id} onNotification={receiveNotification} onSync={refreshNotifications} />
@@ -396,18 +474,46 @@ export function PageHeader({
   action?: ReactNode;
 }) {
   const { user, roles, setRole } = useCurrentUser();
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const showRoles = !usesBackendPermissions(user);
+  const hasFilters = showRoles || !!extraPills;
 
   return (
-    <div className="grid gap-3 sm:grid-cols-[minmax(min-content,1fr)_auto] sm:items-center">
+    <div className="grid gap-4 sm:grid-cols-[minmax(min-content,1fr)_auto] sm:items-center sm:gap-3">
       <div className="min-w-0">
         <h1 className="text-2xl font-semibold tracking-tight [overflow-wrap:anywhere] sm:text-3xl sm:[overflow-wrap:break-word]">{title}</h1>
         {subtitle ? <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p> : null}
       </div>
 
-      <div className="flex min-w-0 flex-wrap items-center gap-2 sm:justify-end print:hidden">
+      {/* Phones: the filters fold behind one button; the page's own buttons stay in view. */}
+      {hasFilters || action ? (
+        <div className="flex flex-wrap items-center gap-2 sm:hidden print:hidden [&_a]:px-3.5 [&_a]:text-xs [&_button]:px-3.5 [&_button]:text-xs">
+          {hasFilters ? (
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+              className={cn(
+                "float-pill flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium",
+                filtersOpen && "bg-primary text-primary-foreground",
+              )}
+            >
+              <SlidersHorizontal className="size-3.5" /> Filters
+            </button>
+          ) : null}
+          {action}
+        </div>
+      ) : null}
+
+      <div
+        className={cn(
+          "min-w-0 flex-wrap items-center gap-2 sm:flex sm:justify-end print:hidden",
+          filtersOpen && hasFilters ? "flex" : "hidden",
+        )}
+      >
         {/* Demo-only role switcher (from the design). Hidden once the backend sends
             real permissions, because switching roles would no longer change anything. */}
-        {!usesBackendPermissions(user) ? (
+        {showRoles ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
@@ -433,7 +539,7 @@ export function PageHeader({
           </DropdownMenu>
         ) : null}
         {extraPills}
-        {action}
+        {action ? <div className="hidden flex-wrap items-center gap-2 sm:flex">{action}</div> : null}
       </div>
     </div>
   );
@@ -477,8 +583,9 @@ export function SlideOver({
   children: ReactNode;
 }) {
   const panel = useDialog(open, onClose);
-  if (!open) return null;
-  return (
+  if (!open || typeof document === "undefined") return null;
+  // Rendered on <body> so an animated card around it cannot trap the fixed panel.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex justify-end">
       <button
         type="button"
@@ -499,7 +606,8 @@ export function SlideOver({
       >
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

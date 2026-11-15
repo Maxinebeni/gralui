@@ -133,7 +133,7 @@ export function ClaimsView() {
         }
       />
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         <StatTile label="Open Claims" value={shown(openClaims.length)} onClick={() => setTab("Open")} active={tab === "Open"} />
         <StatTile label="SLA Breached" value={shown(breached)} delay={60} onClick={() => setTab("Breached")} active={tab === "Breached"} />
         <StatTile label="Awaiting Sign-off" value={shown(awaitingSignOff)} delay={120} onClick={() => setTab("Awaiting Sign-off")} active={tab === "Awaiting Sign-off"} />
@@ -177,7 +177,7 @@ export function ClaimsView() {
               <p className="px-4 pt-3 pb-5 text-xs text-muted-foreground sm:px-5">{loaded ? "Nothing is blocked." : <Loader label="Loading claims" />}</p>
             ) : (
               <div className="mt-6 overflow-x-auto px-3 pb-4 sm:px-4">
-                <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left">
+                <table className="stack-table w-full min-w-[720px] border-separate border-spacing-0 text-left">
                   <thead>
                     <HeadRow>
                       <Th className="rounded-l-xl">Claim</Th>
@@ -193,10 +193,10 @@ export function ClaimsView() {
                     {blocked.map((c) => (
                       <tr key={c.id}>
                         <Td className="text-sm font-medium whitespace-nowrap">{c.id}</Td>
-                        <Td className="text-sm whitespace-nowrap">{stageLabel(c)}</Td>
-                        <Td className="max-w-[220px] text-sm">{claimBlocker(c)}</Td>
-                        <Td className="text-sm whitespace-nowrap">{actionOwner(c)}</Td>
-                        <Td className="text-sm whitespace-nowrap">
+                        <Td label="Step" className="text-sm whitespace-nowrap">{stageLabel(c)}</Td>
+                        <Td label="Blocker" className="max-w-[220px] text-sm">{claimBlocker(c)}</Td>
+                        <Td label="Who acts" className="text-sm whitespace-nowrap">{actionOwner(c)}</Td>
+                        <Td label="Waiting" className="text-sm whitespace-nowrap">
                           {workingDaysBetween(isDisputed(c) ? c.dispute!.raisedAt : c.stepStartedAt, todayIso())} working days
                         </Td>
                         <Td className="text-right">

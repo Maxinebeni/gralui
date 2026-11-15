@@ -2,8 +2,8 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { Plus, Search } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ArrowLeft, Plus, Search } from "lucide-react";
 import { PageHeader, SlideOver } from "@/components/gral/shell";
 import { FilterMenu } from "@/components/gral/filter-menu";
 import { usePaged } from "@/components/gral/pager";
@@ -29,13 +29,18 @@ import type { Lead, PolicyTrack } from "@/lib/types";
 const TABS = ["In progress", "KYC", "Quotes & approval", "Overdue", "Onboarded"] as const;
 type Tab = (typeof TABS)[number];
 
+/** Leads shown on the Leads page before "See all". */
+const PREVIEW = 4;
+
 /** A lead with the policy track its card shows. */
 const ALL = "__all__";
 
 type Journey = { lead: Lead; track?: PolicyTrack; policies: number; step: number | null };
 
-export function LeadsView() {
+/** The Leads page shows a few leads; `full` is the All Leads page with the whole list. */
+export function LeadsView({ full = false }: { full?: boolean }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user } = useCurrentUser();
   const { canRegisterLead } = onboardingPermissions(user);
 
@@ -46,7 +51,7 @@ export function LeadsView() {
   const loadError = leadsQuery.error ? (leadsQuery.error instanceof Error ? leadsQuery.error.message : "Could not load the leads.") : null;
   const reload = () => void leadsQuery.refetch();
   const refresh = useRefresh();
-  const [tab, setTab] = useState<Tab>("In progress");
+  const [tab, setTab] = useState<Tab>(() => TABS.find((t) => t === searchParams.get("view")) ?? "In progress");
   const [query, setQuery] = useState("");
   const [owner, setOwner] = useState(ALL);
   const [newOpen, setNewOpen] = useState(false);
@@ -93,7 +98,8 @@ export function LeadsView() {
               : active;
     return [...list].sort((a, b) => a.lead.receivedAt.localeCompare(b.lead.receivedAt));
   }, [tab, active, overdue, journeys]);
-  const { items: pageRows, pager } = usePaged(rows, { resetKey: tab });
+  const { items: pagedRows, pager } = usePaged(rows, { resetKey: tab });
+  const shown = full ? pagedRows : rows.slice(0, PREVIEW);
 
   const perStep = JOURNEY_STEPS.map((s) => ({ label: `${s.n}. ${s.name}`, count: active.filter((j) => j.step === s.n).length }));
   const countBy = (key: (j: Journey) => string) =>
@@ -106,8 +112,13 @@ export function LeadsView() {
 
   return (
     <>
+      {full ? (
+        <Link href="/clients/leads" className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary">
+          <ArrowLeft className="size-3.5" /> Leads
+        </Link>
+      ) : null}
       <PageHeader
-        title="Leads"
+        title={full ? "All Leads" : "Leads"}
         extraPills={ownerOptions.length > 1 ? <FilterMenu label="Owner" value={owner} options={ownerOptions} onChange={setOwner} /> : null}
         action={
           canRegisterLead ? (
@@ -118,16 +129,18 @@ export function LeadsView() {
         }
       />
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile label="Open Leads" value={String(active.length)} />
-        <StatTile label="Policies in Progress" value={String(policiesInProgress)} delay={60} />
-        <StatTile label="KYC Waiting for Approval" value={String(kycWaiting)} delay={120} />
-        <StatTile label="Overdue" value={String(overdue.length)} delay={180} />
-      </div>
+      {full ? null : (
+        <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+          <StatTile label="Open Leads" value={String(active.length)} onClick={() => setTab("In progress")} active={tab === "In progress"} />
+          <StatTile label="Policies in Progress" value={String(policiesInProgress)} delay={60} />
+          <StatTile label="KYC Waiting for Approval" value={String(kycWaiting)} delay={120} onClick={() => setTab("KYC")} active={tab === "KYC"} />
+          <StatTile label="Overdue" value={String(overdue.length)} delay={180} onClick={() => setTab("Overdue")} active={tab === "Overdue"} />
+        </div>
+      )}
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
+      <div className={cn("mt-4 grid gap-4", !full && "xl:grid-cols-[1fr_340px]")}>
         <FloatCard className="overflow-hidden" delay={120}>
-          <CardHeader title="Lead Pipeline" right={<SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />} />
+          <CardHeader title={full ? `${rows.length} ${rows.length === 1 ? "lead" : "leads"}` : "Lead Pipeline"} right={<SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />} />
           <div className="mt-5 px-4 sm:px-5">
             <label className="float-pill flex w-full items-center gap-2 px-3.5 py-2 sm:w-72">
               <Search className="size-3.5 shrink-0 text-subtle" />
@@ -141,7 +154,7 @@ export function LeadsView() {
             </label>
           </div>
           <div className="mt-5 grid gap-4 p-4 pt-0 sm:grid-cols-2 sm:p-5 sm:pt-0">
-            {pageRows.map((j) => (
+            {shown.map((j) => (
               <CaseCard key={j.lead.id} value={j} />
             ))}
             {loadError ? (
@@ -157,9 +170,21 @@ export function LeadsView() {
               </p>
             ) : null}
           </div>
-          {pager}
+          {full ? (
+            pager
+          ) : (
+            <div className="border-t border-border px-5 py-4 text-center">
+              <Link
+                href={`/clients/leads/all?view=${encodeURIComponent(tab)}`}
+                className="text-xs font-semibold text-primary underline underline-offset-4 hover:opacity-70"
+              >
+                {rows.length > PREVIEW ? `See all ${rows.length} in this view` : "See all leads"}
+              </Link>
+            </div>
+          )}
         </FloatCard>
 
+        {full ? null : (
         <div className="min-w-0 space-y-4">
           <FloatCard className="p-5" delay={160}>
             <h2 className="text-base font-semibold tracking-tight">Leads by Step</h2>
@@ -186,6 +211,7 @@ export function LeadsView() {
             </FloatCard>
           ) : null}
         </div>
+        )}
       </div>
 
       <SlideOver open={newOpen} onClose={() => setNewOpen(false)} wide>
@@ -207,7 +233,7 @@ function CaseCard({ value: j }: { value: Journey }) {
   return (
     <Link
       href={`/clients/leads/${encodeURIComponent(l.id)}`}
-      className="block w-full rounded-2xl border border-border bg-card p-4 text-left shadow-[var(--shadow-card)] transition-shadow hover:shadow-[var(--shadow-float)]"
+      className="block w-full min-w-0 rounded-2xl border border-border bg-card p-4 text-left shadow-[var(--shadow-card)] transition-shadow hover:shadow-[var(--shadow-float)]"
     >
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
         <div className="min-w-0">
@@ -220,10 +246,10 @@ function CaseCard({ value: j }: { value: Journey }) {
         </div>
         <div className="text-right">
           <p className={cn("text-2xl leading-none font-semibold", age > ONBOARDING_TARGET_DAYS && "text-danger")}>{age}</p>
-          <p className="text-[10px] text-subtle">working days</p>
+          <p className="text-[10px] whitespace-nowrap text-subtle">working days</p>
         </div>
       </div>
-      <div className="mt-4 flex items-center gap-1.5">
+      <div className="mt-4 flex flex-wrap items-center gap-1.5">
         {JOURNEY_STEPS.map((s) => {
           const done = step === null || s.n < step;
           const isCurrent = step === s.n;

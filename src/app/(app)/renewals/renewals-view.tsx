@@ -53,13 +53,18 @@ const STAGE_OPTIONS = [
   { value: "Completed", label: "Completed" },
 ];
 
-export function RenewalsView() {
+/** Renewals shown on the pipeline page before "See all". */
+const PREVIEW = 4;
+const VIEWS: readonly View[] = [...TABS, "On track"];
+
+/** The pipeline page shows a few renewals; `full` is the All Renewals page with the whole list. */
+export function RenewalsView({ full = false }: { full?: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const openId = searchParams.get("case");
 
-  const [tab, setTab] = useState<View>("All");
+  const [tab, setTab] = useState<View>(() => VIEWS.find((v) => v === searchParams.get("view")) ?? "All");
   const queryClient = useQueryClient();
   const { data: allRenewals = [], isLoading, error, refetch } = useRenewals();
   const { user } = useCurrentUser();
@@ -99,7 +104,8 @@ export function RenewalsView() {
     if (tab === "On track") return sorted.filter((r) => renewalHealth(r) === "on-track");
     return sorted;
   }, [renewals, tab]);
-  const { items: pageRows, pager: renewalPager } = usePaged(rows, { resetKey: tab });
+  const { items: pagedRows, pager: renewalPager } = usePaged(rows, { resetKey: tab });
+  const shown = full ? pagedRows : rows.slice(0, PREVIEW);
 
   const overdue = renewals.filter((r) => renewalHealth(r) === "overdue").length;
   const dueIn30 = renewals.filter((r) => daysToExpiry(r) >= 0 && daysToExpiry(r) <= 30).length;
@@ -128,7 +134,7 @@ export function RenewalsView() {
           scroll={false}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
-          <ArrowLeft className="size-4" /> Renewals
+          <ArrowLeft className="size-4" /> {full ? "All Renewals" : "Renewals"}
         </Link>
         <FloatCard className="mt-4 overflow-hidden">
           <RenewalCasePanel key={open.id} renewal={open} onChanged={replaceCase} />
@@ -139,8 +145,13 @@ export function RenewalsView() {
 
   return (
     <>
+      {full ? (
+        <Link href="/renewals" className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary">
+          <ArrowLeft className="size-3.5" /> Renewals
+        </Link>
+      ) : null}
       <PageHeader
-        title="Renewals Pipeline"
+        title={full ? "All Renewals" : "Renewals Pipeline"}
         action={
           canSeeExits ? (
             <Link href="/renewals/exits" className="rounded-full bg-card px-4 py-2 text-xs font-medium shadow-sm hover:text-primary">
@@ -159,18 +170,20 @@ export function RenewalsView() {
         }
       />
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {full ? null : (
+      <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         <StatTile label="Due in 30 Days" value={String(dueIn30)} onClick={() => setTab("Next 30 days")} active={tab === "Next 30 days"} />
         <StatTile label="Overdue" value={String(overdue)} delay={60} onClick={() => setTab("Overdue")} active={tab === "Overdue"} />
         <StatTile label="On Track" value={String(onTrack)} delay={120} onClick={() => setTab("On track")} active={tab === "On track"} />
         <StatTile label="Premium Due for Renewal (RWF)" value={`${(totalPremium / 1000000).toFixed(1)}M`} delay={180} onClick={() => setTab("All")} active={tab === "All"} />
       </div>
+      )}
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
+      <div className={cn("mt-4 grid gap-4", !full && "xl:grid-cols-[1fr_340px]")}>
         <div className="min-w-0 space-y-4">
           <FloatCard className="overflow-hidden" delay={120}>
             <CardHeader
-              title={tab === "On track" ? "On Track" : "Renewal Pipeline"}
+              title={full ? `${rows.length} ${rows.length === 1 ? "renewal" : "renewals"}` : tab === "On track" ? "On Track" : "Renewal Pipeline"}
               right={
                 <div className="flex flex-wrap items-center gap-2">
                   <SegmentedTabs tabs={TABS} value={tab as (typeof TABS)[number]} onChange={setTab} />
@@ -181,7 +194,7 @@ export function RenewalsView() {
               }
             />
             <div className="mt-4 grid gap-4 p-4 pt-0 sm:grid-cols-2 sm:p-5 sm:pt-0">
-              {pageRows.map((r) => (
+              {shown.map((r) => (
                 <RenewalCard key={r.id} renewal={r} onOpen={() => setOpen(r)} />
               ))}
               {error ? (
@@ -195,10 +208,22 @@ export function RenewalsView() {
                 <p className="text-xs text-muted-foreground">{isLoading ? <Loader label="Loading renewals" /> : "No renewals in this view."}</p>
               ) : null}
             </div>
-            {renewalPager}
+            {full ? (
+              renewalPager
+            ) : (
+              <div className="border-t border-border px-5 py-4 text-center">
+                <Link
+                  href={`/renewals/all?view=${encodeURIComponent(tab)}`}
+                  className="text-xs font-semibold text-primary underline underline-offset-4 hover:opacity-70"
+                >
+                  {rows.length > PREVIEW ? `See all ${rows.length} in this view` : "See all renewals"}
+                </Link>
+              </div>
+            )}
           </FloatCard>
         </div>
 
+        {full ? null : (
         <div className="min-w-0 space-y-4">
           <QuickAction delay={160}>
             <QuickActionRow
@@ -225,6 +250,7 @@ export function RenewalsView() {
           </FloatCard>
 
         </div>
+        )}
       </div>
 
     </>

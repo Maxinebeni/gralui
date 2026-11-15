@@ -119,7 +119,7 @@ export function SessionsView() {
         }
       />
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-3">
+      <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
         <StatTile label="People signed in" value={String(people)} />
         <StatTile label="Sessions" value={String(all.length)} delay={60} />
         <StatTile label="Active in the last 5 minutes" value={String(activeNow)} delay={120} />
@@ -142,7 +142,7 @@ export function SessionsView() {
           }
         />
         <div className="mt-4 overflow-x-auto px-2 pb-4">
-          <table className="w-full min-w-[760px] border-separate border-spacing-0 text-left">
+          <table className="stack-table w-full min-w-[760px] border-separate border-spacing-0 text-left">
             <thead>
               <tr className="bg-pale text-[11px] text-muted-foreground">
                 <Th className="rounded-l-xl">Person</Th>
@@ -166,14 +166,14 @@ export function SessionsView() {
                       </div>
                       <div className="text-xs text-muted-foreground">{s.email}</div>
                     </Td>
-                    <Td>
+                    <Td label="Last active">
                       <span className="flex items-center gap-1.5 text-sm whitespace-nowrap">
                         <Dot tone={activityTone(s.lastAccessedAt)} />
                         {ago(s.lastAccessedAt)}
                       </span>
                     </Td>
-                    <Td className="text-sm whitespace-nowrap">{time(s.authenticatedAt)}</Td>
-                    <Td className="text-sm whitespace-nowrap">{time(s.expiresAt)}</Td>
+                    <Td label="Signed in" className="text-sm whitespace-nowrap">{time(s.authenticatedAt)}</Td>
+                    <Td label="Expires" className="text-sm whitespace-nowrap">{time(s.expiresAt)}</Td>
                     <Td>
                       {canEndSessions && !self && !isEnding ? (
                         <div className="flex flex-wrap gap-2">

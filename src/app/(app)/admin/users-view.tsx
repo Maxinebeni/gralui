@@ -93,6 +93,13 @@ export function UsersView() {
 
   const count = (s: ManagedUser["status"]) => all.filter((u) => u.status === s).length;
   const admins = all.filter((u) => u.status === "ACTIVE" && u.profileCategory === "ADMINISTRATION").length;
+  // A tile shows its people in the list below; clicking the shown tile again shows everyone.
+  const showTile = (t: Tab, type: string = ALL_OPTION) => {
+    const same = tab === t && typeFilter === type;
+    setTab(same ? "All" : t);
+    setTypeFilter(same ? ALL_OPTION : type);
+    setRoleFilter(ALL_OPTION);
+  };
 
   return (
     <>
@@ -138,11 +145,11 @@ export function UsersView() {
         }
       />
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile icon={UserCheck} label="Active" value={String(count("ACTIVE"))} />
-        <StatTile icon={Mail} label="Invitation Pending" value={String(count("INVITED"))} delay={60} />
-        <StatTile icon={UserX} label="Deactivated" value={String(count("INACTIVE"))} delay={120} />
-        <StatTile icon={ShieldCheck} label="Active Administrators" value={String(admins)} delay={180} />
+      <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+        <StatTile icon={UserCheck} label="Active" value={String(count("ACTIVE"))} onClick={() => showTile("Active")} active={tab === "Active" && typeFilter === ALL_OPTION} />
+        <StatTile icon={Mail} label="Invitation Pending" value={String(count("INVITED"))} delay={60} onClick={() => showTile("Invited")} active={tab === "Invited" && typeFilter === ALL_OPTION} />
+        <StatTile icon={UserX} label="Deactivated" value={String(count("INACTIVE"))} delay={120} onClick={() => showTile("Deactivated")} active={tab === "Deactivated" && typeFilter === ALL_OPTION} />
+        <StatTile icon={ShieldCheck} label="Active Administrators" value={String(admins)} delay={180} onClick={() => showTile("Active", "ADMINISTRATION")} active={tab === "Active" && typeFilter === "ADMINISTRATION"} />
       </div>
 
       <FloatCard className="mt-4 overflow-hidden" delay={120}>
@@ -165,7 +172,7 @@ export function UsersView() {
           }
         />
         <div className="mt-4 overflow-x-auto px-2 pb-4">
-          <table className="w-full min-w-[760px] border-separate border-spacing-0 text-left">
+          <table className="stack-table w-full min-w-[760px] border-separate border-spacing-0 text-left">
             <thead>
               <tr className="bg-pale text-[11px] text-muted-foreground">
                 <Th className="rounded-l-xl">Person</Th>
@@ -186,7 +193,7 @@ export function UsersView() {
                     </div>
                     <div className="text-xs text-muted-foreground">{u.email}</div>
                   </Td>
-                  <Td>
+                  <Td label="Roles">
                     <div className="flex max-w-[260px] flex-wrap gap-1">
                       {u.roles.map((c) => (
                         <Chip key={c} tone="sky">
@@ -195,11 +202,11 @@ export function UsersView() {
                       ))}
                     </div>
                   </Td>
-                  <Td className="text-sm">{CATEGORY_LABEL[u.profileCategory]}</Td>
-                  <Td>
+                  <Td label="Account type" className="text-sm">{CATEGORY_LABEL[u.profileCategory]}</Td>
+                  <Td label="Status">
                     <UserStatusChip status={u.status} />
                   </Td>
-                  <Td className="text-sm whitespace-nowrap">{formatDay(u.createdAt)}</Td>
+                  <Td label="Added" className="text-sm whitespace-nowrap">{formatDay(u.createdAt)}</Td>
                   <Td>
                     <TextLink>Manage</TextLink>
                   </Td>

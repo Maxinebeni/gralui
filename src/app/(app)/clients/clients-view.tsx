@@ -75,7 +75,7 @@ export function ClientsView() {
         action={
           <>
             <OutlineButton className="px-4 py-2 text-sm" disabled={allClients.length === 0} onClick={() => downloadClients(allClients)}>
-              <Download className="size-4" /> Download All Clients
+              <Download className="size-4" /> <span>Download<span className="hidden sm:inline"> All Clients</span></span>
             </OutlineButton>
             {canManageClients(user) ? (
               <NavyButton className="px-4 py-2 text-sm" onClick={() => setAdding(true)}>
@@ -86,7 +86,7 @@ export function ClientsView() {
         }
       />
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         <StatTile label="Total Clients" value={String(inSector.length)} onClick={() => setTab("All")} active={tab === "All"} />
         <StatTile label="KYC Complete" value={String(kycComplete)} delay={60} onClick={() => setTab("KYC Complete")} active={tab === "KYC Complete"} />
         <StatTile label="KYC Pending" value={String(inSector.length - kycComplete)} delay={120} onClick={() => setTab("KYC Pending")} active={tab === "KYC Pending"} />

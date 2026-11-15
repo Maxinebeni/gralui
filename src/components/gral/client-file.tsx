@@ -270,7 +270,7 @@ export function ClientFile({
                 </p>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left">
+                  <table className="stack-table w-full min-w-[720px] border-separate border-spacing-0 text-left">
                     <thead>
                       <tr className="bg-pale text-[11px] text-muted-foreground">
                         {policyHeadings.map((h, i, arr) => (
@@ -298,25 +298,25 @@ export function ClientFile({
                               {p.id}
                             </Link>
                           </td>
-                          <td className="border-b border-border px-3 py-3 text-sm">
+                          <td data-label="Class" className="border-b border-border px-3 py-3 text-sm">
                             <Recorded value={p.classOfInsurance} />
                           </td>
-                          <td className="border-b border-border px-3 py-3 text-sm">
+                          <td data-label="Insurer" className="border-b border-border px-3 py-3 text-sm">
                             <Recorded value={p.insurer} />
                           </td>
-                          <td className="border-b border-border px-3 py-3 text-sm whitespace-nowrap">
+                          <td data-label="Sum insured" className="border-b border-border px-3 py-3 text-sm whitespace-nowrap">
                             {p.sumInsured ? formatRwf(p.sumInsured) : <NotRecorded />}
                           </td>
-                          <td className="border-b border-border px-3 py-3 text-sm whitespace-nowrap">
+                          <td data-label="Premium" className="border-b border-border px-3 py-3 text-sm whitespace-nowrap">
                             {p.premium ? formatRwf(p.premium) : <NotRecorded />}
                           </td>
-                          <td className="border-b border-border px-3 py-3 text-sm whitespace-nowrap">
+                          <td data-label="Start" className="border-b border-border px-3 py-3 text-sm whitespace-nowrap">
                             <Recorded value={p.start} />
                           </td>
-                          <td className="border-b border-border px-3 py-3 text-sm whitespace-nowrap">
+                          <td data-label="Renewal" className="border-b border-border px-3 py-3 text-sm whitespace-nowrap">
                             <Recorded value={p.renewal} />
                           </td>
-                          <td className="border-b border-border px-3 py-3">
+                          <td data-label="Status" className="border-b border-border px-3 py-3">
                             <Chip
                               tone={
                                 p.status === "Active"

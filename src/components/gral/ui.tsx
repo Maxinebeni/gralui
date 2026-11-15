@@ -2,6 +2,7 @@ import { ChevronDown, type LucideIcon } from "lucide-react";
 import type { ReactNode, ButtonHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/format";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 export function FloatCard({
   className,
@@ -72,7 +73,7 @@ export function StatTile({
         onClick={onClick}
         aria-pressed={active}
         className={cn(
-          "float-card rise-in block w-full min-w-0 px-4 py-4 text-left transition-shadow hover:shadow-[var(--shadow-float)]",
+          "float-card rise-in block w-full min-w-0 p-3.5 text-left sm:px-4 sm:py-4 transition-shadow hover:shadow-[var(--shadow-float)]",
           active && "ring-2 ring-sky",
         )}
         style={{ animationDelay: `${delay}ms` }}
@@ -82,7 +83,7 @@ export function StatTile({
     );
   }
   return (
-    <FloatCard className="px-4 py-4" delay={delay}>
+    <FloatCard className="min-w-0 p-3.5 sm:px-4 sm:py-4" delay={delay}>
       <StatTileBody label={label} value={value} delta={delta} tone={tone} />
     </FloatCard>
   );
@@ -91,9 +92,9 @@ export function StatTile({
 function StatTileBody({ label, value, delta, tone }: { label: string; value: string; delta?: string; tone: "up" | "down" }) {
   return (
     <>
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <div className="mt-3 flex items-end justify-between gap-2">
-        <span className="min-w-0 break-words text-2xl leading-none font-semibold tracking-tight sm:text-3xl">
+      <span className="block text-[11px] leading-snug font-medium text-muted-foreground sm:text-xs">{label}</span>
+      <div className="mt-2.5 flex flex-wrap items-end justify-between gap-x-2 gap-y-1 sm:mt-3">
+        <span className="min-w-0 break-words text-xl leading-none font-semibold tracking-tight sm:text-3xl">
           {value}
         </span>
         {delta ? (
@@ -121,7 +122,26 @@ export function SegmentedTabs<T extends string>({
   onChange: (v: T) => void;
 }) {
   return (
-    <div className="flex max-w-full items-center gap-1 overflow-x-auto rounded-full bg-secondary p-1">
+    <>
+      {/* Phones: one button that opens the list of views. */}
+      <DropdownMenu>
+        <DropdownMenuTrigger className="flex min-h-10 w-full items-center justify-between gap-2 rounded-full bg-secondary px-4 text-xs font-medium text-foreground outline-none sm:hidden">
+          <span className="truncate">{value}</span>
+          <ChevronDown className="size-4 shrink-0 text-subtle" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" sideOffset={6} className="min-w-[var(--radix-dropdown-menu-trigger-width)] rounded-2xl p-2 shadow-[var(--shadow-float)]">
+          {tabs.map((t) => (
+            <DropdownMenuItem
+              key={t}
+              onSelect={() => onChange(t)}
+              className={cn("rounded-xl px-3 py-2.5 text-sm", value === t && "bg-pale font-medium text-primary")}
+            >
+              {t}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    <div className="hidden max-w-full items-center gap-1 overflow-x-auto rounded-full bg-secondary p-1 sm:flex">
       {tabs.map((t) => (
         <button
           key={t}
@@ -138,6 +158,7 @@ export function SegmentedTabs<T extends string>({
         </button>
       ))}
     </div>
+    </>
   );
 }
 

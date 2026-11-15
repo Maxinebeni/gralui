@@ -159,3 +159,72 @@
     transform: translateY(0);
   }
 }
+
+/* People who turn off motion in their phone or computer settings get no animations. */
+@media (prefers-reduced-motion: reduce) {
+  .rise-in { animation: none; }
+  .lift-card { transition: none; }
+  .lift-card:hover { transform: none; }
+}
+
+/*
+ * Phones: a table with the stack-table class becomes one card per row. The first
+ * cell is the card's title; every other cell shows its column name (the Td label)
+ * on the left and its value on the right, so nothing needs a sideways swipe.
+ */
+@media (max-width: 639px) {
+  table.stack-table {
+    min-width: 0 !important;
+  }
+  .stack-table thead,
+  .stack-table .head-gap {
+    display: none;
+  }
+  .stack-table,
+  .stack-table tbody,
+  .stack-table tr,
+  .stack-table td {
+    display: block;
+    width: 100%;
+  }
+  .stack-table tr {
+    padding: 14px 6px;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .stack-table td {
+    border: 0 !important;
+    padding: 3px 0 !important;
+    max-width: none !important;
+    white-space: normal !important;
+    text-align: left !important;
+  }
+  .stack-table td:empty {
+    display: none;
+  }
+  .stack-table td:first-child:not([data-label]) {
+    padding-bottom: 6px !important;
+    font-weight: 600;
+  }
+  .stack-table td[data-label] {
+    display: grid;
+    grid-template-columns: minmax(6.5rem, 38%) minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+  }
+  .stack-table td[data-label]::before {
+    content: attr(data-label);
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--muted-foreground);
+  }
+  .stack-table td:last-child:not([data-label]) {
+    padding-top: 10px !important;
+  }
+}
+
+/* Rows a pager has put on another page stay hidden as cards too. */
+@media (max-width: 639px) {
+  .stack-table tr.hidden {
+    display: none;
+  }
+}

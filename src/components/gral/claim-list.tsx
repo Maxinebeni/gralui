@@ -225,7 +225,32 @@ export function ClaimsTable({
   const { items: rows, pager } = usePaged(claims);
   return (
     <>
-    <div className="overflow-x-auto px-3 pb-4 sm:px-4">
+    {/* Phones: one card per claim instead of a wide table. */}
+    <div className="divide-y divide-border px-4 sm:hidden">
+      {rows.map((c) => (
+        <button key={c.id} type="button" onClick={() => onView(c)} className="block w-full py-4 text-left">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-primary">{c.id}</p>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">{c.client}</p>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+              <PriorityPill priority={c.priority} />
+              <ClaimSlaChip claim={c} />
+            </div>
+          </div>
+          <p className={cn("mt-3 text-xs text-muted-foreground", isDisputed(c) && "text-warning")}>
+            {stageLabel(c)} · {daysOpen(c)}d open
+          </p>
+          <div className="mt-1.5 flex items-center justify-between gap-3">
+            <span className="text-sm font-semibold">RWF {c.amount.toLocaleString("en-US")}</span>
+            <span className="truncate text-xs text-muted-foreground">{c.handler}</span>
+          </div>
+        </button>
+      ))}
+      {rows.length === 0 ? <div className="py-6 text-center text-sm text-muted-foreground">{emptyMessage}</div> : null}
+    </div>
+    <div className="hidden overflow-x-auto px-3 pb-4 sm:block sm:px-4">
       <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left">
         <thead>
           <HeadRow>
@@ -283,7 +308,7 @@ export function HeadRow({ children }: { children: ReactNode }) {
 /** A little space between the table heading row and the first row. */
 export function HeadGap({ colSpan }: { colSpan: number }) {
   return (
-    <tr aria-hidden>
+    <tr aria-hidden className="head-gap">
       <td colSpan={colSpan} className="h-2 p-0" />
     </tr>
   );
@@ -297,14 +322,17 @@ export function Td({
   children,
   className,
   colSpan,
+  label,
 }: {
   children?: ReactNode;
   className?: string;
   colSpan?: number;
+  /** The column name, shown beside the value when a stack-table becomes cards on phones. */
+  label?: string;
 }) {
   return (
-    <td colSpan={colSpan} className={cn("border-b border-border px-3 py-3.5 align-middle", className)}>
-      {children}
+    <td colSpan={colSpan} data-label={label} className={cn("border-b border-border px-3 py-3.5 align-middle", className)}>
+      {label ? <div className="min-w-0">{children}</div> : children}
     </td>
   );
 }

@@ -92,17 +92,17 @@ export function ApprovalsView() {
         }
       />
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatTile icon={Inbox} label="Waiting for Me" value={String(mine.length)} />
+      <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+        <StatTile icon={Inbox} label="Waiting for Me" value={String(mine.length)} onClick={() => setTab("Waiting for me")} active={tab === "Waiting for me"} />
         <StatTile icon={AlarmClock} label="Past Due" value={String(overdue.length)} tone="down" delay={60} />
         <StatTile icon={CornerUpLeft} label="Returned to Me" value={String(returned.length)} delay={120} />
-        <StatTile icon={CheckCircle2} label="Decided" value={String(decided.length)} delay={180} />
+        <StatTile icon={CheckCircle2} label="Decided" value={String(decided.length)} delay={180} onClick={() => setTab("Decided")} active={tab === "Decided"} />
       </div>
 
       <FloatCard className="mt-4 overflow-hidden" delay={120}>
         <CardHeader title="Approval Inbox" right={<SegmentedTabs tabs={tabs} value={tab} onChange={setTab} />} />
         <div className="mt-4 overflow-x-auto px-2 pb-4">
-          <table className="w-full min-w-[760px] border-separate border-spacing-0 text-left">
+          <table className="stack-table w-full min-w-[760px] border-separate border-spacing-0 text-left">
             <thead>
               <tr className="bg-pale text-[11px] text-muted-foreground">
                 <Th className="rounded-l-xl">Request</Th>
@@ -124,15 +124,15 @@ export function ApprovalsView() {
                       <div className="max-w-[240px] truncate text-xs text-muted-foreground">{r.subjectRef}</div>
                       <div className="mt-0.5 max-w-[240px] truncate text-[9px] text-subtle" title={r.id}>Request ID: {r.id}</div>
                     </Td>
-                    <Td>
+                    <Td label="Type">
                       <Chip tone="sky">{SUBJECT_LABEL[r.subjectType]}</Chip>
                     </Td>
-                    <Td className="max-w-[160px] truncate text-sm">{r.client ?? "No client"}</Td>
-                    <Td className="text-sm whitespace-nowrap">{r.amount !== undefined ? r.amount.toLocaleString("en-US") : "No amount"}</Td>
-                    <Td>
+                    <Td label="Client" className="max-w-[160px] truncate text-sm">{r.client ?? "No client"}</Td>
+                    <Td label="Amount (RWF)" className="text-sm whitespace-nowrap">{r.amount !== undefined ? r.amount.toLocaleString("en-US") : "No amount"}</Td>
+                    <Td label="Status">
                       <Chip tone={statusTone(r)}>{statusLabel(r)}</Chip>
                     </Td>
-                    <Td className={cn("text-sm whitespace-nowrap", late && "font-medium text-danger")}>
+                    <Td label="Decide by" className={cn("text-sm whitespace-nowrap", late && "font-medium text-danger")}>
                       {r.status === "PENDING" ? formatDate(r.dueAt) : "Decided"}
                     </Td>
                     <Td>

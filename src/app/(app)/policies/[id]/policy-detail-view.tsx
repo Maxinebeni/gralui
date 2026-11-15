@@ -119,7 +119,7 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
           <FloatCard className="overflow-hidden" delay={180}>
             <CardHeader title="Cover Periods" />
             <div className="mt-4 overflow-x-auto px-2 pb-4">
-              <table className="w-full min-w-[680px] border-separate border-spacing-0 text-left">
+              <table className="stack-table w-full min-w-[680px] border-separate border-spacing-0 text-left">
                 <thead>
                   <tr className="bg-pale text-[11px] text-muted-foreground">
                     <Th className="rounded-l-xl">Period</Th>
@@ -141,11 +141,11 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
                           </span>
                         ) : null}
                       </Td>
-                      <Td className="text-sm whitespace-nowrap">{MOVEMENT_LABEL[period.movement]}</Td>
-                      <Td className="text-sm whitespace-nowrap">{plain(period.sumInsured)}</Td>
-                      <Td className="text-sm whitespace-nowrap">{plain(period.netPremium)}</Td>
-                      <Td className="text-sm whitespace-nowrap">{plain(period.totalPremium)}</Td>
-                      <Td className="text-sm whitespace-nowrap"><Recorded value={period.bookingNote} /></Td>
+                      <Td label="Movement" className="text-sm whitespace-nowrap">{MOVEMENT_LABEL[period.movement]}</Td>
+                      <Td label="Sum insured" className="text-sm whitespace-nowrap">{plain(period.sumInsured)}</Td>
+                      <Td label="Net premium" className="text-sm whitespace-nowrap">{plain(period.netPremium)}</Td>
+                      <Td label="Total premium" className="text-sm whitespace-nowrap">{plain(period.totalPremium)}</Td>
+                      <Td label="Booking note" className="text-sm whitespace-nowrap"><Recorded value={period.bookingNote} /></Td>
                     </tr>
                   ))}
                 </tbody>
