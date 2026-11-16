@@ -63,6 +63,23 @@ export type Policy = {
   amountPaid?: number;
   /** For example 0.15 for 15%. */
   commissionRate?: number;
+  /**
+   * Every cover period of a backend policy, oldest first. The fields above
+   * describe the latest one; reports use these to count a policy in the
+   * periods it was actually in force.
+   */
+  covers?: PolicyCover[];
+};
+
+/** One cover period of a policy, with its own dates and money. */
+export type PolicyCover = {
+  periodId: string;
+  start: string;
+  renewal: string;
+  premium?: number;
+  netPremium?: number;
+  amountPaid?: number;
+  commissionRate?: number;
 };
  
 /** Primary contact person at the client (requirements doc, section 4). */

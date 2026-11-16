@@ -76,6 +76,25 @@ export const inPeriod = (date: string | undefined, p: Period) => !!date && date 
 
 const policyDates = (p: Policy) => ({ start: displayToIso(p.start), end: displayToIso(p.renewal) });
 
+/**
+ * A policy once per cover period, each with that period's dates and money.
+ * A renewed backend policy keeps every year it was in force, so last year's
+ * cover still counts in last year's reports. Sample policies have one cover.
+ */
+export function policyCovers(p: Policy): Policy[] {
+  if (!p.covers?.length) return [p];
+  return p.covers.map((c) => ({
+    ...p,
+    periodId: c.periodId,
+    start: c.start,
+    renewal: c.renewal,
+    premium: c.premium,
+    netPremium: c.netPremium,
+    amountPaid: c.amountPaid,
+    commissionRate: c.commissionRate,
+  }));
+}
+
 /** In force at some point in the period. */
 export function coversPeriod(p: Policy, period: Period) {
   const { start, end } = policyDates(p);
@@ -99,6 +118,7 @@ export type ClientReport = {
 
 export function clientReport(client: Client, claims: Claim[], period: Period): ClientReport {
   const policies = client.policies
+    .flatMap(policyCovers)
     .filter((p) => coversPeriod(p, period))
     .map((policy) => {
       const f = policyFinancials(policy);
@@ -108,6 +128,7 @@ export function clientReport(client: Client, claims: Claim[], period: Period): C
   const reported = own.filter((c) => inPeriod(c.dateReported, period) || (c.dateReported <= period.to && !c.closure));
   const windowEnd = iso(Number(period.to.slice(0, 4)), Number(period.to.slice(5, 7)) - 1, Number(period.to.slice(8)) + 120);
   const upcoming = client.policies
+    .flatMap(policyCovers)
     .map((policy) => ({ policy, expiry: policyDates(policy).end }))
     .filter((x) => x.expiry > period.to && x.expiry <= windowEnd)
     .sort((a, b) => a.expiry.localeCompare(b.expiry));
@@ -142,10 +163,20 @@ export function renewalStatus(policy: Policy, cases: RenewalCase[]) {
 export function renewalsReport(clients: Client[], cases: RenewalCase[], period: Period) {
   const lines: RenewalLine[] = clients
     .flatMap((client) =>
-      client.policies.map((policy) => ({ client, policy, expiry: policyDates(policy).end, premium: policyFinancials(policy).totalPremium })),
+      client.policies.flatMap((latest) =>
+        policyCovers(latest).map((policy) => ({
+          client,
+          policy,
+          expiry: policyDates(policy).end,
+          premium: policyFinancials(policy).totalPremium,
+          // An earlier cover with a later one after it was renewed. The renewal case
+          // belongs to the latest cover, so its stage only describes that one.
+          renewed: policyDates(policy).end < policyDates(latest).end,
+        })),
+      ),
     )
     .filter((l) => inPeriod(l.expiry, period))
-    .map((l) => ({ ...l, status: renewalStatus(l.policy, cases) }))
+    .map(({ renewed, ...l }) => ({ ...l, status: renewed ? "Renewed" : renewalStatus(l.policy, cases) }))
     .sort((a, b) => a.expiry.localeCompare(b.expiry));
   const count = (status: string) => lines.filter((l) => l.status === status).length;
   return {
@@ -183,7 +214,9 @@ export function claimsReport(claims: Claim[], period: Period) {
 /** The book as it stands on a day: live policies by class and by insurer. */
 export function portfolioReport(clients: Client[], today = todayIso()) {
   const day: Period = { key: today, label: today, from: today, to: today };
-  const live = clients.flatMap((client) => client.policies.filter((p) => coversPeriod(p, day)).map((policy) => ({ client, policy })));
+  const live = clients.flatMap((client) =>
+    client.policies.flatMap(policyCovers).filter((p) => coversPeriod(p, day)).map((policy) => ({ client, policy })),
+  );
   const group = (keyOf: (p: Policy) => string) => {
     const m = new Map<string, { label: string; policies: number; premium: number }>();
     for (const { policy } of live) {
