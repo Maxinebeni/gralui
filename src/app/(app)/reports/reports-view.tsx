@@ -14,7 +14,7 @@ import { downloadCsv, type CsvCell } from "@/lib/csv";
 import { claimStatus } from "@/lib/dashboard";
 import { displayToIso, formatRwf } from "@/lib/format";
 import { canAccessPath } from "@/lib/permissions";
-import { useClaims, useClients, useRenewals } from "@/lib/queries";
+import { useClaims, useClientsWithPolicies, useRenewals } from "@/lib/queries";
 import {
   claimsReport,
   clientReport,
@@ -52,7 +52,8 @@ export function ReportsView() {
   const { user } = useCurrentUser();
   const canClaims = canAccessPath(user, "/claims");
   const canRenewals = canAccessPath(user, "/renewals");
-  const clientsQuery = useClients("");
+  // Reports need every client's policies, which the plain client list does not carry.
+  const clientsQuery = useClientsWithPolicies();
   const claimsQuery = useClaims(canClaims);
   const renewalsQuery = useRenewals(canRenewals);
   const clients = useMemo(() => [...(clientsQuery.data ?? [])].sort((a, b) => a.name.localeCompare(b.name)), [clientsQuery.data]);
@@ -388,4 +389,3 @@ function buildPortfolio(clients: Client[]): Built {
     ),
   };
 }
-

@@ -883,6 +883,24 @@ function toPolicy(v: PolicyView): Policy | null {
     start: isoToDisplay(latest.effectDate),
     renewal: isoToDisplay(latest.expiryDate),
     status: statusFromDates(latest.expiryDate),
+    covers: [...v.periods]
+      .sort((a, b) => a.effectDate.localeCompare(b.effectDate))
+      .map((period) => {
+        const t = latestTerms(period);
+        return {
+          periodId: period.id,
+          start: isoToDisplay(period.effectDate),
+          renewal: isoToDisplay(period.expiryDate),
+          ...(t
+            ? {
+                premium: Number(t.totalPremium),
+                netPremium: Number(t.netPremium),
+                amountPaid: Number(t.amountPaid),
+                commissionRate: Number(t.commissionRate),
+              }
+            : {}),
+        };
+      }),
     ...LOCAL_POLICY_TERMS.get(v.id),
     ...(terms
       ? {
@@ -975,6 +993,24 @@ export async function listClientPolicies(clientId: string): Promise<Policy[]> {
     .sort((a, b) => displayToIso(b.start).localeCompare(displayToIso(a.start)));
   savePolicies(clientId, policies);
   return policies;
+}
+
+/**
+ * Every client with its policies, for reports. The client list only has client
+ * records, so each client's policies are loaded too, 4 clients at a time. A client
+ * whose policies cannot be loaded keeps whatever is already known.
+ */
+export async function listClientsWithPolicies(): Promise<Client[]> {
+  const clients = await listClients("");
+  if (MOCK_AUTH) return clients;
+  return mapLimited(clients, 4, async (c) => {
+    try {
+      return { ...c, policies: await listClientPolicies(c.id) };
+    } catch (err) {
+      console.warn(`Could not load the policies of ${c.id}:`, err);
+      return c;
+    }
+  });
 }
 
 /** The fields the backend does not store yet: sum insured and status. */
@@ -4780,6 +4816,32 @@ function rememberClaim(claim: Claim): Claim {
 }
 
 /** Claims on the backend, loaded client by client (4 at a time). */
+/**
+ * The claim list only says a claim is CLOSED, not how it ended. For closed claims,
+ * read the closing step from the history: its outcome (settled or not) and the real
+ * closing date, so reports count settled claims and show the right status.
+ */
+async function withClosureOutcome(claim: Claim): Promise<Claim> {
+  if (claim.serverState !== "CLOSED" || !claim.closure) return claim;
+  try {
+    const closed = (await getClaimHistory(claim)).find((e) => e.action === "CLOSED");
+    if (!closed) return claim;
+    const outcome = (closed.outcome ?? "").toUpperCase();
+    return {
+      ...claim,
+      closure: {
+        ...claim.closure,
+        closedAt: closed.occurredAt.slice(0, 10),
+        outcome: outcome === "SETTLED" ? "SETTLED" : "REJECTION_ACCEPTED",
+        evidence: closed.summary ?? claim.closure.evidence,
+      },
+    };
+  } catch (err) {
+    console.warn(`Could not read how ${claim.id} was closed:`, err);
+    return claim;
+  }
+}
+
 async function listBackendClaims(): Promise<Claim[]> {
   let clients: Client[];
   try {
@@ -4794,7 +4856,7 @@ async function listBackendClaims(): Promise<Claim[]> {
       if (!res.ok) return [];
       const views = ((await res.json()) as Page<ClaimView>).items ?? [];
       return await mapLimited(views, 4, async (v) =>
-        rememberClaim(toClaim(v, client.id, client.name, await loadPeriod(v.policyPeriodId))),
+        rememberClaim(await withClosureOutcome(toClaim(v, client.id, client.name, await loadPeriod(v.policyPeriodId)))),
       );
     } catch (err) {
       console.warn(`Could not load claims for ${client.id}:`, err);

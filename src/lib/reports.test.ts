@@ -123,3 +123,33 @@ describe("custom range", () => {
     expect(periodFor("2026-02-30_2026-03-01")).toBeNull();
   });
 });
+
+describe("renewed backend policies", () => {
+  // A policy renewed once: 2026 cover, then a 2027 cover with a higher premium.
+  const renewed = policy({
+    start: "20 Jan 2027",
+    renewal: "19 Jan 2028",
+    premium: 550_000,
+    amountPaid: 0,
+    covers: [
+      { periodId: "p1", start: "20 Jan 2026", renewal: "19 Jan 2027", premium: 500_000, amountPaid: 500_000 },
+      { periodId: "p2", start: "20 Jan 2027", renewal: "19 Jan 2028", premium: 550_000, amountPaid: 0 },
+    ],
+  });
+
+  it("counts last year's cover in last year's client report, with that year's money", () => {
+    const report = clientReport(client({ policies: [renewed] }), [], periodFor("2026-Q2")!);
+    expect(report.policies).toHaveLength(1);
+    expect(report.totals).toMatchObject({ premium: 500_000, paid: 500_000, balance: 0 });
+  });
+
+  it("puts the old cover's expiry in the renewals report for that quarter", () => {
+    const report = renewalsReport([client({ policies: [renewed] })], [], periodFor("2027-Q1")!);
+    expect(report.lines.map((l) => l.expiry)).toEqual(["2027-01-19"]);
+  });
+
+  it("counts only the cover in force today in the portfolio", () => {
+    const report = portfolioReport([client({ policies: [renewed] })], "2026-11-15");
+    expect(report.totals).toMatchObject({ policies: 1, premium: 500_000 });
+  });
+});
