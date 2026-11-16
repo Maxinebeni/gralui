@@ -14,7 +14,7 @@ import { downloadCsv, type CsvCell } from "@/lib/csv";
 import { claimStatus } from "@/lib/dashboard";
 import { displayToIso, formatRwf } from "@/lib/format";
 import { canAccessPath } from "@/lib/permissions";
-import { useClaims, useClientsWithPolicies, useRenewals } from "@/lib/queries";
+import { useClaimsWithOutcomes, useClientsWithPolicies, useRenewals } from "@/lib/queries";
 import {
   claimsReport,
   clientReport,
@@ -54,7 +54,8 @@ export function ReportsView() {
   const canRenewals = canAccessPath(user, "/renewals");
   // Reports need every client's policies, which the plain client list does not carry.
   const clientsQuery = useClientsWithPolicies();
-  const claimsQuery = useClaims(canClaims);
+  // Reports need to know whether closed claims were settled; the claim list alone does not say.
+  const claimsQuery = useClaimsWithOutcomes(canClaims);
   const renewalsQuery = useRenewals(canRenewals);
   const clients = useMemo(() => [...(clientsQuery.data ?? [])].sort((a, b) => a.name.localeCompare(b.name)), [clientsQuery.data]);
   const claims = useMemo(() => (canClaims ? (claimsQuery.data ?? []) : []), [canClaims, claimsQuery.data]);

@@ -4821,25 +4821,48 @@ function rememberClaim(claim: Claim): Claim {
  * read the closing step from the history: its outcome (settled or not) and the real
  * closing date, so reports count settled claims and show the right status.
  */
+export function closureOutcome(value: string | null | undefined): NonNullable<Claim["closure"]>["outcome"] {
+  const outcome = (value ?? "").toUpperCase();
+  return outcome === "SETTLED" || outcome === "REJECTION_ACCEPTED" ? outcome : "CLOSED";
+}
+
+// A closed claim does not change, so how it ended is read once per claim.
+const CLOSURES = new Map<string, Promise<Claim>>();
+
 async function withClosureOutcome(claim: Claim): Promise<Claim> {
   if (claim.serverState !== "CLOSED" || !claim.closure) return claim;
   try {
     const closed = (await getClaimHistory(claim)).find((e) => e.action === "CLOSED");
     if (!closed) return claim;
-    const outcome = (closed.outcome ?? "").toUpperCase();
     return {
       ...claim,
       closure: {
         ...claim.closure,
         closedAt: closed.occurredAt.slice(0, 10),
-        outcome: outcome === "SETTLED" ? "SETTLED" : "REJECTION_ACCEPTED",
+        outcome: closureOutcome(closed.outcome),
         evidence: closed.summary ?? claim.closure.evidence,
       },
     };
   } catch (err) {
     console.warn(`Could not read how ${claim.id} was closed:`, err);
+    CLOSURES.delete(claim.id);
     return claim;
   }
+}
+
+/**
+ * Claims with how each closed one ended, for reports. The lookup is one request
+ * per closed claim, so the other claim screens use listClaims() without it.
+ */
+export async function listClaimsWithOutcomes(claims?: Claim[]): Promise<Claim[]> {
+  const list = claims ?? (await listClaims());
+  if (MOCK_AUTH) return list;
+  return mapLimited(list, 4, (c) => {
+    if (c.serverState !== "CLOSED") return Promise.resolve(c);
+    const known = CLOSURES.get(c.id) ?? withClosureOutcome(c);
+    CLOSURES.set(c.id, known);
+    return known;
+  });
 }
 
 async function listBackendClaims(): Promise<Claim[]> {
@@ -4856,7 +4879,7 @@ async function listBackendClaims(): Promise<Claim[]> {
       if (!res.ok) return [];
       const views = ((await res.json()) as Page<ClaimView>).items ?? [];
       return await mapLimited(views, 4, async (v) =>
-        rememberClaim(await withClosureOutcome(toClaim(v, client.id, client.name, await loadPeriod(v.policyPeriodId)))),
+        rememberClaim(toClaim(v, client.id, client.name, await loadPeriod(v.policyPeriodId))),
       );
     } catch (err) {
       console.warn(`Could not load claims for ${client.id}:`, err);

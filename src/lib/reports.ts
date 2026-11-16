@@ -163,12 +163,20 @@ export function renewalStatus(policy: Policy, cases: RenewalCase[]) {
 export function renewalsReport(clients: Client[], cases: RenewalCase[], period: Period) {
   const lines: RenewalLine[] = clients
     .flatMap((client) =>
-      client.policies
-        .flatMap(policyCovers)
-        .map((policy) => ({ client, policy, expiry: policyDates(policy).end, premium: policyFinancials(policy).totalPremium })),
+      client.policies.flatMap((latest) =>
+        policyCovers(latest).map((policy) => ({
+          client,
+          policy,
+          expiry: policyDates(policy).end,
+          premium: policyFinancials(policy).totalPremium,
+          // An earlier cover with a later one after it was renewed. The renewal case
+          // belongs to the latest cover, so its stage only describes that one.
+          renewed: policyDates(policy).end < policyDates(latest).end,
+        })),
+      ),
     )
     .filter((l) => inPeriod(l.expiry, period))
-    .map((l) => ({ ...l, status: renewalStatus(l.policy, cases) }))
+    .map(({ renewed, ...l }) => ({ ...l, status: renewed ? "Renewed" : renewalStatus(l.policy, cases) }))
     .sort((a, b) => a.expiry.localeCompare(b.expiry));
   const count = (status: string) => lines.filter((l) => l.status === status).length;
   return {

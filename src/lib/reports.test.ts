@@ -148,8 +148,30 @@ describe("renewed backend policies", () => {
     expect(report.lines.map((l) => l.expiry)).toEqual(["2027-01-19"]);
   });
 
+  it("shows last year's cover as renewed, not the stage of next year's renewal", () => {
+    const nextRenewal = { id: "R1", policyId: renewed.id, expiryDate: "2028-01-19", completed: [] } as unknown as RenewalCase;
+    const report = renewalsReport([client({ policies: [renewed] })], [nextRenewal], periodFor("2027-Q1")!);
+    expect(report.lines.map((l) => l.status)).toEqual(["Renewed"]);
+    expect(report.totals.renewed).toBe(1);
+  });
+
+  it("still uses the renewal case for the latest cover", () => {
+    const report = renewalsReport([client({ policies: [renewed] })], [], periodFor("2028-Q1")!);
+    expect(report.lines.map((l) => l.status)).toEqual(["Not started"]);
+  });
+
   it("counts only the cover in force today in the portfolio", () => {
     const report = portfolioReport([client({ policies: [renewed] })], "2026-11-15");
     expect(report.totals).toMatchObject({ policies: 1, premium: 500_000 });
+  });
+});
+
+describe("how a closed claim ended", () => {
+  it("keeps settled and rejected, and everything else stays closed", async () => {
+    const { closureOutcome } = await import("./api");
+    expect(closureOutcome("SETTLED")).toBe("SETTLED");
+    expect(closureOutcome("rejection_accepted")).toBe("REJECTION_ACCEPTED");
+    expect(closureOutcome("WITHDRAWN")).toBe("CLOSED");
+    expect(closureOutcome(null)).toBe("CLOSED");
   });
 });

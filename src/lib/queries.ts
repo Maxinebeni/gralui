@@ -7,12 +7,33 @@
 
 import { useCallback } from "react";
 import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
-import { listApprovals, listAssignees, listClaims, listClients, listClientsWithPolicies, listImports, listLeads, listRenewals, listTasks } from "./api";
+import {
+  listApprovals,
+  listAssignees,
+  listClaims,
+  listClaimsWithOutcomes,
+  listClients,
+  listClientsWithPolicies,
+  listImports,
+  listLeads,
+  listRenewals,
+  listTasks,
+} from "./api";
 import { queryKeys } from "./query";
 
 /** Every client with all their policies, for reports. Refreshed with the client lists. */
 export function useClientsWithPolicies(enabled = true) {
   return useQuery({ queryKey: ["clients", "with-policies"] as const, queryFn: () => listClientsWithPolicies(), enabled });
+}
+
+/** Claims with how each closed one ended (settled or not), for reports. Refreshed with the claims list. */
+export function useClaimsWithOutcomes(enabled = true) {
+  const queryClient = useQueryClient();
+  return useQuery({
+    queryKey: ["claims", "with-outcomes"] as const,
+    queryFn: async () => listClaimsWithOutcomes(await queryClient.fetchQuery({ queryKey: queryKeys.claims, queryFn: () => listClaims() })),
+    enabled,
+  });
 }
 
 export function useClaims(enabled = true) {
