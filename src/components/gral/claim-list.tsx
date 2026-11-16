@@ -267,7 +267,10 @@ export function ClaimsTable({
           {rows.map((c) => (
             <tr key={c.id} className="cursor-pointer hover:bg-pale/50" onClick={() => onView(c)}>
               <Td>
-                <div className="text-sm font-medium whitespace-nowrap">{c.id}</div>
+                {/* A real button so the claim opens from the keyboard too; the click reaches the row. */}
+                <button type="button" className="block rounded text-left text-sm font-medium whitespace-nowrap">
+                  {c.id}
+                </button>
                 <div className="max-w-[160px] truncate text-xs text-muted-foreground">{c.client}</div>
               </Td>
               <Td>

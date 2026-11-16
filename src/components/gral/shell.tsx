@@ -31,6 +31,7 @@ import {
 import { queryKeys } from "@/lib/query";
 import { formatDate, todayIso } from "@/lib/renewals";
 import { canDecide } from "@/lib/approvals";
+import { trapTab } from "@/lib/focus-trap";
 import { CalendarMenu } from "./calendar-menu";
 import { GlobalSearch } from "./global-search";
 import { NotificationRealtime } from "./notification-realtime";
@@ -183,6 +184,12 @@ export function Shell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen bg-background">
+      <a
+        href="#main"
+        className="sr-only z-[80] rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground focus:not-sr-only focus:fixed focus:top-3 focus:left-3"
+      >
+        Skip to main content
+      </a>
       <div className="mx-auto max-w-[1280px] px-4 pt-5 pb-4 sm:px-6 sm:py-6">
         {/* Phones: logo and icons, with every page in the menu button. Tablets: the menu
             pills go on a second row. Desktop: one row. */}
@@ -427,7 +434,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main className="mt-8 pb-12 sm:mt-14 sm:pb-24">{children}</main>
+        <main id="main" tabIndex={-1} className="mt-8 pb-12 outline-none sm:mt-14 sm:pb-24">{children}</main>
       </div>
       <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
       <NotificationRealtime userId={user.id} onNotification={receiveNotification} onSync={refreshNotifications} />
@@ -560,6 +567,7 @@ function useDialog(open: boolean, onClose: () => void) {
     panel.current?.focus({ preventScroll: true });
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !e.defaultPrevented) close.current();
+      trapTab(e, panel.current);
     };
     document.addEventListener("keydown", onKey);
     return () => {

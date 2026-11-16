@@ -6,6 +6,7 @@
 // an earlier version. Every chosen file is previewed first, with where it is
 // going, so a wrong file can be caught before it is stored.
 
+import { trapTab } from "@/lib/focus-trap";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Download, FileText, History, RefreshCw, Upload } from "lucide-react";
@@ -65,7 +66,10 @@ export function UploadPreview({
     const objectUrl = URL.createObjectURL(file);
     setUrl(objectUrl);
     dialogRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onCancelRef.current();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancelRef.current();
+      trapTab(e, dialogRef.current);
+    };
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);

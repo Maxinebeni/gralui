@@ -4,6 +4,7 @@
 // figures listed at the top. When there are warnings, the person ticks that
 // they checked them before the save button works.
 
+import { trapTab } from "@/lib/focus-trap";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
@@ -43,7 +44,10 @@ export function ReviewDialog({
     if (!open) return;
     setChecked(false);
     dialogRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onBackRef.current();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onBackRef.current();
+      trapTab(e, dialogRef.current);
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);

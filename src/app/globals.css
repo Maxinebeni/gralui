@@ -74,18 +74,21 @@
   --secondary-foreground: oklch(0.4258 0.1121 254.21);
   --muted: oklch(0.9683 0.0069 247.9);
   --muted-foreground: oklch(0.4474 0.0343 261.32);
-  --subtle: oklch(0.7107 0.0351 256.79);
+  /* Text colours below are dark enough to read on white and on their soft backgrounds (WCAG AA, 4.5:1). */
+  --subtle: oklch(0.54 0.0351 256.79);
   --accent: oklch(0.9624 0.0134 240.95);
   --accent-foreground: oklch(0.4258 0.1121 254.21);
   --sky: oklch(0.6816 0.1098 235.47);
+  /* Keyboard focus outline: at least 3:1 against white and the page background. */
+  --focus: oklch(0.55 0.13 240);
   --pale: oklch(0.9624 0.0134 240.95);
   --destructive: oklch(0.5771 0.2152 27.33);
   --destructive-foreground: oklch(1 0 0);
-  --success: oklch(0.6271 0.1699 149.21);
+  --success: oklch(0.515 0.1699 149.21);
   --success-soft: oklch(0.9624 0.0434 156.74);
-  --warning: oklch(0.6658 0.1574 58.32);
+  --warning: oklch(0.545 0.1574 58.32);
   --warning-soft: oklch(0.9619 0.058 95.62);
-  --danger: oklch(0.5771 0.2152 27.33);
+  --danger: oklch(0.54 0.2152 27.33);
   --danger-soft: oklch(0.9356 0.0309 17.72);
   --border: oklch(0.9288 0.0126 255.51);
   --input: oklch(0.9288 0.0126 255.51);
@@ -112,9 +115,25 @@
   /* Keyboard users always see where they are, even on controls styled with outline-none. */
   a:focus-visible,
   button:focus-visible,
+  summary:focus-visible,
   [role="tab"]:focus-visible,
-  [role="menuitem"]:focus-visible {
-    outline: 2px solid var(--sky) !important;
+  [role="menuitem"]:focus-visible,
+  [tabindex="0"]:focus-visible {
+    outline: 2px solid var(--focus) !important;
+    outline-offset: 2px;
+  }
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid var(--focus) !important;
+    outline-offset: 1px;
+  }
+  /* Search boxes: the pill around the field shows the focus, not the bare field. */
+  .float-pill input:focus-visible {
+    outline: none !important;
+  }
+  label.float-pill:focus-within {
+    outline: 2px solid var(--focus);
     outline-offset: 2px;
   }
 }
