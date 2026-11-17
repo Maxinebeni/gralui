@@ -44,7 +44,7 @@ export function SettingsView() {
             </div>
           </div>
           <dl className="mt-5 divide-y divide-border text-sm">
-            <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3 py-3">
+            <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 py-3 sm:grid-cols-[140px_minmax(0,1fr)]">
               <dt className="text-muted-foreground">{roles.length === 1 ? "Role" : "Roles"}</dt>
               <dd className="flex flex-wrap gap-1.5">
                 {roles.map((r) => (

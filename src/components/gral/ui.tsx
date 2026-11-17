@@ -35,12 +35,14 @@ export function CardHeader({
   return (
     <div
       className={cn(
-        "grid min-w-0 gap-3 px-4 pt-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-5 sm:pt-5",
+        // The title keeps its width; when the controls on the right do not fit beside
+        // it (e.g. many tabs for senior roles), they move to their own line.
+        "flex min-w-0 flex-wrap items-center justify-between gap-3 px-4 pt-4 sm:px-5 sm:pt-5",
         className,
       )}
     >
-      <h2 className="text-base font-semibold tracking-tight">{title}</h2>
-      <div className="min-w-0">{right}</div>
+      <h2 className="max-w-full shrink-0 text-base font-semibold tracking-tight">{title}</h2>
+      {right ? <div className="w-full min-w-0 sm:w-auto sm:max-w-full">{right}</div> : null}
     </div>
   );
 }
