@@ -57,7 +57,11 @@ const ONBOARDING_ROLES: readonly Role[] = [
 /** The backend's permission matrix (REPORT_READ). Reports are worked out from lists each role can already see. */
 const REPORT_ROLES: readonly Role[] = ["CRM Manager", "GI Underwriting Manager", "Claims Manager", "Technical Director", "MD", "DMD", "Risk & Compliance Manager", "Internal Audit Manager"];
 
-/** The backend's permission matrix: these roles read imports; the first three also upload and check them. */
+/**
+ * On the backend only the built-in ADMINISTRATOR role holds IMPORT_* permissions
+ * (migration V20261117164000), so there the menu follows the permission codes.
+ * These roles only apply in demo mode.
+ */
 const IMPORT_ROLES: readonly Role[] = ["CRM Manager", "GI Underwriting Manager", "Claims Manager", "Risk & Compliance Manager", "Internal Audit Manager"];
 const IMPORT_AUTHORS: readonly Role[] = ["CRM Manager", "GI Underwriting Manager", "Claims Manager"];
 
@@ -96,7 +100,8 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Reports", href: "/reports", permission: "REPORT_READ", roles: REPORT_ROLES, businessOnly: true },
   // Admin pages sit in the name (account) menu, not the top bar. Real backend
   // permissions; in demo mode only the MD sees them.
-  { label: "Data Import", href: "/imports", permission: "IMPORT_READ", roles: IMPORT_ROLES, parent: ACCOUNT_MENU, businessOnly: true },
+  // Not business-only: the Administration account is the one that imports.
+  { label: "Data Import", href: "/imports", permission: "IMPORT_READ", roles: IMPORT_ROLES, parent: ACCOUNT_MENU },
   { label: "Users", href: "/admin", permission: "USER_READ", roles: ["MD"], parent: ACCOUNT_MENU },
   { label: "Roles & Permissions", href: "/admin/roles", permission: "ROLE_READ", roles: ["MD"], parent: ACCOUNT_MENU },
   { label: "Active Sessions", href: "/admin/sessions", permission: "SESSION_READ", roles: ["MD"], parent: ACCOUNT_MENU },
@@ -195,7 +200,14 @@ export function renewalPermissions(user: SessionUser) {
  */
 export function importPermissions(user: SessionUser) {
   const can = (code: string) => (usesBackendPermissions(user) ? hasPermission(user, code) : IMPORT_AUTHORS.includes(user.role));
-  return { canUpload: can("IMPORT_UPLOAD"), canValidate: can("IMPORT_VALIDATE") };
+  return {
+    canUpload: can("IMPORT_UPLOAD"),
+    canValidate: can("IMPORT_VALIDATE"),
+    /** Fix a row's values (each fix needs a reason). */
+    canResolve: can("IMPORT_RESOLVE"),
+    /** Save the ready rows as real clients and policies. */
+    canCommit: can("IMPORT_COMMIT"),
+  };
 }
 
 export function claimPermissions(role: Role) {
