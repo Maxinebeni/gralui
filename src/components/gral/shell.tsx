@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, ChevronDown, LogOut, Menu, Search, Settings, SlidersHorizontal } from "lucide-react";
+import { Bell, BarChart3, BriefcaseBusiness, ChevronDown, ClipboardList, Database, FileText, Home, KeyRound, LogOut, Menu, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Settings, ShieldCheck, SlidersHorizontal, UserCog, UserPlus, Users, X, type LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -50,6 +50,9 @@ export function Shell({ children }: { children: ReactNode }) {
   const { user, signOut } = useCurrentUser();
   const tabs = navItemsFor(user);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const navPanel = useDialog(navOpen, () => setNavOpen(false));
 
   // Ctrl+K (Cmd+K on Mac) opens the platform search from any page.
   useEffect(() => {
@@ -63,7 +66,6 @@ export function Shell({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const isActive = (href: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
   // In a dropdown, "/claims" should not also light up on "/claims/all".
   const isActiveExact = (href: string) =>
     href === "/" ? pathname === "/" : pathname === href || (pathname.startsWith(href) && !NAV_HREFS.some((h) => h !== href && h.startsWith(href) && pathname.startsWith(h)));
@@ -150,7 +152,7 @@ export function Shell({ children }: { children: ReactNode }) {
     },
     [router, queryClient, inboxKey],
   );
-  // Admin pages live in the name menu, not the top bar.
+  // Role-specific pages live in the sidebar; shared work links stay together.
   const adminLinks = navChildrenFor(user, ACCOUNT_MENU);
   const doSignOut = async () => {
     try {
@@ -159,29 +161,22 @@ export function Shell({ children }: { children: ReactNode }) {
       router.replace("/login");
     }
   };
-  const listed = new Set(tabs.flatMap((t) => [t.href, ...navChildrenFor(user, t.href).map((c) => c.href)]));
-  const personalLinks = [
-    { label: "My Work", href: "/my-work" },
-    { label: "Approvals", href: "/approvals" },
-  ].filter((l) => !listed.has(l.href));
-  // The phone menu: each top-bar page (with its own pages, if any), then My Work and
-  // Approvals if no section lists them, Admin, and Settings.
-  const [menuGroup, setMenuGroup] = useState<string | null>(null);
-  const phoneGroups = [
-    ...tabs.map((t) => {
-      const children = navChildrenFor(user, t.href);
-      const items = children.length ? [{ label: firstLabel(t), href: t.href }, ...children] : [{ label: t.label, href: t.href }];
-      return { key: t.href, label: t.label, items, active: items.some((c) => isActive(c.href)) };
-    }),
-    ...personalLinks.map((l) => ({ key: l.href, label: l.label, items: [l], active: isActive(l.href) })),
-    ...(adminLinks.length ? [{ key: "admin", label: "Admin", items: adminLinks.map((a) => ({ label: a.label, href: a.href })), active: adminLinks.some((a) => isActive(a.href)) }] : []),
-    { key: "/settings", label: "Settings", items: [{ label: "Settings", href: "/settings" }], active: isActive("/settings") },
+  const workspaceLinks = [
+    ...tabs.filter((item) => item.href === "/").map((item) => ({ label: firstLabel(item), href: item.href })),
+    ...navChildrenFor(user, "/").map(({ label, href }) => ({ label, href })),
   ];
-  const phoneItem = (active: boolean) => cn("justify-between rounded-xl px-3 py-2.5 text-sm", active && "bg-pale font-medium text-primary");
-  const waitingBadge = waiting > 0 ? (
-    <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-semibold text-primary-foreground">{waiting}</span>
-  ) : null;
-
+  const clientTab = tabs.find((item) => item.href === "/clients");
+  const claimTab = tabs.find((item) => item.href === "/claims");
+  const sideGroups: SidebarGroup[] = [
+    { label: "Workspace", links: workspaceLinks },
+    ...(clientTab ? [{ label: "Clients", links: [{ label: firstLabel(clientTab), href: clientTab.href }, ...navChildrenFor(user, clientTab.href)] }] : []),
+    ...(claimTab ? [{ label: "Claims", links: [{ label: firstLabel(claimTab), href: claimTab.href }, ...navChildrenFor(user, claimTab.href)] }] : []),
+    {
+      label: "Operations",
+      links: tabs.filter((item) => !["/", "/clients", "/claims"].includes(item.href)).map((item) => ({ label: item.label, href: item.href })),
+    },
+    ...(adminLinks.length ? [{ label: "Administration", links: adminLinks.map(({ label, href }) => ({ label, href })) }] : []),
+  ].filter((group) => group.links.length > 0);
   return (
     <div className="min-h-screen bg-background">
       <a
@@ -190,127 +185,54 @@ export function Shell({ children }: { children: ReactNode }) {
       >
         Skip to main content
       </a>
-      <div className="mx-auto max-w-[1280px] px-4 pt-5 pb-4 sm:px-6 sm:py-6">
-        {/* Phones: logo and icons, with every page in the menu button. Tablets: the menu
-            pills go on a second row. Desktop: one row. */}
-        <header className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-4 lg:flex lg:justify-between print:hidden">
-          {/* The logo goes to this person's home page (Overview, or Users for admin accounts). */}
-          <Link
-            href={homePathFor(user)}
-            aria-label="Global Risk Advisors Ltd, go to the home page"
-            title="Home"
-            className="flex shrink-0 items-center justify-self-start rounded-xl transition-opacity outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-sky"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/favicon_io/android-chrome-512x512.png"
-              alt=""
-              className="h-14 w-auto sm:h-16"
-            />
-          </Link>
+      <div className="mx-auto max-w-[1600px] px-3 pt-3 pb-4 sm:px-6 sm:py-6">
+        <div className={cn("lg:grid lg:gap-6", sidebarCollapsed ? "lg:grid-cols-[76px_minmax(0,1fr)]" : "lg:grid-cols-[240px_minmax(0,1fr)]")}>
+          <aside className="relative hidden lg:block print:hidden">
+            <div className={cn("fixed inset-y-0 left-0 z-20 border-r border-border bg-card px-3 py-5", sidebarCollapsed ? "w-[76px]" : "w-[240px]")}>
+            <div className="flex h-full min-h-0 flex-col overflow-hidden">
+              {sidebarCollapsed ? (
+                <button type="button" onClick={() => setSidebarCollapsed(false)} aria-label="Expand sidebar" aria-expanded="false" title="Expand sidebar" className="mx-auto flex size-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground hover:bg-secondary hover:text-foreground">
+                  <PanelLeftOpen aria-hidden="true" className="size-4" />
+                </button>
+              ) : (
+                <div className="flex items-center justify-between gap-2">
+                  <SidebarBrand home={homePathFor(user)} />
+                  <button type="button" onClick={() => setSidebarCollapsed(true)} aria-label="Collapse sidebar" aria-expanded="true" title="Collapse sidebar" className="flex size-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground hover:bg-secondary hover:text-foreground">
+                    <PanelLeftClose aria-hidden="true" className="size-4" />
+                  </button>
+                </div>
+              )}
+              <SidebarLinks groups={sideGroups} isActiveExact={isActiveExact} waiting={waiting} collapsed={sidebarCollapsed} />
+              <div className="mt-2 border-t border-border pt-2">
+                <Link href="/settings" title={sidebarCollapsed ? "Settings" : undefined} aria-label={sidebarCollapsed ? "Settings" : undefined} aria-current={isActiveExact("/settings") ? "page" : undefined} className={sidebarLinkClass(isActiveExact("/settings"), sidebarCollapsed)}>
+                  <Settings aria-hidden="true" className="size-4 shrink-0" />
+                  {!sidebarCollapsed ? <span>Settings</span> : null}
+                </Link>
+              </div>
+            </div>
+            </div>
+          </aside>
 
-          {/* Administration accounts have no top-bar pages; their pages are in the name menu. */}
-          {tabs.length > 0 ? (
-          <nav aria-label="Main menu" className="float-pill col-span-2 row-start-2 hidden w-full min-w-0 sm:flex items-center justify-between gap-0.5 overflow-x-auto p-1.5 lg:col-auto lg:row-auto lg:w-auto lg:justify-start lg:gap-1">
-            {tabs.map((t) => {
-              const children = navChildrenFor(user, t.href);
-              const active = isActive(t.href) || children.some((c) => isActive(c.href));
-              const pillClass = cn(
-                "shrink-0 rounded-full px-2.5 py-2 text-xs font-medium transition-colors outline-none sm:px-4 sm:text-sm",
-                active
-                  ? "bg-primary text-primary-foreground hover:text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              );
-              if (children.length === 0) {
-                return (
-                  <Link key={t.href} href={t.href} className={pillClass}>
-                    {t.label}
-                  </Link>
-                );
-              }
-              // The chevron opens the item's pages, e.g. Clients, All Clients and Leads.
-              // The pill keeps the section's name; the open page is marked in the menu.
-              return (
-                <DropdownMenu key={t.href}>
-                  <DropdownMenuTrigger className={pillClass}>
-                    <span className="flex items-center gap-1.5">
-                      {t.label}
-                      <ChevronDown className="size-3.5 opacity-70" />
-                    </span>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" sideOffset={8} className="min-w-56 rounded-2xl p-2 shadow-[var(--shadow-float)]">
-                    {[{ label: firstLabel(t), href: t.href }, ...children].map((c) => (
-                      <DropdownMenuItem
-                        key={c.href}
-                        onSelect={() => router.push(c.href)}
-                        className={cn("justify-between rounded-xl px-3 py-2.5 text-sm", isActiveExact(c.href) && "font-medium text-primary")}
-                      >
-                        {c.label}
-                        {c.href === "/approvals" && waiting > 0 ? (
-                          <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-semibold text-primary-foreground">
-                            {waiting}
-                          </span>
-                        ) : null}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              );
-            })}
-          </nav>
-          ) : null}
+          <div className="min-w-0">
+        <header className="flex min-w-0 items-center justify-between gap-3 print:hidden">
+          <div className="flex min-w-0 items-center gap-2 lg:hidden">
+            <button
+              type="button"
+              aria-label="Open navigation"
+              aria-expanded={navOpen}
+              aria-controls="mobile-navigation-dialog"
+              onClick={() => setNavOpen(true)}
+              className="flex size-10 shrink-0 items-center justify-center rounded-full bg-card text-primary shadow-[var(--shadow-pill)] outline-none"
+            >
+              <Menu aria-hidden="true" className="size-4" />
+            </button>
+            <Link href={homePathFor(user)} aria-label="Global Risk Advisors Ltd, go to the home page" className="flex min-w-0 items-center rounded-xl">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/favicon_io/android-chrome-512x512.png" alt="" className="h-11 w-auto" />
+            </Link>
+          </div>
 
-          <div className="flex shrink-0 items-center gap-2">
-            {/* Phones only: a short list of the main pages. A section with more pages
-                (Clients: Client Records, All Clients, Leads) opens in place. */}
-            <DropdownMenu onOpenChange={(o) => { if (o) setMenuGroup(null); }}>
-              <DropdownMenuTrigger
-                aria-label="Open menu"
-                className="relative order-last flex size-10 items-center justify-center rounded-full bg-card text-primary shadow-[var(--shadow-pill)] outline-none sm:hidden"
-              >
-                <Menu className="size-4" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" sideOffset={8} collisionPadding={16} className="max-h-[75vh] w-56 overflow-y-auto rounded-2xl p-2 shadow-[var(--shadow-float)]">
-                {phoneGroups.map((g) =>
-                  g.items.length === 1 ? (
-                    <DropdownMenuItem key={g.key} onSelect={() => router.push(g.items[0]!.href)} className={phoneItem(g.active)}>
-                      {g.label}
-                      {g.items[0]!.href === "/approvals" ? waitingBadge : null}
-                    </DropdownMenuItem>
-                  ) : (
-                    <div key={g.key}>
-                      <DropdownMenuItem
-                        aria-expanded={menuGroup === g.key}
-                        onSelect={(e) => {
-                          e.preventDefault();
-                          setMenuGroup((cur) => (cur === g.key ? null : g.key));
-                        }}
-                        className={phoneItem(g.active)}
-                      >
-                        {g.label}
-                        <ChevronDown className={cn("size-4 opacity-60 transition-transform", menuGroup === g.key && "rotate-180")} />
-                      </DropdownMenuItem>
-                      {menuGroup === g.key
-                        ? g.items.map((c) => (
-                            <DropdownMenuItem
-                              key={c.href}
-                              onSelect={() => router.push(c.href)}
-                              className={cn("ml-3 justify-between rounded-xl px-3 py-2 text-sm text-muted-foreground", isActiveExact(c.href) && "font-medium text-primary")}
-                            >
-                              {c.label}
-                              {c.href === "/approvals" ? waitingBadge : null}
-                            </DropdownMenuItem>
-                          ))
-                        : null}
-                    </div>
-                  ),
-                )}
-                <div className="my-1 h-px bg-border" />
-                <DropdownMenuItem onSelect={doSignOut} className="rounded-xl px-3 py-2.5 text-sm">
-                  <LogOut className="size-4" /> Sign out
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             <IconBtn label="Search (Ctrl+K)" mobile onClick={() => setSearchOpen(true)}>
               <Search className="size-4" />
             </IconBtn>
@@ -377,16 +299,6 @@ export function Shell({ children }: { children: ReactNode }) {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <Link
-              href="/settings"
-              aria-label="Settings"
-              className={cn(
-                "hidden size-10 items-center sm:flex justify-center rounded-full shadow-[var(--shadow-pill)] transition-colors hover:text-primary",
-                pathname.startsWith("/settings") ? "bg-primary text-primary-foreground hover:text-primary-foreground" : "bg-card text-muted-foreground",
-              )}
-            >
-              <Settings className="size-4" />
-            </Link>
             <CalendarMenu />
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -410,21 +322,6 @@ export function Shell({ children }: { children: ReactNode }) {
                     <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-semibold text-primary-foreground">{waiting}</span>
                   ) : null}
                 </DropdownMenuItem>
-                {adminLinks.length > 0 ? (
-                  <>
-                    <div className="my-1 h-px bg-border" />
-                    <p className="px-3 pt-2 pb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">Admin</p>
-                    {adminLinks.map((a) => (
-                      <DropdownMenuItem
-                        key={a.href}
-                        onSelect={() => router.push(a.href)}
-                        className={cn("rounded-xl px-3 py-2.5 text-sm", isActiveExact(a.href) && "font-medium text-primary")}
-                      >
-                        {a.label}
-                      </DropdownMenuItem>
-                    ))}
-                  </>
-                ) : null}
                 <div className="my-1 h-px bg-border" />
                 <DropdownMenuItem onSelect={doSignOut} className="rounded-xl px-3 py-2.5 text-sm">
                   <LogOut className="size-4" /> Sign out
@@ -434,8 +331,35 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main id="main" tabIndex={-1} className="mt-8 pb-12 outline-none sm:mt-14 sm:pb-24">{children}</main>
+        <main id="main" tabIndex={-1} className="mt-4 pb-12 outline-none sm:mt-6 sm:pb-24">{children}</main>
+          </div>
+        </div>
       </div>
+      {navOpen ? (
+        <div className="fixed inset-0 z-[70] lg:hidden print:hidden">
+          <button type="button" tabIndex={-1} aria-label="Close navigation" onClick={() => setNavOpen(false)} className="absolute inset-0 bg-foreground/35 backdrop-blur-[2px]" />
+          <div ref={navPanel} id="mobile-navigation-dialog" role="dialog" aria-modal="true" aria-labelledby="mobile-navigation-title" tabIndex={-1} className="relative flex h-full w-[min(88vw,340px)] flex-col bg-card p-4 shadow-[var(--shadow-float)] outline-none">
+            <div className="flex items-center justify-between gap-3">
+              <h2 id="mobile-navigation-title" className="sr-only">Main navigation</h2>
+              <SidebarBrand home={homePathFor(user)} />
+              <button type="button" aria-label="Close navigation" onClick={() => setNavOpen(false)} className="flex size-10 shrink-0 items-center justify-center rounded-full bg-secondary text-foreground">
+                <X aria-hidden="true" className="size-4" />
+              </button>
+            </div>
+            <SidebarLinks groups={sideGroups} isActiveExact={isActiveExact} waiting={waiting} onNavigate={() => setNavOpen(false)} />
+            <div className="mt-2 border-t border-border pt-2">
+              <Link href="/settings" onClick={() => setNavOpen(false)} aria-current={isActiveExact("/settings") ? "page" : undefined} className={sidebarLinkClass(isActiveExact("/settings"))}>
+                <Settings aria-hidden="true" className="size-4 shrink-0" />
+                <span>Settings</span>
+              </Link>
+              <button type="button" onClick={doSignOut} className={sidebarLinkClass(false)}>
+                <LogOut aria-hidden="true" className="size-4 shrink-0" />
+                <span>Sign out</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
       <NotificationRealtime userId={user.id} onNotification={receiveNotification} onSync={refreshNotifications} />
     </div>
@@ -469,6 +393,90 @@ function IconBtn({
   );
 }
 
+type SidebarLink = { label: string; href: string };
+type SidebarGroup = { label: string; links: SidebarLink[] };
+
+function sidebarLinkClass(active: boolean, collapsed = false) {
+  return cn(
+    "flex min-h-10 w-full items-center gap-2.5 rounded-xl py-2 text-sm transition-colors focus-visible:outline-none",
+    collapsed ? "justify-center px-2" : "px-3",
+    active ? "bg-primary/10 font-semibold text-primary" : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+  );
+}
+
+function SidebarBrand({ home }: { home: string }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 px-1 py-2">
+      <Link href={home} aria-label="Global Risk Advisors Ltd, go to the home page" className="flex shrink-0 items-center rounded-xl focus-visible:outline-none">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/favicon_io/android-chrome-512x512.png" alt="" className="h-9 w-auto" />
+      </Link>
+      <div className="min-w-0">
+        <p className="text-sm font-semibold tracking-tight text-foreground">GRAL</p>
+        <p className="text-xs text-muted-foreground">Operations</p>
+      </div>
+    </div>
+  );
+}
+
+function SidebarLinks({
+  groups,
+  isActiveExact,
+  waiting,
+  collapsed = false,
+  onNavigate,
+}: {
+  groups: SidebarGroup[];
+  isActiveExact: (href: string) => boolean;
+  waiting: number;
+  collapsed?: boolean;
+  onNavigate?: () => void;
+}) {
+  return (
+    <nav aria-label="Main navigation" className={cn("mt-4 min-h-0 flex-1 space-y-4 overflow-y-auto px-1 pb-2", collapsed && "space-y-2")}>
+      {groups.map((group) => (
+        <section key={group.label} aria-label={group.label}>
+          {!collapsed ? <h2 className="px-3 pb-1.5 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{group.label}</h2> : null}
+          <ul className="space-y-0.5">
+            {group.links.map((link) => {
+              const active = isActiveExact(link.href);
+              const Icon = sidebarIconFor(link.href);
+              return (
+                <li key={link.href}>
+                  <Link href={link.href} onClick={onNavigate} title={collapsed ? link.label : undefined} aria-label={collapsed ? link.label : undefined} aria-current={active ? "page" : undefined} className={sidebarLinkClass(active, collapsed)}>
+                    <Icon aria-hidden="true" className="size-4 shrink-0" />
+                    {!collapsed ? <span className="min-w-0 flex-1 truncate">{link.label}</span> : null}
+                    {!collapsed && link.href === "/approvals" && waiting > 0 ? (
+                      <span aria-label={`${waiting} approvals waiting for you`} className="rounded-full bg-primary px-2 py-0.5 text-xs font-semibold text-primary-foreground">{waiting}</span>
+                    ) : null}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
+    </nav>
+  );
+}
+
+function sidebarIconFor(href: string): LucideIcon {
+  if (href === "/") return Home;
+  if (href === "/my-work") return BriefcaseBusiness;
+  if (href === "/approvals") return ClipboardList;
+  if (href === "/clients") return Users;
+  if (href === "/clients/all") return Users;
+  if (href === "/clients/leads") return UserPlus;
+  if (href === "/claims" || href === "/claims/all") return ShieldCheck;
+  if (href === "/insurer-products") return FileText;
+  if (href === "/renewals") return RefreshCw;
+  if (href === "/reports") return BarChart3;
+  if (href === "/imports") return Database;
+  if (href === "/admin") return UserCog;
+  if (href === "/admin/roles") return KeyRound;
+  return FileText;
+}
+
 export function PageHeader({
   title,
   subtitle,
@@ -486,7 +494,7 @@ export function PageHeader({
   const hasFilters = showRoles || !!extraPills;
 
   return (
-    <div className="grid gap-4 sm:grid-cols-[minmax(min-content,1fr)_auto] sm:items-center sm:gap-3">
+    <div className="mb-6 grid gap-4 sm:grid-cols-[minmax(min-content,1fr)_auto] sm:items-center sm:gap-3">
       <div className="min-w-0">
         <h1 className="text-2xl font-semibold tracking-tight [overflow-wrap:anywhere] sm:text-3xl sm:[overflow-wrap:break-word]">{title}</h1>
         {subtitle ? <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p> : null}

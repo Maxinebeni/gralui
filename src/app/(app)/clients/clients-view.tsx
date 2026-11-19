@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, BadgeCheck, Download, Plus } from "lucide-react";
+import { AlertTriangle, BadgeCheck, ChevronDown, Download, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader } from "@/components/gral/shell";
@@ -94,7 +94,7 @@ export function ClientsView() {
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
-        <div className="min-w-0 space-y-4">
+        <div className="min-w-0">
           <FloatCard className="overflow-hidden" delay={120}>
             <CardHeader
               title={tab === "KYC Complete" ? "KYC Complete" : "Client Records"}
@@ -110,6 +110,7 @@ export function ClientsView() {
                 clients={rows.slice(0, PREVIEW_ROWS)}
                 onView={setOpen}
                 emptyMessage={emptyMessage}
+                compact
               />
             </div>
             <div className="border-t border-border px-5 py-4 text-center">
@@ -122,18 +123,9 @@ export function ClientsView() {
             </div>
           </FloatCard>
 
-          <FloatCard className="p-5" delay={200}>
-            <h2 className="text-base font-semibold tracking-tight">Clients by Type</h2>
-            <div className="mt-4">
-              <SegmentedBar segments={typeSegments} />
-            </div>
-            <p className="mt-3 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              Portfolio mix across the book
-            </p>
-          </FloatCard>
         </div>
 
-        <div className="min-w-0 space-y-4">
+        <div className="min-w-0">
           <QuickAction delay={160}>
             <QuickActionRow
               icon={AlertTriangle}
@@ -157,7 +149,26 @@ export function ClientsView() {
             />
           </QuickAction>
 
-          <FloatCard className="p-5" delay={220}>
+        </div>
+      </div>
+
+      <details className="group mt-4">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 py-3.5 shadow-[var(--shadow-card)] outline-none transition-colors hover:bg-secondary/50 focus-visible:ring-2 focus-visible:ring-sky sm:px-5">
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold">Portfolio insights</span>
+            <span className="mt-0.5 block text-xs text-muted-foreground">Client mix, document status and insurer policies</span>
+          </span>
+          <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+        </summary>
+        <div className="mt-4 grid min-w-0 gap-4 md:grid-cols-2 2xl:grid-cols-3">
+          <FloatCard className="p-5">
+            <h2 className="text-base font-semibold tracking-tight">Clients by Type</h2>
+            <div className="mt-4">
+              <SegmentedBar segments={typeSegments} />
+            </div>
+            <p className="mt-3 text-[11px] text-muted-foreground">Portfolio mix across the book</p>
+          </FloatCard>
+          <FloatCard className="p-5">
             <h2 className="text-base font-semibold tracking-tight">Document Completeness</h2>
             <DistributionRow
               items={[
@@ -167,9 +178,8 @@ export function ClientsView() {
               ]}
             />
           </FloatCard>
-
           <ChartCard
-            delay={280}
+            delay={0}
             title="Active Policies by Insurer"
             legend={[
               { label: "Policies", tone: "primary" },
@@ -179,12 +189,7 @@ export function ClientsView() {
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={insurers} margin={{ top: 4, right: 8, left: -14, bottom: 0 }}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" vertical={false} />
-                <XAxis
-                  dataKey="insurer"
-                  tick={{ fontSize: 10, fill: "var(--subtle)" }}
-                  axisLine={false}
-                  tickLine={false}
-                />
+                <XAxis dataKey="insurer" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
                 <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", fontSize: 11 }} />
                 <Bar dataKey="policies" name="Policies" fill="var(--primary)" radius={[6, 6, 0, 0]} barSize={14} />
@@ -193,7 +198,7 @@ export function ClientsView() {
             </ResponsiveContainer>
           </ChartCard>
         </div>
-      </div>
+      </details>
 
       <ClientFileSlideOver client={open} onClose={() => setOpen(null)} onChanged={reload} />
 

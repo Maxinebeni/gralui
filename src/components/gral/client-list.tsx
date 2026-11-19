@@ -91,17 +91,23 @@ export function ClientSearch({ value, onChange }: { value: string; onChange: (v:
 }
 
 const HEADINGS = ["Client", "Type", "Sector", "Active", "KYC", "Policies", "Claims", "Corr.", "Docs Progress", "Manager"];
+const COMPACT_HEADINGS = ["Client", "Type", "Sector", "Active", "KYC", "Docs Progress", "Manager"];
 
 export function ClientsTable({
   clients,
   onView,
   emptyMessage,
+  compact = false,
 }: {
   clients: Client[];
   onView: (c: Client) => void;
   emptyMessage: React.ReactNode;
+  /** A dashboard card has less room than the dedicated full client list. */
+  compact?: boolean;
 }) {
   const { items, pager } = usePaged(clients);
+  const headings = compact ? COMPACT_HEADINGS : HEADINGS;
+  const hasExtras = (key: "policies" | "claims" | "correspondence") => !compact;
   return (
     <>
     {/* Phones: one card per client instead of a wide table. */}
@@ -136,18 +142,21 @@ export function ClientsTable({
       ))}
       {clients.length === 0 ? <div className="py-6 text-center text-sm text-muted-foreground">{emptyMessage}</div> : null}
     </div>
-    <div className="hidden overflow-x-auto px-2 pb-4 sm:block">
-      <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left">
+    <div className="hidden max-w-full overflow-x-auto px-2 pb-4 sm:block">
+      <table className={cn("w-full table-fixed border-separate border-spacing-0 text-left", !compact && "min-w-[1050px]")}>
+        <caption className="sr-only">Client records</caption>
         <thead>
           <tr className="bg-pale text-[11px] text-muted-foreground">
-            {HEADINGS.map((h, i, arr) => (
+            {headings.map((h, i, arr) => (
               <th
                 key={h}
                 className={cn(
-                  "px-3 py-2.5 font-medium whitespace-nowrap",
+                  "sticky top-0 z-10 px-2 py-2.5 text-left font-medium whitespace-nowrap sm:px-2.5",
                   i === 0 && "rounded-l-xl",
                   i === arr.length - 1 && "rounded-r-xl",
+                  i === 0 && "sticky left-0 z-20 bg-pale",
                 )}
+                style={compact ? { width: ["27%", "13%", "15%", "8%", "12%", "13%", "12%"][i] } : undefined}
               >
                 {h}
               </th>
@@ -157,46 +166,41 @@ export function ClientsTable({
         <tbody>
           {clients.length === 0 ? (
             <tr>
-              <td colSpan={HEADINGS.length} className="px-3 py-8 text-center text-sm text-muted-foreground">
+              <td colSpan={headings.length} className="px-3 py-8 text-center text-sm text-muted-foreground">
                 {emptyMessage}
               </td>
             </tr>
           ) : (
             items.map((c) => (
-              <tr key={c.id}>
-                <Td>
-                  <div className="max-w-[150px] truncate text-sm font-medium">{c.name}</div>
+              <tr key={c.id} className="group transition-colors hover:bg-secondary/20">
+                <Td className="sticky left-0 z-[1] bg-card group-hover:bg-secondary/20">
+                  <div className="max-w-[180px] truncate text-sm font-medium" title={c.name}>{c.name}</div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">{c.id}</span>
+                    <span className="text-xs text-muted-foreground" title={c.id}>{c.id}</span>
                     {c.nonCompliant ? <Chip tone="danger">Flagged</Chip> : null}
                   </div>
                   <TextLink onClick={() => onView(c)}>View File</TextLink>
                 </Td>
                 <Td className="text-sm">
-                  <span className="block max-w-[90px] truncate">{c.type}</span>
+                  <span className="block truncate" title={c.type}>{c.type}</span>
                 </Td>
                 <Td className="text-sm">
-                  <span className="block max-w-[80px] truncate">
+                  <span className="block truncate" title={c.sector}>
                     <Recorded value={c.sector} />
                   </span>
                 </Td>
-                <Td className="text-sm">{c.activePolicies}</Td>
+                <Td className="text-sm tabular-nums">{c.activePolicies}</Td>
                 <Td>
                   <KycBadge short kyc={c.kyc} status={c.kycStatus} gateStatus={c.kycGateStatus} />
                 </Td>
+                {hasExtras("policies") ? <Td><StatusDot ok={c.policiesOk} title={c.policiesOk ? "Policy information recorded" : "No policy information recorded"} /></Td> : null}
+                {hasExtras("claims") ? <Td><StatusDot ok={c.claimsOk} title={c.claimsOk ? "Claims information recorded" : "No claims recorded"} /></Td> : null}
+                {hasExtras("correspondence") ? <Td><StatusDot ok={c.correspondenceOk} title={c.correspondenceOk ? "Correspondence recorded" : "No correspondence recorded"} /></Td> : null}
                 <Td>
-                  <StatusDot ok={c.policiesOk} />
-                </Td>
-                <Td>
-                  <StatusDot ok={c.claimsOk} />
-                </Td>
-                <Td>
-                  <StatusDot ok={c.correspondenceOk} />
-                </Td>
-                <Td>
-                  <div className="w-16">
+                  <div className="w-full max-w-24">
                     <div className="text-xs text-muted-foreground">
-                      {c.docsFiled} / {c.docsTotal}
+                      <span className="tabular-nums">{c.docsFiled} / {c.docsTotal}</span>
+                      <span className="sr-only"> documents complete</span>
                     </div>
                     <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-secondary">
                       <div
@@ -207,7 +211,7 @@ export function ClientsTable({
                   </div>
                 </Td>
                 <Td>
-                  <div className="max-w-[70px] truncate">
+                  <div className="max-w-[150px] truncate" title={c.manager || "Manager not recorded"}>
                     {c.manager ? <Person name={c.manager} /> : <NotRecorded />}
                   </div>
                 </Td>
@@ -297,6 +301,8 @@ function StatusDot({ ok, title }: { ok: boolean; title?: string }) {
   return (
     <span
       title={title}
+      role="img"
+      aria-label={title ?? (ok ? "Recorded" : "Not recorded")}
       className={cn(
         "flex size-5 items-center justify-center rounded-full text-[10px] font-semibold",
         ok ? "bg-success-soft text-success" : "bg-warning-soft text-warning",
