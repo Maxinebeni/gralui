@@ -397,7 +397,7 @@ function BatchPage({ id, backHref, onUploadCorrected }: { id: string; backHref: 
             <>
               {canValidate && open ? (
                 <OutlineButton className="px-4 py-2 text-sm" disabled={busy !== null} onClick={check}>
-                  {busy === "check" ? "Checking…" : "Check Again"}
+                  {busy === "check" ? "Validating…" : "Validate"}
                 </OutlineButton>
               ) : null}
               {canCommit && open ? (
@@ -422,7 +422,7 @@ function BatchPage({ id, backHref, onUploadCorrected }: { id: string; backHref: 
       </div>
 
       {batch.status === "STAGED" && batch.validatedAt ? (
-        <p className="mt-3 rounded-xl bg-sky-soft/60 px-4 py-3 text-xs">Rows were changed since the last check. Click Check Again to see which rows are ready now.</p>
+        <p className="mt-3 rounded-xl bg-sky-soft/60 px-4 py-3 text-xs">Rows were changed since the last validation. Click Validate to see which rows are ready now.</p>
       ) : null}
 
       {confirming ? (
@@ -584,7 +584,7 @@ function RowCard({
           ))}
         </ul>
       ) : row.status === "REVIEW" ? (
-        <p className="mt-2 text-xs text-muted-foreground">Changed since the last check. Click Check Again to see if it is ready.</p>
+        <p className="mt-2 text-xs text-muted-foreground">Changed since the last validation. Click Validate to see if it is ready.</p>
       ) : null}
 
       <button
@@ -707,8 +707,8 @@ function FixForm({ batch, row, lookups, onDone }: { batch: ImportBatch; row: Imp
       }
       toast.success(
         others || failed
-          ? `Saved on this row and ${n(others)} others${failed ? `. ${n(failed)} could not be saved; try those again` : ""}. Click Check Again when you are done fixing.`
-          : "Saved. Click Check Again when you are done fixing.",
+          ? `Saved on this row and ${n(others)} others${failed ? `. ${n(failed)} could not be saved; try those again` : ""}. Click Validate when you are done fixing.`
+          : "Saved. Click Validate when you are done fixing.",
       );
       refresh("imports");
       onDone();
