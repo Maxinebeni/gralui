@@ -4,7 +4,7 @@ import { ImportsView } from "./imports-view";
 
 export const metadata: Metadata = {
   title: "Data Import / GRAL Operations Platform",
-  description: "Upload GRAL's import template and check every row in a dry run.",
+  description: "Upload the cleaned GRAL registers, fix the rows that need a decision, and import the ready clients and policies.",
 };
 
 export default function ImportsPage() {
