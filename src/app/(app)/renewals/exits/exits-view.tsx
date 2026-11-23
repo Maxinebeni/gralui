@@ -99,7 +99,7 @@ export function ExitRegisterView() {
 
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
         <StatTile label="Renewals lost" value={exits === null ? "…" : String(list.length)} />
-        <StatTile label="Premium Lost (RWF)" value={exits === null ? "…" : lostPremium.toLocaleString("en-US")} delay={60} />
+        <StatTile label="Premium lost (RWF)" value={exits === null ? "…" : lostPremium.toLocaleString("en-US")} delay={60} />
         <StatTile label="Need details" value={exits === null ? "…" : String(needDetails)} delay={120} />
       </div>
 

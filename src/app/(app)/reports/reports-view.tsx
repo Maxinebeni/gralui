@@ -168,7 +168,7 @@ function Tiles({ items }: { items: { label: string; value: string }[] }) {
   return (
     <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
       {items.map((t, i) => (
-        <StatTile key={t.label} label={t.label} value={t.value} delay={i * 50} />
+        <StatTile key={t.label} label={t.label} value={t.value} money={t.value.startsWith("RWF")} delay={i * 50} />
       ))}
     </div>
   );

@@ -8,7 +8,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Search } from "lucide-react";
-import { ClientFile } from "@/components/gral/client-file";
+import { ClientFile, type ClientFileTab } from "@/components/gral/client-file";
 import { ClientFormPanel } from "@/components/gral/client-form";
 import { ALL_OPTION, FilterMenu, optionsFrom } from "@/components/gral/filter-menu";
 import { KycBadge } from "@/components/gral/kyc-badge";
@@ -236,10 +236,13 @@ export function ClientFileSlideOver({
   client,
   onClose,
   onChanged,
+  initialTab,
 }: {
   client: Client | null;
   onClose: () => void;
   onChanged?: () => void;
+  /** The tab the file opens on, e.g. Policies from a Quick action. */
+  initialTab?: ClientFileTab;
 }) {
   const [latest, setLatest] = useState<Client | null>(null);
   const [editing, setEditing] = useState(false);
@@ -267,8 +270,9 @@ export function ClientFileSlideOver({
           />
         ) : (
           <ClientFile
-            key={shown.id}
+            key={`${shown.id}-${initialTab ?? ""}`}
             client={shown}
+            initialTab={initialTab}
             onClose={handleClose}
             onEdit={() => setEditing(true)}
             onChanged={handleSaved}

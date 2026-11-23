@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ChevronDown, Download, Plus } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader } from "@/components/gral/shell";
@@ -24,13 +25,16 @@ import {
   FloatCard,
   NavyButton,
   OutlineButton,
+  QuickAction,
+  QuickActionRow,
   SegmentedBar,
   SegmentedTabs,
   StatTile,
 } from "@/components/gral/ui";
 import { getPoliciesByInsurer } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
-import type { ClientType, InsurerSummary } from "@/lib/types";
+import type { ClientFileTab } from "@/components/gral/client-file";
+import type { Client, ClientType, InsurerSummary } from "@/lib/types";
 
 const CLIENT_TYPES: ClientType[] = ["Corporate", "State enterprise", "NGO", "Financial institution", "SME"];
 /** The dashboard shows a compact list; the full list is on /clients/all. */
@@ -54,6 +58,60 @@ export function ClientsView() {
   const inSector = filterClientsBy(allClients, "All", sector);
   const kycReady = inSector.filter((c) => c.kyc).length;
   const flags = inSector.filter((c) => c.nonCompliant).length;
+
+  // Quick actions: work on client records that can be done in the app. Each row
+  // counts the clients it applies to; the button opens the next one where the
+  // work is done, and the count goes down as each is finished.
+  const router = useRouter();
+  const kycPage = (c: Client) => () => router.push(`/clients/kyc/${encodeURIComponent(c.id)}?mode=client`);
+  const [fileTab, setFileTab] = useState<ClientFileTab | undefined>();
+  const filePage = (tab: ClientFileTab) => (c: Client) => () => {
+    setFileTab(tab);
+    setOpen(c);
+  };
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const quickActions = [
+    {
+      key: "kyc-waiting",
+      list: inSector.filter((c) => c.kycStatus === "SUBMITTED"),
+      text: (n: number) => `${plural(n, "client", "clients")} waiting for a KYC decision`,
+      label: "Review",
+      open: kycPage,
+      primary: true,
+    },
+    {
+      key: "kyc-returned",
+      list: inSector.filter((c) => c.kycStatus === "RETURNED"),
+      text: (n: number) => `${plural(n, "KYC review", "KYC reviews")} returned for changes`,
+      label: "Fix",
+      open: kycPage,
+      primary: false,
+    },
+    {
+      key: "kyc-not-started",
+      list: inSector.filter((c) => !c.kyc && (!c.kycStatus || c.kycStatus === "NOT_STARTED" || c.kycStatus === "DRAFT")),
+      text: (n: number) => `${plural(n, "client has", "clients have")} no KYC review started`,
+      label: "Start KYC",
+      open: kycPage,
+      primary: false,
+    },
+    {
+      key: "documents",
+      list: inSector.filter((c) => c.docsTotal > 0 && c.docsFiled < c.docsTotal),
+      text: (n: number) => `${plural(n, "client file is", "client files are")} missing documents`,
+      label: "Add documents",
+      open: filePage("KYC and compliance"),
+      primary: false,
+    },
+    {
+      key: "no-policy",
+      list: inSector.filter((c) => c.activePolicies === 0),
+      text: (n: number) => `${plural(n, "client has", "clients have")} no active policy`,
+      label: "Add policy",
+      open: filePage("Policies"),
+      primary: false,
+    },
+  ].filter((a) => a.list.length > 0);
 
   const typeSegments = CLIENT_TYPES.map((t) => ({
     label: t,
@@ -85,6 +143,31 @@ export function ClientsView() {
         <StatTile label="KYC not ready" value={String(inSector.length - kycReady)} delay={120} onClick={() => setTab("KYC not ready")} active={tab === "KYC not ready"} />
         <StatTile label="Non-compliant flags" value={String(flags)} delay={180} onClick={() => setTab("Non-compliant")} active={tab === "Non-compliant"} />
       </div>
+
+      {quickActions.length ? (
+        <div className="mt-4">
+          <QuickAction delay={100}>
+            {quickActions.map((a) => {
+              const next = a.list[0]!;
+              return (
+                <QuickActionRow
+                  key={a.key}
+                  tone={a.primary ? "success" : "danger"}
+                  tinted={a.primary}
+                  text={a.list.length > 1 ? `${a.text(a.list.length)}. Next: ${next.name}` : `${a.text(1)}: ${next.name}`}
+                  action={
+                    a.primary ? (
+                      <NavyButton onClick={a.open(next)}>{a.label}</NavyButton>
+                    ) : (
+                      <OutlineButton onClick={a.open(next)}>{a.label}</OutlineButton>
+                    )
+                  }
+                />
+              );
+            })}
+          </QuickAction>
+        </div>
+      ) : null}
 
       <div className="mt-4">
         <FloatCard className="overflow-hidden" delay={120}>
@@ -155,7 +238,15 @@ export function ClientsView() {
         </div>
       </details>
 
-      <ClientFileSlideOver client={open} onClose={() => setOpen(null)} onChanged={reload} />
+      <ClientFileSlideOver
+        client={open}
+        initialTab={fileTab}
+        onClose={() => {
+          setOpen(null);
+          setFileTab(undefined);
+        }}
+        onChanged={reload}
+      />
 
       <ClientFormSlideOver
         open={adding}

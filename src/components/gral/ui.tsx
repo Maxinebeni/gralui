@@ -2,6 +2,7 @@ import { ChevronDown, type LucideIcon } from "lucide-react";
 import type { ReactNode, ButtonHTMLAttributes } from "react";
 import { cn } from "@/lib/utils";
 import { initials } from "@/lib/format";
+import { AmountsToggle, Money } from "./money";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 export function FloatCard({
@@ -28,7 +29,7 @@ export function CardHeader({
   right,
   className,
 }: {
-  title: string;
+  title: ReactNode;
   right?: ReactNode;
   className?: string;
 }) {
@@ -55,11 +56,17 @@ export function StatTile({
   delay = 0,
   onClick,
   active = false,
+  money = false,
+  moneyValue = false,
 }: {
   /** Kept for existing callers; tiles no longer show an icon. */
   icon?: LucideIcon;
   label: string;
   value: string;
+  /** The value is an amount of money: hidden until the eye is pressed. */
+  money?: boolean;
+  /** Internal: render the value through Money (set by the money wrapper). */
+  moneyValue?: boolean;
   delta?: string;
   tone?: "up" | "down";
   delay?: number;
@@ -68,6 +75,15 @@ export function StatTile({
   /** The tile's filter is the one applied. */
   active?: boolean;
 }) {
+  if (money) {
+    // The eye sits beside the tile, not inside it, so a clickable tile is not a button within a button.
+    return (
+      <div className="relative min-w-0">
+        <StatTile label={label} value={value} delta={delta} tone={tone} delay={delay} onClick={onClick} active={active} moneyValue />
+        <AmountsToggle size="sm" className="absolute top-2 right-2 print:hidden" />
+      </div>
+    );
+  }
   if (onClick) {
     return (
       <button
@@ -79,24 +95,24 @@ export function StatTile({
         )}
         style={{ animationDelay: `${delay}ms` }}
       >
-        <StatTileBody label={label} value={value} delta={delta} tone={tone} />
+        <StatTileBody label={label} value={value} delta={delta} tone={tone} moneyValue={moneyValue} />
       </button>
     );
   }
   return (
     <FloatCard className="min-w-0 p-3.5 sm:px-4 sm:py-4" delay={delay}>
-      <StatTileBody label={label} value={value} delta={delta} tone={tone} />
+      <StatTileBody label={label} value={value} delta={delta} tone={tone} moneyValue={moneyValue} />
     </FloatCard>
   );
 }
 
-function StatTileBody({ label, value, delta, tone }: { label: string; value: string; delta?: string; tone: "up" | "down" }) {
+function StatTileBody({ label, value, delta, tone, moneyValue }: { label: string; value: string; delta?: string; tone: "up" | "down"; moneyValue?: boolean }) {
   return (
     <>
-      <span className="block text-[11px] leading-snug font-medium text-muted-foreground sm:text-xs">{label}</span>
+      <span className={cn("block text-[11px] leading-snug font-medium text-muted-foreground sm:text-xs", moneyValue && "pr-7")}>{label}</span>
       <div className="mt-2.5 flex flex-wrap items-end justify-between gap-x-2 gap-y-1 sm:mt-3">
         <span className="min-w-0 break-words text-xl leading-none font-semibold tracking-tight sm:text-3xl">
-          {value}
+          {moneyValue ? <Money>{value}</Money> : value}
         </span>
         {delta ? (
           <span

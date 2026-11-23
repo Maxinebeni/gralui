@@ -175,7 +175,7 @@ export function RenewalsView({ full = false }: { full?: boolean }) {
         <StatTile label="Due in 30 days" value={String(dueIn30)} onClick={() => setTab("Next 30 days")} active={tab === "Next 30 days"} />
         <StatTile label="Overdue" value={String(overdue)} delay={60} onClick={() => setTab("Overdue")} active={tab === "Overdue"} />
         <StatTile label="On track" value={String(onTrack)} delay={120} onClick={() => setTab("On track")} active={tab === "On track"} />
-        <StatTile label="Premium Due for Renewal (RWF)" value={`${(totalPremium / 1000000).toFixed(1)}M`} delay={180} onClick={() => setTab("All")} active={tab === "All"} />
+        <StatTile label="Premium due for renewal (RWF)" value={`${(totalPremium / 1000000).toFixed(1)}M`} delay={180} onClick={() => setTab("All")} active={tab === "All"} />
       </div>
       )}
 
