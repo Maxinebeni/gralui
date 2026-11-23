@@ -185,7 +185,7 @@ export function Shell({ children }: { children: ReactNode }) {
       >
         Skip to main content
       </a>
-      <div className="mx-auto w-full max-w-[1600px] px-3 pt-3 pb-4 sm:px-6 sm:py-6 lg:mx-0 lg:max-w-none lg:px-0">
+      <div className="w-full px-4 pt-5 pb-4 sm:px-6 sm:py-6 lg:px-0">
         <div className={cn("lg:grid lg:gap-3", sidebarCollapsed ? "lg:grid-cols-[76px_minmax(0,1fr)]" : "lg:grid-cols-[240px_minmax(0,1fr)]")}>
           <aside className="relative hidden lg:block print:hidden">
             <div className={cn("fixed inset-y-0 left-0 z-20 border-r border-border bg-card px-3 py-5", sidebarCollapsed ? "w-[76px]" : "w-[240px]")}>
@@ -219,7 +219,8 @@ export function Shell({ children }: { children: ReactNode }) {
             </div>
           </aside>
 
-          <div className="min-w-0 lg:max-w-[1800px] lg:px-3">
+          {/* Pages sit in a centred column with room at both sides, as they did before the sidebar. */}
+          <div className="mx-auto w-full min-w-0 max-w-[1320px] lg:px-8">
         <header className="flex min-w-0 items-center justify-between gap-3 print:hidden">
           <div className="flex min-w-0 items-center gap-2 lg:hidden">
             <button
@@ -333,7 +334,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main id="main" tabIndex={-1} className="mt-3 pb-12 outline-none sm:mt-4 sm:pb-24">{children}</main>
+        <main id="main" tabIndex={-1} className="mt-8 pb-12 outline-none sm:mt-10 sm:pb-24">{children}</main>
           </div>
         </div>
       </div>

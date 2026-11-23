@@ -414,7 +414,7 @@ export function PolicyForm({
         </Section>
       </div>
  
-      <div className="mt-6 flex justify-end gap-2">
+      <div className="mt-6 flex justify-between gap-2">
         <OutlineButton onClick={onCancel} className="px-4 py-2 text-sm">
           Cancel
         </OutlineButton>

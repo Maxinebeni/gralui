@@ -327,16 +327,19 @@ export function ActionForm({
           {error}
         </p>
       ) : null}
-      <div className="flex flex-wrap gap-2">
-        <NavyButton type="submit" disabled={busy || disabled || needsRefresh} className="px-4 py-2 text-sm">
-          {busy ? "Saving…" : attempt.uncertain ? "Retry same submission" : submitLabel}
-        </NavyButton>
-        {attempt.uncertain || needsRefresh ? <OutlineButton disabled={busy} onClick={async () => { if (onReconcile) { await onReconcile(); attempt.clear(); setNeedsRefresh(false); setError(null); } else window.location.reload(); }}>Refresh current state</OutlineButton> : null}
+      <div className="flex flex-wrap items-center gap-2">
         {onCancel ? (
           <OutlineButton onClick={onCancel} disabled={busy || attempt.uncertain || needsRefresh} className="px-4 py-2 text-sm">
             Cancel
           </OutlineButton>
         ) : null}
+        {/* The main action sits at the far end, away from Cancel. */}
+        <div className="ml-auto flex flex-wrap gap-2">
+          {attempt.uncertain || needsRefresh ? <OutlineButton disabled={busy} onClick={async () => { if (onReconcile) { await onReconcile(); attempt.clear(); setNeedsRefresh(false); setError(null); } else window.location.reload(); }}>Refresh current state</OutlineButton> : null}
+          <NavyButton type="submit" disabled={busy || disabled || needsRefresh} className="px-4 py-2 text-sm">
+            {busy ? "Saving…" : attempt.uncertain ? "Retry same submission" : submitLabel}
+          </NavyButton>
+        </div>
       </div>
     </form>
   );

@@ -225,11 +225,11 @@ function ClaimActionForm({
           </div>
         );
       })}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap justify-between gap-2">
+        <OutlineButton onClick={onCancel}>Cancel</OutlineButton>
         <NavyButton type="submit" disabled={saving}>
           {saving ? "Saving…" : "Save"}
         </NavyButton>
-        <OutlineButton onClick={onCancel}>Cancel</OutlineButton>
       </div>
     </form>
   );

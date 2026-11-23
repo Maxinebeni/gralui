@@ -279,13 +279,13 @@ function UploadForm({ parentBatchId, onClose, onDone }: { parentBatchId?: string
           {fileError ? <p className="mt-2 text-xs text-danger">{fileError}</p> : null}
         </div>
         <p className="text-[11px] text-subtle">Only synthetic data until GRAL confirms where the system is hosted.</p>
-        <div className="flex flex-wrap gap-2">
-          <NavyButton className="px-4 py-2 text-sm" disabled={step !== "idle"} onClick={submit}>
-            {step === "uploading" ? "Uploading…" : step === "checking" ? "Checking every row…" : "Upload and check"}
-          </NavyButton>
+        <div className="flex flex-wrap justify-between gap-2">
           <OutlineButton className="px-4 py-2 text-sm" onClick={onClose}>
             Cancel
           </OutlineButton>
+          <NavyButton className="px-4 py-2 text-sm" disabled={step !== "idle"} onClick={submit}>
+            {step === "uploading" ? "Uploading…" : step === "checking" ? "Checking every row…" : "Upload and check"}
+          </NavyButton>
         </div>
       </div>
     </div>
@@ -434,9 +434,9 @@ function BatchPage({ id, backHref, onUploadCorrected }: { id: string; backHref: 
             They become real clients and policies, and this cannot be undone from here. Rows that are blocked or need a decision stay in this list, so you can
             fix them and import them later.
           </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <NavyButton onClick={commit}>Yes, import them</NavyButton>
+          <div className="mt-3 flex flex-wrap justify-between gap-2">
             <OutlineButton onClick={() => setConfirming(false)}>Cancel</OutlineButton>
+            <NavyButton onClick={commit}>Yes, import them</NavyButton>
           </div>
         </FloatCard>
       ) : null}
@@ -857,13 +857,13 @@ function FixForm({ batch, row, lookups, onDone }: { batch: ImportBatch; row: Imp
           </span>
         </label>
       ) : null}
-      <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
-        <NavyButton type="submit" disabled={progress !== null}>
-          {progress ?? "Save change"}
-        </NavyButton>
+      <div className="flex flex-wrap items-center justify-between gap-2 sm:col-span-2">
         <OutlineButton onClick={onDone} disabled={progress !== null}>
           Cancel
         </OutlineButton>
+        <NavyButton type="submit" disabled={progress !== null}>
+          {progress ?? "Save change"}
+        </NavyButton>
       </div>
     </form>
   );

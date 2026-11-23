@@ -116,7 +116,7 @@ export function ReviewDialog({
           </label>
         ) : null}
 
-        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
           <OutlineButton onClick={onBack} className="px-4 py-2 text-sm">
             Go back and edit
           </OutlineButton>

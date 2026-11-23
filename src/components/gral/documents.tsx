@@ -126,7 +126,7 @@ export function UploadPreview({
           </div>
         </div>
 
-        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
           <OutlineButton onClick={onChooseAnother} className="px-4 py-2 text-sm">
             Choose another file
           </OutlineButton>

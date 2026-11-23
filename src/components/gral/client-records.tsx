@@ -190,7 +190,7 @@ function ContactForm({
         {input("email", "Email", "email", "name@company.rw")}
         {input("phone", "Phone", "tel", "+250 788 123 456")}
       </Section>
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-between gap-2">
         <OutlineButton onClick={onCancel} disabled={saving}>
           Cancel
         </OutlineButton>
@@ -360,7 +360,7 @@ function InteractionForm({
           />
         </Field>
       </Section>
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-between gap-2">
         <OutlineButton onClick={onCancel} disabled={saving}>
           Cancel
         </OutlineButton>

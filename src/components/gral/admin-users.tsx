@@ -188,21 +188,24 @@ export function UserPanel({
               from here.
             </p>
             {confirming ? (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">Deactivate {u.fullName}?</span>
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={async () => {
-                    if (await act(() => deactivateUser(u), `${u.fullName} was deactivated.`)) setConfirming(false);
-                  }}
-                  className="rounded-full bg-danger px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
-                >
-                  Yes, deactivate
-                </button>
-                <OutlineButton className="px-4 py-2 text-sm" onClick={() => setConfirming(false)}>
-                  Cancel
-                </OutlineButton>
+              <div className="mt-3 space-y-2">
+                <p className="text-sm font-medium">Deactivate {u.fullName}?</p>
+                {/* Cancel on the left, the confirming action on the far right, so they are not side by side. */}
+                <div className="flex flex-wrap justify-between gap-2">
+                  <OutlineButton className="px-4 py-2 text-sm" onClick={() => setConfirming(false)}>
+                    Cancel
+                  </OutlineButton>
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={async () => {
+                      if (await act(() => deactivateUser(u), `${u.fullName} was deactivated.`)) setConfirming(false);
+                    }}
+                    className="rounded-full bg-danger px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+                  >
+                    Yes, deactivate
+                  </button>
+                </div>
               </div>
             ) : (
               <OutlineButton className="mt-3 px-4 py-2 text-sm" onClick={() => setConfirming(true)}>
@@ -394,7 +397,7 @@ export function InviteUserForm({
         </Section>
       </div>
 
-      <div className="sticky bottom-0 flex justify-end gap-2 border-t border-border bg-card px-6 py-4">
+      <div className="sticky bottom-0 flex justify-between gap-2 border-t border-border bg-card px-6 py-4">
         <OutlineButton onClick={onClose} className="px-4 py-2 text-sm">
           Cancel
         </OutlineButton>

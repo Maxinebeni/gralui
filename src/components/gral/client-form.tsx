@@ -331,7 +331,7 @@ export function ClientFormPanel({
         </Section>
       </div>
 
-      <div className="sticky bottom-0 flex justify-end gap-2 border-t border-border bg-card px-6 py-4">
+      <div className="sticky bottom-0 flex justify-between gap-2 border-t border-border bg-card px-6 py-4">
         <OutlineButton onClick={onClose} className="px-4 py-2 text-sm">
           Cancel
         </OutlineButton>

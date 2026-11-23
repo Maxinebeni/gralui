@@ -221,11 +221,11 @@ function ActionForm({
           target={typeof values.target === "string" ? values.target : ""}
         />
       ))}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap justify-between gap-2">
+        <OutlineButton onClick={onCancel}>Cancel</OutlineButton>
         <NavyButton type="submit" disabled={saving}>
           {saving ? "Saving…" : spec.fields.length ? "Save" : spec.label}
         </NavyButton>
-        <OutlineButton onClick={onCancel}>Cancel</OutlineButton>
       </div>
     </form>
   );
