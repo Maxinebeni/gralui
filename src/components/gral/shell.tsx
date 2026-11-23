@@ -411,7 +411,7 @@ function SidebarBrand({ home }: { home: string }) {
     <div className="min-w-0 flex-1 px-1 py-2">
       <Link href={home} aria-label="Global Risk Advisors Ltd, go to the home page" className="flex w-full items-center rounded-2xl bg-card p-1.5 focus-visible:outline-none">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/gral-logo.png" alt="" className="h-auto w-[150px] max-w-full" />
+        <img src="/gral-logo.png" alt="" className="h-auto w-[120px] max-w-full" />
       </Link>
     </div>
   );
