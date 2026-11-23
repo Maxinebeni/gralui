@@ -177,6 +177,12 @@ const TYPE_FROM_BACKEND: Record<BackendClientType, ClientType> = {
   SME: "SME",
 };
 
+/** A backend client type code (e.g. STATE_ENTERPRISE) in words; UNKNOWN for clients without one. */
+export function clientTypeLabel(code: string): string {
+  if (code === "UNKNOWN") return "Not recorded";
+  return TYPE_FROM_BACKEND[code as BackendClientType] ?? code.charAt(0) + code.slice(1).toLowerCase().replace(/_/g, " ");
+}
+
 type BackendContact = { name: string; jobTitle: string; email: string; phone: string };
 
 type ClientView = {
@@ -422,7 +428,7 @@ export async function listClients(query = ""): Promise<Client[]> {
         }
         let kycGateStatus = "NOT_STARTED";
         try {
-          const kyc = await readOnboarding<KycGate>(`/api/v1/clients/${s.id}/kyc-summary`, "Could not load the KYC summary.");
+          const kyc = await kycSummary(s.id);
           kycGateStatus = kyc?.gateStatus ?? "NOT_STARTED";
           client.kycStatus = kyc?.status ?? "NOT_STARTED";
         } catch (err) {
@@ -2197,6 +2203,27 @@ async function toBackendApproval(h: BackendApprovalHistory, inInbox = false): Pr
   };
 }
 
+/**
+ * KYC summaries, remembered for two minutes per client so moving between pages
+ * does not ask for every client's summary again. A KYC action clears them.
+ */
+const KYC_SUMMARIES = new Map<string, { at: number; value: Promise<KycGate | null> }>();
+const KYC_SUMMARY_MS = 2 * 60_000;
+function kycSummary(clientId: string): Promise<KycGate | null> {
+  const hit = KYC_SUMMARIES.get(clientId);
+  if (hit && Date.now() - hit.at < KYC_SUMMARY_MS) return hit.value;
+  const value = readOnboarding<KycGate>(`/api/v1/clients/${clientId}/kyc-summary`, "Could not load the KYC summary.");
+  KYC_SUMMARIES.set(clientId, { at: Date.now(), value });
+  value.catch(() => KYC_SUMMARIES.delete(clientId));
+  return value;
+}
+export function forgetKycSummaries() {
+  KYC_SUMMARIES.clear();
+}
+
+/** Approvals already read, by id: the history is read again only when the request's version changes. */
+const APPROVAL_LIST_CACHE = new Map<string, { version: number; approval: ApprovalRequest }>();
+
 async function approvalHistory(id: string): Promise<BackendApprovalHistory> {
   const res = await apiFetch(`/api/v1/approvals/${id}/history?size=100`);
   if (!res.ok) throw new Error(await approvalProblem(res, "Could not load this approval request."));
@@ -2220,6 +2247,8 @@ async function listBackendApprovals(): Promise<ApprovalRequest[]> {
     if (!res.ok) return [];
     const items = ((await res.json()) as Page<BackendApprovalView>).items ?? [];
     return await mapLimited(items, 4, async (v) => {
+      const known = APPROVAL_LIST_CACHE.get(v.id);
+      if (known && known.version === v.version) return known.approval;
       const history = await approvalHistory(v.id).catch(() => ({ request: v, steps: [], decisions: [] }));
       const mapped = await toBackendApproval(history, true);
       BACKEND_APPROVALS.set(mapped.id, mapped);
@@ -2229,6 +2258,7 @@ async function listBackendApprovals(): Promise<ApprovalRequest[]> {
         id: v.subjectId,
         purpose: step?.evidencePurpose || "APPROVAL_EVIDENCE",
       });
+      if (history.steps.length) APPROVAL_LIST_CACHE.set(v.id, { version: v.version, approval: mapped });
       return mapped;
     });
   } catch (err) {
@@ -3180,6 +3210,8 @@ async function onboardingProblem(res: Response, fallback: string): Promise<strin
 async function sendOnboarding<T>(method: "POST" | "PUT", path: string, body: unknown, fallback: string, attempt?: CommandAttempt): Promise<T> {
   const request = attempt ? attempt.value(`request:${path}`, () => JSON.stringify(body)) : JSON.stringify(body);
   let res: Response;
+  // Any KYC or onboarding change can change a client's KYC summary.
+  if (/kyc|onboarding/.test(path)) forgetKycSummaries();
   try { res = await apiFetch(path, { method, body: request }); }
   catch (error) { if (attempt) attempt.uncertain = true; throw error; }
   if (!res.ok) {

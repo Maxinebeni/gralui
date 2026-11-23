@@ -19,6 +19,7 @@ import {
   listRenewals,
   listTasks,
 } from "./api";
+import { getOperationsDashboard } from "./operations-dashboard";
 import { queryKeys } from "./query";
 
 /** Every client with all their policies, for reports. Refreshed with the client lists. */
@@ -34,6 +35,15 @@ export function useClaimsWithOutcomes(enabled = true) {
     queryFn: async () => listClaimsWithOutcomes(await queryClient.fetchQuery({ queryKey: queryKeys.claims, queryFn: () => listClaims() })),
     enabled,
   });
+}
+
+/**
+ * TC's dashboard summary for the Overview (real backend only). Refreshed at most
+ * once a minute, as the backend asks; a failure is not retried here (the
+ * request already retries once when the server is busy).
+ */
+export function useOperationsDashboard(enabled = true) {
+  return useQuery({ queryKey: ["dashboard", "operations"] as const, queryFn: () => getOperationsDashboard(), enabled, staleTime: 60_000, retry: false });
 }
 
 export function useClaims(enabled = true) {
@@ -81,7 +91,8 @@ export function useRefresh() {
   const queryClient = useQueryClient();
   return useCallback(
     (...lists: ListName[]) => {
-      for (const name of new Set([...lists, "tasks", "inbox"])) void queryClient.invalidateQueries({ queryKey: [name] });
+      // The dashboard counts clients, policies, renewals and claims, so it follows any change.
+      for (const name of new Set([...lists, "tasks", "inbox", "dashboard"])) void queryClient.invalidateQueries({ queryKey: [name] });
     },
     [queryClient],
   );

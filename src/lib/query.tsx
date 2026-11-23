@@ -33,9 +33,13 @@ export function QueryProvider({ children }: { children: ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            // Data younger than this is shown without asking the backend again.
-            staleTime: 20_000,
-            refetchOnWindowFocus: true,
+            // Data younger than this is shown without asking the backend again, so
+            // moving between pages reuses what is loaded. After any change the
+            // affected lists are refreshed straight away (useRefresh), so this
+            // only decides how often unchanged data is re-checked.
+            staleTime: 2 * 60_000,
+            // Switching back to the browser tab does not reload every list.
+            refetchOnWindowFocus: false,
             retry: 1,
           },
         },

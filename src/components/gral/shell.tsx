@@ -73,26 +73,25 @@ export function Shell({ children }: { children: ReactNode }) {
   // The bell has two parts: "To do" (approvals to decide and this person's own
   // tasks, each opening its record) and "Updates" (the backend's notification
   // inbox, pushed live over the socket). All three come from the shared cache:
-  // checked every 30 seconds, when the tab gets focus, and on page changes when
-  // older than 15 seconds.
+  // checked every minute, and on page changes when older than a minute.
   const queryClient = useQueryClient();
   const approvalsQuery = useQuery({
     queryKey: queryKeys.approvals(user.role),
     queryFn: () => listApprovals(),
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   });
   const tasksQuery = useQuery({
     queryKey: queryKeys.tasks(user.role),
     queryFn: () => listTasks(approvalsQuery.data),
     enabled: approvalsQuery.isSuccess,
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   });
   const inboxKey = useMemo(() => queryKeys.inbox(user.id ?? user.email), [user.id, user.email]);
   const inboxQuery = useQuery({
     queryKey: inboxKey,
     queryFn: getNotificationInbox,
     enabled: MOCK_AUTH || !!user.id,
-    refetchInterval: 30_000,
+    refetchInterval: 60_000,
   });
 
   // Approvals waiting for this person, shown as a count in the menus.
@@ -107,10 +106,10 @@ export function Shell({ children }: { children: ReactNode }) {
   const notifications = inboxQuery.data?.items ?? [];
   const unreadNotificationCount = inboxQuery.data?.unreadCount ?? 0;
 
-  // After a page change, finished work should drop off soon.
+  // After a page change, finished work drops off if the list is over a minute old.
   const { refetch: refetchApprovals, dataUpdatedAt: approvalsAt } = approvalsQuery;
   useEffect(() => {
-    if (Date.now() - approvalsAt > 15_000) void refetchApprovals();
+    if (Date.now() - approvalsAt > 60_000) void refetchApprovals();
   }, [pathname]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refreshNotifications = useCallback(async () => {

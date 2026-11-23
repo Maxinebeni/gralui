@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/gral/shell";
 import { Chip, FloatCard } from "@/components/gral/ui";
 import { useCurrentUser } from "@/lib/auth-context";
 import { initials } from "@/lib/format";
+import { ChangePassword } from "./change-password";
 import { TwoStepLogin } from "./two-step-login";
 
 /** CLAIMS_MANAGER → Claims Manager */
@@ -59,6 +60,7 @@ export function SettingsView() {
           </dl>
         </FloatCard>
 
+        <ChangePassword />
         <TwoStepLogin />
 
         <FloatCard className="p-5 sm:p-6">

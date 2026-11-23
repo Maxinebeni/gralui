@@ -3,6 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { KycBadge } from "@/components/gral/kyc-badge";
@@ -12,6 +13,7 @@ import {
   Chip,
   DistributionRow,
   FloatCard,
+  Loader,
   NavyButton,
   Person,
   SegmentedTabs,
@@ -20,8 +22,9 @@ import {
 } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
 import { formatRwf, timeAgo } from "@/lib/format";
-import { activityFrom, toClaimSummary } from "@/lib/api";
-import { useClaims, useClients, useRenewals } from "@/lib/queries";
+import { MOCK_AUTH, activityFrom, toClaimSummary } from "@/lib/api";
+import { claimStateLabel, getDashboardList, type DashboardItem, type DashboardMetric, type OperationsDashboard } from "@/lib/operations-dashboard";
+import { useClaims, useClients, useOperationsDashboard, useRenewals } from "@/lib/queries";
 import { isClosed } from "@/lib/claims";
 import { useCurrentUser } from "@/lib/auth-context";
 import { canAccessPath } from "@/lib/permissions";
@@ -171,6 +174,11 @@ export function OverviewView() {
   const clients: Client[] = useMemo(() => clientsQuery.data ?? [], [clientsQuery.data]);
   const renewals: RenewalCase[] = useMemo(() => (canRenewals ? (renewalsQuery.data ?? []) : []), [canRenewals, renewalsQuery.data]);
 
+  // Real backend: tiles and cards from TC's dashboard (one request). Demo, or a
+  // dashboard that cannot be read: worked out from the lists, as before.
+  const dashboardQuery = useOperationsDashboard(!MOCK_AUTH && (canClaims || canRenewals || canClients));
+  const live = dashboardQuery.data;
+
   const views = VIEWS.filter((v) => (v === "Renewals" ? canRenewals : v === "Clients" ? canClients : canClaims));
   const preferred: View = CLAIMS_FIRST.includes(role as Role) ? "Claims" : "Renewals";
   const [picked, setPicked] = useState<View | null>(null);
@@ -212,9 +220,9 @@ export function OverviewView() {
         </div>
       ) : null}
 
-      {view === "Renewals" ? <RenewalsView clients={clients} /> : null}
-      {view === "Clients" ? <ClientsView clients={clients} /> : null}
-      {view === "Claims" ? <ClaimsView claims={allClaims} /> : null}
+      {view === "Renewals" ? live ? <LiveRenewalsView d={live} /> : <RenewalsView clients={clients} /> : null}
+      {view === "Clients" ? live ? <LiveClientsView d={live} clients={clients} /> : <ClientsView clients={clients} /> : null}
+      {view === "Claims" ? live ? <LiveClaimsView d={live} /> : <ClaimsView claims={allClaims} /> : null}
 
       {!view ? (
         <FloatCard className="mt-5 p-5" delay={60}>
@@ -284,7 +292,7 @@ export function OverviewView() {
         </Row>
       ) : null}
 
-      {view === "Claims" ? <SettledChart claims={allClaims} /> : null}
+      {view === "Claims" ? live ? <LiveSettledChart d={live} /> : <SettledChart claims={allClaims} /> : null}
     </>
   );
 }
@@ -772,6 +780,323 @@ function SettledChart({ claims }: { claims: Claim[] }) {
               cursor="pointer"
               onClick={(bar: { payload?: { key?: string } }) => {
                 if (bar.payload?.key) router.replace(showHref(`settled:${bar.payload.key}`), { scroll: false });
+              }}
+            />
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartCard>
+    </div>
+  );
+}
+
+/* ------------------------ Live figures (TC's dashboard) ------------------------ */
+// With the real backend the tiles and cards come from one dashboard request, and
+// a figure's records are read from the server only when it is opened. Demo mode
+// and a dashboard that cannot be read use the views above, worked out in the browser.
+
+const fig = (n: number | null) => (n === null ? "–" : n);
+const liveHref = (metric: DashboardMetric, select?: string) => showHref(`live:${metric}${select ? `:${select}` : ""}`);
+const monthKey = (iso: string) => iso.slice(0, 7);
+const monthName = (key: string) =>
+  new Date(`${key}-01T00:00:00Z`).toLocaleDateString("en-GB", { month: "short", year: "numeric", timeZone: "UTC" });
+
+const LIVE_TITLES: Record<DashboardMetric, string> = {
+  ACTIVE_CLIENTS: "Clients with an active policy",
+  NEW_CLIENTS: "New clients this month",
+  CLIENTS_WITHOUT_ACTIVE_POLICY: "Clients with no active policy",
+  SLA_EXPIRING_0_30: "Service agreements ending in the next 30 days",
+  SLA_EXPIRING_31_60: "Service agreements ending in 31-60 days",
+  ACTIVE_POLICIES: "Active policies",
+  POLICIES_EXPIRING_0_30: "Expiring in the next 30 days",
+  POLICIES_EXPIRING_31_60: "Expiring in 31-60 days",
+  OVERDUE_RENEWALS: "Overdue renewals",
+  OVERDUE_PAYMENTS: "Overdue payments",
+  OPEN_CLAIMS: "Open claims",
+  CLAIMS_OPENED_THIS_MONTH: "Claims opened this month",
+  CLAIMS_AGED_OVER_30_DAYS: "Claims open more than 30 days",
+  CLAIMS_BY_STATE: "Claims",
+  CLAIMS_SETTLED: "Claims settled",
+};
+
+const isClaimMetric = (m: DashboardMetric) => m.includes("CLAIM");
+const isClientMetric = (m: DashboardMetric) => m.includes("CLIENT") || m.startsWith("SLA");
+const itemClientHref = (i: DashboardItem) => (i.clientReference ? clientHref(i.clientReference) : "/clients");
+const itemHref = (m: DashboardMetric, i: DashboardItem) =>
+  isClaimMetric(m) && i.reference ? `/claims?claim=${encodeURIComponent(i.reference)}` : itemClientHref(i);
+const daysFromToday = (iso?: string | null) => (iso ? daysBetween(todayIso(), iso.slice(0, 10)) : 0);
+
+/** The records behind one live figure, a page at a time. */
+function LiveRecords({ metric, select, size = 20, preview = false }: { metric: DashboardMetric; select?: string; size?: number; preview?: boolean }) {
+  const options = metric === "CLAIMS_BY_STATE" ? { state: select } : metric === "CLAIMS_SETTLED" ? { month: select } : {};
+  const query = useInfiniteQuery({
+    queryKey: ["dashboard", "list", metric, select ?? "", size],
+    queryFn: ({ pageParam }) => getDashboardList(metric, { ...options, size, cursor: pageParam }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => (last.hasMore ? (last.nextCursor ?? null) : null),
+    staleTime: 60_000,
+    retry: false,
+  });
+  if (query.isPending) return <Loader label="Loading" />;
+  if (query.error) return <Empty>{query.error instanceof Error ? query.error.message : "Could not load the records."}</Empty>;
+  const items = query.data.pages.flatMap((p) => p.items);
+  const claim = isClaimMetric(metric);
+  const client = isClientMetric(metric);
+  const money = metric === "OVERDUE_PAYMENTS";
+  return (
+    <>
+      <Rows
+        head={
+          claim
+            ? ["Claim", "Client", "Product", "Reported", "Status"]
+            : client
+              ? ["Client", "Reference", metric.startsWith("SLA") ? "Agreement ends" : "Date"]
+              : ["Client", "Policy number", "Product", money ? "Balance" : "Expiry date", ""]
+        }
+        rows={items}
+        cols={claim ? CLAIM_COLS : client ? "minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)" : POLICY_COLS}
+        cells={(i) =>
+          claim
+            ? [i.reference ?? "–", i.clientName ?? "–", i.product ?? "–", i.date ? formatDate(i.date.slice(0, 10)) : "–", <Chip key="s">{claimStateLabel(i.state ?? "")}</Chip>]
+            : client
+              ? [i.clientName ?? "–", i.clientReference ?? "–", i.date ? formatDate(i.date.slice(0, 10)) : "–"]
+              : [
+                  i.clientName ?? "–",
+                  i.reference ?? "–",
+                  i.product ?? "–",
+                  money ? <span key="b" className="font-medium">{formatRwf(i.balance ?? 0)}</span> : i.date ? formatDate(i.date.slice(0, 10)) : "–",
+                  money ? null : i.missingRenewalCase ? <Chip key="m" tone="warning">No renewal case</Chip> : <DaysChip key="d" days={daysFromToday(i.date)} />,
+                ]
+        }
+        href={(i) => itemHref(metric, i)}
+        empty="None."
+      />
+      {!preview && query.hasNextPage ? (
+        <OutlineButtonLike onClick={() => void query.fetchNextPage()} busy={query.isFetchingNextPage} />
+      ) : null}
+    </>
+  );
+}
+
+function OutlineButtonLike({ onClick, busy }: { onClick: () => void; busy: boolean }) {
+  return (
+    <button type="button" onClick={onClick} disabled={busy} className="mt-4 rounded-full border border-border bg-card px-4 py-2 text-xs font-medium hover:bg-secondary disabled:opacity-50">
+      {busy ? "Loading…" : "Load more"}
+    </button>
+  );
+}
+
+/** Opens the records behind a live figure (?show=live:METRIC or live:METRIC:SELECTION). */
+function LiveDrillPanel() {
+  const router = useRouter();
+  const show = useSearchParams().get("show");
+  const [, metric, select] = show?.startsWith("live:") ? (show.split(":") as [string, DashboardMetric, string?]) : [];
+  const close = () => router.replace("/", { scroll: false });
+  const title = !metric
+    ? ""
+    : metric === "CLAIMS_BY_STATE" && select
+      ? `Claims: ${claimStateLabel(select).toLowerCase()}`
+      : metric === "CLAIMS_SETTLED" && select
+        ? `Claims settled in ${monthName(select)}`
+        : LIVE_TITLES[metric];
+  return (
+    <SlideOver open={!!metric} onClose={close}>
+      {metric ? (
+        <div>
+          <div className="flex items-start justify-between gap-3 border-b border-border px-5 pt-7 pb-5 sm:px-8">
+            <h2 className="min-w-0 text-lg font-semibold tracking-tight">{title}</h2>
+            <button type="button" aria-label="Close" onClick={close} className="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground hover:text-foreground">
+              <X className="size-4" />
+            </button>
+          </div>
+          <div className="px-5 py-5 sm:px-8">
+            <LiveRecords metric={metric} select={select} />
+          </div>
+        </div>
+      ) : null}
+    </SlideOver>
+  );
+}
+
+function LiveRenewalsView({ d }: { d: OperationsDashboard }) {
+  const r = d.renewals;
+  const due30 = r.expiringSoon.filter((i) => daysFromToday(i.date) <= 30);
+  const due60 = r.expiringSoon.filter((i) => daysFromToday(i.date) > 30);
+  const policyItemCells = (i: DashboardItem) => [i.clientName ?? "–", i.reference ?? "–", i.product ?? "–", i.date ? formatDate(i.date.slice(0, 10)) : "–", <DaysChip key="d" days={daysFromToday(i.date)} />];
+  const empty = due30.length + due60.length + r.unresolvedExpiries.length === 0;
+  return (
+    <>
+      <Tiles
+        items={[
+          { label: "Total active policies", value: fig(r.activePolicies), href: liveHref("ACTIVE_POLICIES") },
+          { label: "Expiring in next 30 days", value: fig(r.expiring0To30Days), href: liveHref("POLICIES_EXPIRING_0_30") },
+          { label: "Expiring in 31-60 days", value: fig(r.expiring31To60Days), href: liveHref("POLICIES_EXPIRING_31_60") },
+          { label: "Overdue renewals", value: fig(r.unresolvedExpired), href: liveHref("OVERDUE_RENEWALS") },
+          { label: "Overdue payments", value: fig(r.overduePayments), href: liveHref("OVERDUE_PAYMENTS") },
+        ]}
+      />
+      <LiveDrillPanel />
+      <div className={cn("mt-3 grid gap-3 sm:gap-4", !empty && "xl:grid-cols-2")}>
+        {empty ? (
+          <SectionCard title="Policy renewals">
+            <Empty>No policy expiries to show.</Empty>
+          </SectionCard>
+        ) : null}
+        {due30.length > 0 ? (
+          <SectionCard title="Expiring in the next 30 days" delay={120}>
+            <Rows head={POLICY_HEAD} rows={due30} cols={POLICY_COLS} cells={policyItemCells} href={itemClientHref} empty="None." />
+          </SectionCard>
+        ) : null}
+        {r.unresolvedExpiries.length > 0 ? (
+          <SectionCard title="Overdue renewals" delay={160}>
+            <SideList
+              rows={r.unresolvedExpiries}
+              title={(i) => i.clientName ?? "–"}
+              chip={(i) => (i.missingRenewalCase ? <Chip tone="warning">No renewal case</Chip> : <DaysChip days={daysFromToday(i.date)} />)}
+              detail={(i) => `${i.reference ?? ""} · ${i.product ?? ""} · expired ${i.date ? formatDate(i.date.slice(0, 10)) : ""}`}
+              href={itemClientHref}
+              empty="None."
+            />
+          </SectionCard>
+        ) : null}
+        {due60.length > 0 ? (
+          <SectionCard title="Expiring in 31-60 days" delay={200}>
+            <Rows head={POLICY_HEAD} rows={due60} cols={POLICY_COLS} cells={policyItemCells} href={itemClientHref} empty="None." />
+          </SectionCard>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+function LiveClientsView({ d, clients }: { d: OperationsDashboard; clients: Client[] }) {
+  const c = d.clients;
+  const categories = Object.entries(c.byCategory)
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count);
+  // Document completeness is not in the dashboard, so it still comes from the client list.
+  const completeFiles = clients.filter((x) => x.docsFiled === x.docsTotal && !x.nonCompliant).length;
+  const nonCompliant = clients.filter((x) => x.nonCompliant).length;
+  return (
+    <>
+      <Tiles
+        items={[
+          { label: "Clients with an active policy", value: fig(c.active), href: liveHref("ACTIVE_CLIENTS") },
+          { label: "New clients this month", value: fig(c.newThisMonth), href: liveHref("NEW_CLIENTS") },
+          { label: "Clients with no active policy", value: fig(c.withoutActivePolicy), href: liveHref("CLIENTS_WITHOUT_ACTIVE_POLICY") },
+          { label: "Service agreements ending in 30 days", value: fig(c.slaExpiring0To30Days), href: liveHref("SLA_EXPIRING_0_30") },
+        ]}
+      />
+      <LiveDrillPanel />
+      <Row>
+        <SectionCard title="Top clients by premium" delay={120}>
+          <Rows
+            head={["#", "Client", "Product", "Premium"]}
+            rows={c.topByPremium.map((t, i) => ({ ...t, rank: i + 1 }))}
+            cols="2rem minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)"
+            cells={(t) => [t.rank, t.clientName ?? "–", t.product ?? "–", <span key="p" className="font-medium">{t.premium === null || t.premium === undefined ? "Not recorded" : formatRwf(t.premium)}</span>]}
+            href={itemClientHref}
+            empty="None."
+          />
+        </SectionCard>
+        <div className="min-w-0 space-y-3 sm:space-y-4">
+          <SectionCard title="Clients by category" delay={160}>
+            {categories.length ? <StageBar wideLabels stages={categories} /> : <Empty>None.</Empty>}
+          </SectionCard>
+          <SectionCard title="Client file status" delay={200}>
+            <DistributionRow
+              items={[
+                { label: "Complete", value: String(completeFiles), tone: "success" },
+                { label: "Partial", value: String(clients.length - completeFiles - nonCompliant), tone: "warning" },
+                { label: "Non-compliant", value: String(nonCompliant), tone: "danger" },
+              ]}
+            />
+          </SectionCard>
+        </div>
+      </Row>
+      {c.withoutActivePolicy ? (
+        <div className="mt-3">
+          <SectionCard title="Clients with no active policy" delay={200}>
+            <LiveRecords metric="CLIENTS_WITHOUT_ACTIVE_POLICY" size={5} preview />
+            {c.withoutActivePolicy > 5 ? (
+              <div className="mt-3 border-t border-border pt-3 text-right">
+                <Link href={liveHref("CLIENTS_WITHOUT_ACTIVE_POLICY")} scroll={false} className="text-xs font-medium text-primary underline-offset-4 hover:underline">
+                  View all {c.withoutActivePolicy} clients
+                </Link>
+              </div>
+            ) : null}
+          </SectionCard>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function LiveClaimsView({ d }: { d: OperationsDashboard }) {
+  const router = useRouter();
+  const k = d.claims;
+  const thisMonth = monthKey(todayIso());
+  const states = Object.entries(k.byState)
+    .filter(([state, n]) => state !== "CLOSED" && n > 0)
+    .map(([state, count]) => ({ state, label: claimStateLabel(state), count }));
+  return (
+    <>
+      <Tiles
+        items={[
+          { label: "Total open claims", value: fig(k.open), href: liveHref("OPEN_CLAIMS") },
+          { label: "Claims opened this month", value: fig(k.openedThisMonth), href: liveHref("CLAIMS_OPENED_THIS_MONTH") },
+          { label: "Claims settled this month", value: k.settledByMonth[thisMonth] ?? 0, href: liveHref("CLAIMS_SETTLED", thisMonth) },
+          { label: "Open more than 30 days", value: fig(k.agedOver30Days), href: liveHref("CLAIMS_AGED_OVER_30_DAYS") },
+        ]}
+      />
+      <LiveDrillPanel />
+      <div className={cn("mt-3 grid items-start gap-3 sm:gap-4", k.agedOver30Days ? "xl:grid-cols-[minmax(0,1fr)_380px]" : "")}>
+        {k.agedOver30Days ? (
+          <SectionCard title="Claims open more than 30 days" delay={120}>
+            <LiveRecords metric="CLAIMS_AGED_OVER_30_DAYS" size={10} preview />
+          </SectionCard>
+        ) : null}
+        <SectionCard title="Claims by status" delay={160}>
+          {states.length ? (
+            <StageBar
+              wideLabels
+              stages={states.map(({ label, count }) => ({ label, count }))}
+              onSelect={(label) => {
+                const s = states.find((x) => x.label === label);
+                if (s) router.replace(liveHref("CLAIMS_BY_STATE", s.state), { scroll: false });
+              }}
+            />
+          ) : (
+            <Empty>No open claims.</Empty>
+          )}
+        </SectionCard>
+      </div>
+    </>
+  );
+}
+
+/** Settled claims per month from the dashboard: the last six months. */
+function LiveSettledChart({ d }: { d: OperationsDashboard }) {
+  const router = useRouter();
+  const months = Object.keys(d.claims.settledByMonth).sort().slice(-6);
+  const data = months.map((key) => ({ key, month: monthName(key), count: d.claims.settledByMonth[key] ?? 0 }));
+  return (
+    <div className="mt-3 sm:mt-4">
+      <ChartCard delay={380} title="Claims settled per month" legend={[]} height={200}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={data} margin={{ top: 4, right: 8, left: -24, bottom: 0 }}>
+            <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" vertical={false} />
+            <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
+            <Tooltip cursor={{ fill: "var(--secondary)" }} contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", fontSize: 11 }} />
+            <Bar
+              dataKey="count"
+              name="Claims settled"
+              fill="var(--primary)"
+              radius={[6, 6, 0, 0]}
+              maxBarSize={36}
+              cursor="pointer"
+              onClick={(bar: { payload?: { key?: string } }) => {
+                if (bar.payload?.key) router.replace(liveHref("CLAIMS_SETTLED", bar.payload.key), { scroll: false });
               }}
             />
           </BarChart>
