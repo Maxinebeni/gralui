@@ -1,12 +1,14 @@
 "use client";
 
 // Settings: the signed-in person's own account and keyboard shortcuts.
-// Passwords are changed from "Forgot password" on the sign-in page.
+// Passwords are changed from "Forgot password" on the sign-in page. Two-step
+// login (an authenticator app code after the password) is set up here.
 
 import { PageHeader } from "@/components/gral/shell";
 import { Chip, FloatCard } from "@/components/gral/ui";
 import { useCurrentUser } from "@/lib/auth-context";
 import { initials } from "@/lib/format";
+import { TwoStepLogin } from "./two-step-login";
 
 /** CLAIMS_MANAGER → Claims Manager */
 function roleLabel(code: string) {
@@ -56,6 +58,8 @@ export function SettingsView() {
             </div>
           </dl>
         </FloatCard>
+
+        <TwoStepLogin />
 
         <FloatCard className="p-5 sm:p-6">
           <h2 className="text-base font-semibold tracking-tight">Shortcuts</h2>

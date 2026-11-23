@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { MOCK_AUTH, getCurrentUser, setDemoRole, signIn as apiSignIn, signOut as apiSignOut } from "./api";
+import { MOCK_AUTH, confirmSignInSetup, getCurrentUser, setDemoRole, signIn as apiSignIn, signOut as apiSignOut, verifySignInCode } from "./api";
 import { ROLES, type Role, type SessionUser } from "./types";
 
 // The backend keeps the login in a SESSION cookie. On load we ask the backend
@@ -36,7 +36,12 @@ type AuthState = {
   sessionExpired: boolean;
   /** False until the backend has said who is signed in. */
   ready: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
+  /** Resolves with a challenge when the account uses two-step login; finish it with finishSignIn. */
+  signIn: (email: string, password: string) => Promise<{ challengeId: string; expiresAt: number; setupFirst: boolean } | null>;
+  /** Second step of a two-step sign-in: the code from the authenticator app, or a recovery code. */
+  finishSignIn: (challengeId: string, code: string) => Promise<void>;
+  /** Set-up during sign-in: the first code from the new app signs in. Returns the one-time recovery codes. */
+  finishSetupAtSignIn: (challengeId: string, code: string) => Promise<string[]>;
   signOut: () => Promise<void>;
   /** Demo-only role switcher from the design's "Role:" pill. */
   setRole: (r: Role) => void;
@@ -126,10 +131,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ready,
       roles: ROLES,
       signIn: async (email, password) => {
-        const signedIn = await apiSignIn(email, password);
+        const result = await apiSignIn(email, password);
+        if (result.kind === "code-needed") return { challengeId: result.challengeId, expiresAt: result.expiresAt, setupFirst: result.setupFirst };
+        setUser(result.user);
+        setSessionExpired(false);
+        writeDemoSession(result.user);
+        return null;
+      },
+      finishSignIn: async (challengeId, code) => {
+        const signedIn = await verifySignInCode(challengeId, code);
         setUser(signedIn);
         setSessionExpired(false);
-        writeDemoSession(signedIn);
+      },
+      finishSetupAtSignIn: async (challengeId, code) => {
+        const { user: signedIn, recoveryCodes } = await confirmSignInSetup(challengeId, code);
+        setUser(signedIn);
+        setSessionExpired(false);
+        return recoveryCodes;
       },
       signOut: async () => {
         // Clear the screen straight away, then end the session on the backend.
