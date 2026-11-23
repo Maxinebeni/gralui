@@ -14,23 +14,21 @@ import { ALL_OPTION, FilterMenu, optionsFrom } from "@/components/gral/filter-me
 import { KycBadge } from "@/components/gral/kyc-badge";
 import { usePaged } from "@/components/gral/pager";
 import { SlideOver } from "@/components/gral/shell";
-import { Chip, Loader, NotRecorded, Person, Recorded, TextLink } from "@/components/gral/ui";
+import { Chip, Loader, NotRecorded, Recorded, TextLink } from "@/components/gral/ui";
 import { downloadCsv } from "@/lib/csv";
 import { useClients, useRefresh } from "@/lib/queries";
 import type { Client } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-export const CLIENT_TABS = ["All", "KYC Pending", "Missing Docs", "Non-Compliant"] as const;
-/** "KYC Complete" has no tab; its summary tile sets it. */
-export type ClientTab = (typeof CLIENT_TABS)[number] | "KYC Complete";
-const ALL_TABS: readonly ClientTab[] = [...CLIENT_TABS, "KYC Complete"];
+export const CLIENT_TABS = ["All", "KYC Ready", "KYC Not Ready", "Non-Compliant"] as const;
+export type ClientTab = (typeof CLIENT_TABS)[number];
+const ALL_TABS: readonly ClientTab[] = CLIENT_TABS;
 
 /** Filters the client list the same way the tabs do. */
 export function filterClientsBy(clients: Client[], tab: ClientTab, sector = "") {
   const inSector = sector ? clients.filter((c) => c.sector === sector) : clients;
-  if (tab === "KYC Pending") return inSector.filter((c) => !c.kyc);
-  if (tab === "KYC Complete") return inSector.filter((c) => c.kyc);
-  if (tab === "Missing Docs") return inSector.filter((c) => c.docsFiled < c.docsTotal);
+  if (tab === "KYC Not Ready") return inSector.filter((c) => !c.kyc);
+  if (tab === "KYC Ready") return inSector.filter((c) => c.kyc);
   if (tab === "Non-Compliant") return inSector.filter((c) => c.nonCompliant);
   return inSector;
 }
@@ -90,18 +88,25 @@ export function ClientSearch({ value, onChange }: { value: string; onChange: (v:
   );
 }
 
-const HEADINGS = ["Client", "Type", "Sector", "Active", "KYC", "Policies", "Claims", "Corr.", "Docs Progress", "Manager"];
+const HEADINGS = ["Client", "Type", "Sector", "Active Policies", "KYC", "Manager"];
+const COMPACT_HEADINGS = HEADINGS;
+const COMPACT_WIDTHS = ["25%", "13%", "16%", "12%", "14%", "20%"];
+const FULL_WIDTHS = COMPACT_WIDTHS;
 
 export function ClientsTable({
   clients,
   onView,
   emptyMessage,
+  compact = false,
 }: {
   clients: Client[];
   onView: (c: Client) => void;
   emptyMessage: React.ReactNode;
+  /** A dashboard card has less room than the dedicated full client list. */
+  compact?: boolean;
 }) {
   const { items, pager } = usePaged(clients);
+  const headings = compact ? COMPACT_HEADINGS : HEADINGS;
   return (
     <>
     {/* Phones: one card per client instead of a wide table. */}
@@ -112,7 +117,7 @@ export function ClientsTable({
             <div className="min-w-0">
               <p className="text-sm font-semibold">{c.name}</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {[c.id, c.sector].filter(Boolean).join(" · ")}
+                {c.sector}
               </p>
             </div>
             {c.nonCompliant ? <Chip tone="danger">Flagged</Chip> : <KycBadge short kyc={c.kyc} status={c.kycStatus} gateStatus={c.kycGateStatus} />}
@@ -120,9 +125,9 @@ export function ClientsTable({
           <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3">
             <div className="min-w-0 text-xs text-muted-foreground">
               <p>
-                {c.activePolicies} active {c.activePolicies === 1 ? "policy" : "policies"} · {c.docsFiled}/{c.docsTotal} documents
+                {c.activePolicies} active {c.activePolicies === 1 ? "policy" : "policies"}
               </p>
-              {c.manager ? <p className="mt-0.5 truncate">{c.manager}</p> : null}
+              {c.manager ? <p className="mt-0.5 break-words">{c.manager}</p> : null}
             </div>
             <button
               type="button"
@@ -136,17 +141,23 @@ export function ClientsTable({
       ))}
       {clients.length === 0 ? <div className="py-6 text-center text-sm text-muted-foreground">{emptyMessage}</div> : null}
     </div>
-    <div className="hidden overflow-x-auto px-2 pb-4 sm:block">
-      <table className="w-full min-w-[720px] border-separate border-spacing-0 text-left">
+    <div className="hidden max-w-full overflow-x-auto px-2 pb-4 sm:block">
+      <table className={cn("w-full table-fixed border-separate border-spacing-0 text-left", !compact && "min-w-[1050px]")}>
+        <caption className="sr-only">Client records</caption>
+        <colgroup>
+          {(compact ? COMPACT_WIDTHS : FULL_WIDTHS).map((width, i) => <col key={i} style={{ width }} />)}
+        </colgroup>
         <thead>
           <tr className="bg-pale text-[11px] text-muted-foreground">
-            {HEADINGS.map((h, i, arr) => (
+            {headings.map((h, i, arr) => (
               <th
                 key={h}
                 className={cn(
-                  "px-3 py-2.5 font-medium whitespace-nowrap",
+                  "sticky top-0 z-10 px-2 py-2.5 text-left font-medium whitespace-nowrap sm:px-2.5",
                   i === 0 && "rounded-l-xl",
                   i === arr.length - 1 && "rounded-r-xl",
+                  i === 0 && "sticky left-0 z-20 bg-pale",
+                  h === "Active Policies" && "whitespace-normal leading-tight",
                 )}
               >
                 {h}
@@ -157,58 +168,33 @@ export function ClientsTable({
         <tbody>
           {clients.length === 0 ? (
             <tr>
-              <td colSpan={HEADINGS.length} className="px-3 py-8 text-center text-sm text-muted-foreground">
+              <td colSpan={headings.length} className="px-3 py-8 text-center text-sm text-muted-foreground">
                 {emptyMessage}
               </td>
             </tr>
           ) : (
             items.map((c) => (
-              <tr key={c.id}>
-                <Td>
-                  <div className="max-w-[150px] truncate text-sm font-medium">{c.name}</div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">{c.id}</span>
-                    {c.nonCompliant ? <Chip tone="danger">Flagged</Chip> : null}
-                  </div>
+              <tr key={c.id} className="group transition-colors hover:bg-secondary/20">
+                <Td className="sticky left-0 z-[1] bg-card group-hover:bg-secondary/20">
+                  <div className="truncate text-sm font-medium" title={c.name}>{c.name}</div>
+                  {c.nonCompliant ? <div><Chip tone="danger">Flagged</Chip></div> : null}
                   <TextLink onClick={() => onView(c)}>View File</TextLink>
                 </Td>
                 <Td className="text-sm">
-                  <span className="block max-w-[90px] truncate">{c.type}</span>
+                  <span className="block truncate" title={c.type}>{c.type}</span>
                 </Td>
                 <Td className="text-sm">
-                  <span className="block max-w-[80px] truncate">
+                  <span className="block truncate" title={c.sector}>
                     <Recorded value={c.sector} />
                   </span>
                 </Td>
-                <Td className="text-sm">{c.activePolicies}</Td>
+                <Td className="text-sm tabular-nums">{c.activePolicies}</Td>
                 <Td>
                   <KycBadge short kyc={c.kyc} status={c.kycStatus} gateStatus={c.kycGateStatus} />
                 </Td>
                 <Td>
-                  <StatusDot ok={c.policiesOk} />
-                </Td>
-                <Td>
-                  <StatusDot ok={c.claimsOk} />
-                </Td>
-                <Td>
-                  <StatusDot ok={c.correspondenceOk} />
-                </Td>
-                <Td>
-                  <div className="w-16">
-                    <div className="text-xs text-muted-foreground">
-                      {c.docsFiled} / {c.docsTotal}
-                    </div>
-                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-secondary">
-                      <div
-                        className="h-full rounded-full bg-sky"
-                        style={{ width: `${(c.docsFiled / c.docsTotal) * 100}%` }}
-                      />
-                    </div>
-                  </div>
-                </Td>
-                <Td>
-                  <div className="max-w-[70px] truncate">
-                    {c.manager ? <Person name={c.manager} /> : <NotRecorded />}
+                  <div className="min-w-0 break-words text-sm leading-snug" title={c.manager || "Manager not recorded"}>
+                    {c.manager || <NotRecorded />}
                   </div>
                 </Td>
               </tr>
@@ -293,20 +279,6 @@ export function ClientFileSlideOver({
   );
 }
 
-function StatusDot({ ok, title }: { ok: boolean; title?: string }) {
-  return (
-    <span
-      title={title}
-      className={cn(
-        "flex size-5 items-center justify-center rounded-full text-[10px] font-semibold",
-        ok ? "bg-success-soft text-success" : "bg-warning-soft text-warning",
-      )}
-    >
-      {ok ? "✓" : "!"}
-    </span>
-  );
-}
-
 function Td({ children, className }: { children?: React.ReactNode; className?: string }) {
   return <td className={cn("border-b border-border px-3 py-3 align-middle", className)}>{children}</td>;
 }
@@ -314,7 +286,7 @@ function Td({ children, className }: { children?: React.ReactNode; className?: s
 /** The clients as listed, for Download. */
 export function downloadClients(clients: Client[], fileName = "clients.csv") {
   downloadCsv(fileName, [
-    ["Client ID", "Client", "Type", "Sector", "Address", "Contact person", "Contact email", "Contact phone", "Active policies", "KYC", "Non-compliant", "Documents filed", "Account manager"],
+    ["Client ID", "Client", "Type", "Sector", "Address", "Contact person", "Contact email", "Contact phone", "Active policies", "KYC", "Non-compliant", "Account manager"],
     ...clients.map((c) => [
       c.id,
       c.name,
@@ -327,7 +299,6 @@ export function downloadClients(clients: Client[], fileName = "clients.csv") {
       c.activePolicies,
       c.kyc ? "Approved" : "Not approved",
       c.nonCompliant ? "Yes" : "No",
-      `${c.docsFiled} / ${c.docsTotal}`,
       c.manager,
     ]),
   ]);

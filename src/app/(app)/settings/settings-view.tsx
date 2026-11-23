@@ -31,7 +31,7 @@ export function SettingsView() {
     <>
       <PageHeader title="Settings" />
 
-      <div className="mt-5 grid items-start gap-4 xl:grid-cols-2">
+      <div className="mt-5 grid items-start gap-3 sm:gap-4 xl:grid-cols-2">
         <FloatCard className="p-5 sm:p-6">
           <h2 className="text-base font-semibold tracking-tight">My account</h2>
           <div className="mt-4 flex items-center gap-4">

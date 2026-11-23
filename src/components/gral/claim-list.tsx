@@ -10,7 +10,7 @@ import { ArrowLeft, Search } from "lucide-react";
 import { ClaimDetailPanel } from "@/components/gral/claim-detail";
 import { usePaged } from "@/components/gral/pager";
 import { ALL_OPTION, ClearFilters, FilterMenu, optionsFrom } from "@/components/gral/filter-menu";
-import { Chip, FloatCard, Person, PriorityPill } from "@/components/gral/ui";
+import { Chip, FloatCard, PriorityPill } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
 import { downloadCsv } from "@/lib/csv";
 import { useClaims as useClaimsQuery, useRefresh } from "@/lib/queries";
@@ -164,7 +164,7 @@ export function ClaimSlaChip({ claim }: { claim: Claim }) {
   const label = slaLabel(claim);
   if (label) return <Chip tone={claimSla(claim) === "breached" ? "danger" : "warning"}>{label}</Chip>;
   if (isDisputed(claim)) return <Chip tone="warning">With committee</Chip>;
-  return <Chip tone="sky">Within SLA</Chip>;
+  return null;
 }
 
 /** A claim is a long process, so it opens as its own full page. */
@@ -244,7 +244,7 @@ export function ClaimsTable({
           </p>
           <div className="mt-1.5 flex items-center justify-between gap-3">
             <span className="text-sm font-semibold">RWF {c.amount.toLocaleString("en-US")}</span>
-            <span className="truncate text-xs text-muted-foreground">{c.handler}</span>
+            <span className="max-w-[60%] break-words text-right text-xs text-muted-foreground">{c.handler}</span>
           </div>
         </button>
       ))}
@@ -282,10 +282,8 @@ export function ClaimsTable({
               <Td className="text-sm">{daysOpen(c)}d</Td>
               <Td className="text-sm whitespace-nowrap">{c.amount.toLocaleString("en-US")}</Td>
               <Td className={cn("text-sm whitespace-nowrap", isDisputed(c) && "text-warning")}>{stageLabel(c)}</Td>
-              <Td>
-                <div className="max-w-[130px] truncate">
-                  <Person name={c.handler} />
-                </div>
+              <Td className="min-w-[160px] max-w-[240px] break-words whitespace-normal text-sm">
+                {c.handler}
               </Td>
             </tr>
           ))}

@@ -2,13 +2,10 @@
 
 import { useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { PageHeader } from "@/components/gral/shell";
 import { FilterMenu } from "@/components/gral/filter-menu";
 import { DATE_RANGE_OPTIONS, withinRange, type DateRange } from "@/lib/date-range";
 import {
-  CLAIM_TABS,
   ClaimSearch,
   ClaimPage,
   ClaimsTable,
@@ -24,7 +21,7 @@ import {
 } from "@/components/gral/claim-list";
 import { CardHeader, FloatCard, Loader, OutlineButton, PageLoader, SegmentedTabs } from "@/components/gral/ui";
 
-const TABS = ["All", "Open", ...CLAIM_TABS, "Awaiting Sign-off", "Closed"] as const;
+const TABS: readonly ClaimTab[] = ["All", "Open", "High Priority", "Missing Docs", "Escalation", "Disputed", "Awaiting Sign-off", "Closed"];
 
 export function AllClaimsView() {
   const { claims, loaded, reload } = useClaims();
@@ -50,9 +47,6 @@ export function AllClaimsView() {
 
   return (
     <>
-      <Link href="/claims" className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary">
-        <ArrowLeft className="size-3.5" /> Claims Queue
-      </Link>
       <PageHeader
         title="All Claims"
         extraPills={

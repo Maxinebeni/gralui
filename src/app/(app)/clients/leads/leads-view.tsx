@@ -64,23 +64,29 @@ export function LeadsView({ full = false }: { full?: boolean }) {
       .map(([value, label]) => ({ value, label })),
   ];
 
-  const journeys: Journey[] = useMemo(
+  const allJourneys: Journey[] = useMemo(
     () =>
       leads
-        .filter((lead) => owner === ALL || lead.ownerId === owner)
-        .filter((lead) => {
-          const q = query.trim().toLowerCase();
-          return !q || [lead.name, leadRef(lead.id), lead.contactName, lead.industry, lead.ownerName ?? ""].some((v) => v.toLowerCase().includes(q));
-        })
         .map((lead) => {
         const own = tracks.filter((t) => t.leadId === lead.id);
         const track = primaryTrack(own);
         return { lead, track, policies: own.length, step: journeyStep(lead, track) };
       }),
-    [leads, tracks, owner, query],
+    [leads, tracks],
   );
   const closed = (j: Journey) => j.lead.status === "CLOSED_LOST" || j.lead.status === "CANCELLED";
+  const journeys = useMemo(
+    () =>
+      allJourneys
+        .filter((j) => owner === ALL || j.lead.ownerId === owner)
+        .filter((j) => {
+          const q = query.trim().toLowerCase();
+          return !q || [j.lead.name, leadRef(j.lead.id), j.lead.contactName, j.lead.industry, j.lead.ownerName ?? ""].some((v) => v.toLowerCase().includes(q));
+        }),
+    [allJourneys, owner, query],
+  );
   const active = journeys.filter((j) => j.step !== null && !closed(j));
+  const allActive = allJourneys.filter((j) => j.step !== null && !closed(j));
   const overdue = active.filter((j) => journeyHealth(j.lead, j.track) === "overdue");
   const kycWaiting = active.filter((j) => j.step === 3 && j.track?.kyc?.status === "SUBMITTED").length;
 
@@ -101,7 +107,11 @@ export function LeadsView({ full = false }: { full?: boolean }) {
   const { items: pagedRows, pager } = usePaged(rows, { resetKey: tab });
   const shown = full ? pagedRows : rows.slice(0, PREVIEW);
 
-  const perStep = JOURNEY_STEPS.map((s) => ({ label: `${s.n}. ${s.name}`, count: active.filter((j) => j.step === s.n).length }));
+  const perStep = [
+    ...JOURNEY_STEPS.map((s) => ({ label: `${s.n}. ${s.name}`, count: allActive.filter((j) => j.step === s.n).length })),
+    { label: "Onboarded", count: allJourneys.filter((j) => j.step === null && !closed(j)).length },
+    { label: "Closed", count: allJourneys.filter(closed).length },
+  ].filter((stage) => stage.count > 0);
   const countBy = (key: (j: Journey) => string) =>
     [...active.reduce((m, j) => m.set(key(j), (m.get(key(j)) ?? 0) + 1), new Map<string, number>()).entries()]
       .map(([label, count]) => ({ label, count }))
@@ -138,7 +148,7 @@ export function LeadsView({ full = false }: { full?: boolean }) {
         </div>
       )}
 
-      <div className={cn("mt-4 grid gap-4", !full && "xl:grid-cols-[1fr_340px]")}>
+      <div className={cn("mt-4 grid items-start gap-3 sm:gap-4", !full && leads.length > 0 && "xl:grid-cols-[minmax(0,1fr)_340px]")}>
         <FloatCard className="overflow-hidden" delay={120}>
           <CardHeader title={full ? `${rows.length} ${rows.length === 1 ? "lead" : "leads"}` : "Lead Pipeline"} right={<SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />} />
           <div className="mt-5 px-4 sm:px-5">
@@ -153,7 +163,7 @@ export function LeadsView({ full = false }: { full?: boolean }) {
               />
             </label>
           </div>
-          <div className="mt-5 grid gap-4 p-4 pt-0 sm:grid-cols-2 sm:p-5 sm:pt-0">
+          <div className={cn("mt-5 grid gap-3 p-4 pt-0 sm:grid-cols-2 sm:gap-4 sm:p-5 sm:pt-0", rows.length === 0 && "block")}>
             {shown.map((j) => (
               <CaseCard key={j.lead.id} value={j} />
             ))}
@@ -165,8 +175,8 @@ export function LeadsView({ full = false }: { full?: boolean }) {
                 </button>
               </p>
             ) : rows.length === 0 ? (
-              <p className="py-10 text-center text-xs text-muted-foreground sm:col-span-2">
-                {loading ? <Loader label="Loading leads" /> : query ? `No leads match "${query.trim()}".` : "No leads in this view."}
+              <p className={cn("text-center text-xs text-muted-foreground", rows.length === 0 ? "py-4" : "py-10 sm:col-span-2")}>
+                {loading ? <Loader label="Loading leads" /> : query ? `No leads match "${query.trim()}".` : `No leads in ${tab}.`}
               </p>
             ) : null}
           </div>
@@ -175,7 +185,7 @@ export function LeadsView({ full = false }: { full?: boolean }) {
           ) : (
             <div className="border-t border-border px-5 py-4 text-center">
               <Link
-                href={`/clients/leads/all?view=${encodeURIComponent(tab)}`}
+                href={rows.length > PREVIEW ? `/clients/leads/all?view=${encodeURIComponent(tab)}` : "/clients/leads/all"}
                 className="text-xs font-semibold text-primary underline underline-offset-4 hover:opacity-70"
               >
                 {rows.length > PREVIEW ? `See all ${rows.length} in this view` : "See all leads"}
@@ -184,12 +194,12 @@ export function LeadsView({ full = false }: { full?: boolean }) {
           )}
         </FloatCard>
 
-        {full ? null : (
-        <div className="min-w-0 space-y-4">
+        {full || leads.length === 0 ? null : (
+        <div className="min-w-0 space-y-3 sm:space-y-4">
           <FloatCard className="p-5" delay={160}>
-            <h2 className="text-base font-semibold tracking-tight">Leads by Step</h2>
+            <h2 className="text-base font-semibold tracking-tight">All Leads by Step</h2>
             <div className="mt-4">
-              <StageBar stages={perStep} wideLabels />
+              <StageBar stages={perStep} wideLabels wrapLabels />
             </div>
           </FloatCard>
 
@@ -233,7 +243,7 @@ function CaseCard({ value: j }: { value: Journey }) {
   return (
     <Link
       href={`/clients/leads/${encodeURIComponent(l.id)}`}
-      className="block w-full min-w-0 rounded-2xl border border-border bg-card p-4 text-left shadow-[var(--shadow-card)] transition-shadow hover:shadow-[var(--shadow-float)]"
+      className="block w-full min-w-0 rounded-2xl border border-border bg-card p-4 text-left transition-colors hover:border-sky/50"
     >
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
         <div className="min-w-0">

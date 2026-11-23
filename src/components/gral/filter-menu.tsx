@@ -21,7 +21,7 @@ export function FilterMenu({
   const current = options.find((o) => o.value === value) ?? options[0];
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger className="float-pill flex max-w-full items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-foreground outline-none transition-shadow hover:shadow-[var(--shadow-float)]">
+      <DropdownMenuTrigger className="float-pill flex max-w-full items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-foreground outline-none transition-colors hover:border-sky/50">
         <span className="text-muted-foreground">{label}:</span>
         <span className="truncate">{current?.label}</span>
         <ChevronDown className="size-3.5 text-subtle" />

@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { ArrowLeft, Download } from "lucide-react";
+import { Download } from "lucide-react";
 import { PageHeader } from "@/components/gral/shell";
 import {
   CLIENT_TABS,
@@ -21,15 +20,12 @@ export function AllClientsView() {
 
   return (
     <>
-      <Link href="/clients" className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary">
-        <ArrowLeft className="size-3.5" /> Client Records
-      </Link>
       <PageHeader
         title="All Client Records"
         subtitle={
           loading && rows.length === 0
             ? undefined
-            : `${rows.length} ${rows.length === 1 ? "record" : "records"}${tab === "KYC Complete" ? " with KYC complete" : ""}`
+            : `${rows.length} ${rows.length === 1 ? "record" : "records"}${tab === "KYC Ready" ? " with KYC ready" : ""}`
         }
         extraPills={<SectorFilter value={sector} sectors={sectors} onChange={setSector} />}
         action={

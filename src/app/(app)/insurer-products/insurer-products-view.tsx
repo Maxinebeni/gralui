@@ -70,7 +70,7 @@ export function InsurerProductsView() {
       ) : loading || !catalog ? (
         <FloatCard className="mt-5 p-5"><p className="text-sm text-muted-foreground"><Loader label="Loading insurer product catalog" /></p></FloatCard>
       ) : (
-        <div className="mt-5 space-y-4">
+        <div className="mt-5 space-y-3 sm:space-y-4">
           <FloatCard className="p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -180,7 +180,7 @@ export function InsurerProductsView() {
                 </div>
               ) : null}
 
-              <div className="mt-5 grid gap-4 xl:grid-cols-2">
+              <div className="mt-5 grid gap-3 sm:gap-4 xl:grid-cols-2">
                 <div>
                   <h3 className="text-sm font-semibold">Add an existing product</h3>
                   <p className="mt-1 text-xs text-muted-foreground">Only products supported by this insurer’s insurance type are available.</p>
