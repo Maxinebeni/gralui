@@ -50,7 +50,7 @@ export function KycView({ id }: { id: string }) {
 
   if (!canReadKyc) return <NoAccess />;
   if (state.kind === "loading") return <PageLoader label="Loading KYC" />;
-  if (state.kind === "error") return <div className="space-y-3"><p role="alert" className="text-sm text-danger">{state.message}</p><div className="flex gap-3"><OutlineButton onClick={() => void reload()}>Try again</OutlineButton><Link href="/my-work" className="text-sm text-primary underline">Back to My Work</Link></div></div>;
+  if (state.kind === "error") return <div className="space-y-3"><p role="alert" className="text-sm text-danger">{state.message}</p><div className="flex gap-3"><OutlineButton onClick={() => void reload()}>Try again</OutlineButton><Link href="/my-work" className="text-sm text-primary underline">Back to my work</Link></div></div>;
   if (state.kind === "review") return <KycReviewPage key={`${state.review.id}:${user.id ?? user.role}`} review={state.review} history={state.history} onChanged={reload} />;
   return <StartKycReview clientId={state.clientId} reviews={state.reviews} onStarted={(r) => router.replace(`/clients/kyc/${encodeURIComponent(r.id)}`)} />;
 }

@@ -111,7 +111,7 @@ export function SessionsView() {
   return (
     <>
       <PageHeader
-        title="Active Sessions"
+        title="Active sessions"
         action={
           <OutlineButton className="px-4 py-2 text-sm" onClick={reload}>
             <RefreshCw className="size-4" /> Refresh

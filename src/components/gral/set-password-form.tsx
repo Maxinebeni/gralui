@@ -18,14 +18,14 @@ const COPY = {
   reset: {
     title: "Set a new password",
     intro: "Choose a new password for your GRAL account.",
-    button: "Save New Password",
+    button: "Save new password",
     doneTitle: "Password updated",
     doneText: "Your password has been changed. Sign in with your new password.",
   },
   invitation: {
     title: "Welcome to GRAL",
     intro: "Create a password to activate your account.",
-    button: "Create Password",
+    button: "Create password",
     doneTitle: "Account activated",
     doneText: "Your password has been set. Sign in to get started.",
   },
@@ -106,7 +106,7 @@ export function SetPasswordForm({ mode }: { mode: "reset" | "invitation" }) {
               href="/login"
               className="mt-6 inline-flex w-full items-center justify-center rounded-full bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
             >
-              Go to Sign In
+              Go to sign in
             </Link>
           </div>
         ) : token === null || linkError ? (
@@ -125,7 +125,7 @@ export function SetPasswordForm({ mode }: { mode: "reset" | "invitation" }) {
                 href="/forgot-password"
                 className="mt-6 inline-flex w-full items-center justify-center rounded-full bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
               >
-                Request a New Link
+                Request a new link
               </Link>
             ) : null}
           </div>

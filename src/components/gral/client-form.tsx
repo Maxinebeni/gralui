@@ -19,9 +19,9 @@ import { cn } from "@/lib/utils";
 /** Client types from the requirements document, plus SME which the existing records use. */
 export const CLIENT_FORM_TYPES: ClientType[] = [
   "Corporate",
-  "State Enterprise",
+  "State enterprise",
   "NGO",
-  "Financial Institution",
+  "Financial institution",
   "SME",
 ];
 
@@ -206,11 +206,11 @@ export function ClientFormPanel({
     <form onSubmit={handleSubmit} noValidate className="flex min-h-full flex-col">
       <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">{editing ? "Edit Client" : "Add New Client"}</h2>
+          <h2 className="text-lg font-semibold tracking-tight">{editing ? "Edit client" : "Add new client"}</h2>
           <p className="mt-1 text-xs text-muted-foreground">
             {editing
               ? `Update the details for ${client?.id}. All fields are required.`
-              : "All fields are required. The Client ID is created automatically, and KYC starts as Pending until the Risk & Compliance Manager marks Section A complete."}
+              : "All fields are required. The Client ID is created automatically, and KYC starts as Pending until the Risk and Compliance Manager marks Section A complete."}
           </p>
         </div>
         <button
@@ -336,7 +336,7 @@ export function ClientFormPanel({
           Cancel
         </OutlineButton>
         <NavyButton type="submit" disabled={saving} className="px-4 py-2 text-sm">
-          {saving ? "Saving…" : editing ? "Save Changes" : "Add Client"}
+          {saving ? "Saving…" : editing ? "Save changes" : "Add client"}
         </NavyButton>
       </div>
     </form>
@@ -411,13 +411,16 @@ export function IndustrySelect({
   onChange: (v: string) => void;
   error?: string;
 }) {
-  const listed = INDUSTRIES.includes(value);
+  // Records saved before the list changed ("Banking & Finance") match the new
+  // wording ("Banking and finance"), so they show as listed, not as Other.
+  const known = INDUSTRIES.find((i) => i.toLowerCase() === value.replace(/ & /g, " and ").toLowerCase());
+  const listed = !!known;
   const [other, setOther] = useState(!!value && !listed);
   return (
     <div className="space-y-2">
       <select
         id={id}
-        value={other ? OTHER : value}
+        value={other ? OTHER : (known ?? value)}
         onChange={(e) => {
           const next = e.target.value;
           setOther(next === OTHER);

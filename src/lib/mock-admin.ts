@@ -54,7 +54,7 @@ export const ROLES_DATA: ManagedRole[] = [
   role("TECHNICAL_DIRECTOR", "Technical Director", "BUSINESS", CLAIMS_VIEW),
   role("MD", "Managing Director", "BUSINESS", CLAIMS_VIEW),
   role("DMD", "Deputy Managing Director", "BUSINESS", CLAIMS_VIEW),
-  role("RISK_COMPLIANCE_MANAGER", "Risk & Compliance Manager", "BUSINESS", CLAIMS_VIEW),
+  role("RISK_COMPLIANCE_MANAGER", "Risk and Compliance Manager", "BUSINESS", CLAIMS_VIEW),
   role("INTERNAL_AUDIT_MANAGER", "Internal Audit Manager", "BUSINESS", CLAIMS_VIEW),
 ];
 

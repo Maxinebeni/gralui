@@ -20,16 +20,16 @@ import { useClients, useRefresh } from "@/lib/queries";
 import type { Client } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-export const CLIENT_TABS = ["All", "KYC Ready", "KYC Not Ready", "Non-Compliant"] as const;
+export const CLIENT_TABS = ["All", "KYC ready", "KYC not ready", "Non-compliant"] as const;
 export type ClientTab = (typeof CLIENT_TABS)[number];
 const ALL_TABS: readonly ClientTab[] = CLIENT_TABS;
 
 /** Filters the client list the same way the tabs do. */
 export function filterClientsBy(clients: Client[], tab: ClientTab, sector = "") {
   const inSector = sector ? clients.filter((c) => c.sector === sector) : clients;
-  if (tab === "KYC Not Ready") return inSector.filter((c) => !c.kyc);
-  if (tab === "KYC Ready") return inSector.filter((c) => c.kyc);
-  if (tab === "Non-Compliant") return inSector.filter((c) => c.nonCompliant);
+  if (tab === "KYC not ready") return inSector.filter((c) => !c.kyc);
+  if (tab === "KYC ready") return inSector.filter((c) => c.kyc);
+  if (tab === "Non-compliant") return inSector.filter((c) => c.nonCompliant);
   return inSector;
 }
 
@@ -88,7 +88,7 @@ export function ClientSearch({ value, onChange }: { value: string; onChange: (v:
   );
 }
 
-const HEADINGS = ["Client", "Type", "Sector", "Active Policies", "KYC", "Manager"];
+const HEADINGS = ["Client", "Type", "Sector", "Active policies", "KYC", "Manager"];
 const COMPACT_HEADINGS = HEADINGS;
 const COMPACT_WIDTHS = ["25%", "13%", "16%", "12%", "14%", "20%"];
 const FULL_WIDTHS = COMPACT_WIDTHS;
@@ -134,7 +134,7 @@ export function ClientsTable({
               onClick={() => onView(c)}
               className="rounded-full border border-border bg-card px-3.5 py-2 text-xs font-medium hover:bg-secondary"
             >
-              View File
+              View file
             </button>
           </div>
         </article>
@@ -157,7 +157,7 @@ export function ClientsTable({
                   i === 0 && "rounded-l-xl",
                   i === arr.length - 1 && "rounded-r-xl",
                   i === 0 && "sticky left-0 z-20 bg-pale",
-                  h === "Active Policies" && "whitespace-normal leading-tight",
+                  h === "Active policies" && "whitespace-normal leading-tight",
                 )}
               >
                 {h}
@@ -178,7 +178,7 @@ export function ClientsTable({
                 <Td className="sticky left-0 z-[1] bg-card group-hover:bg-secondary/20">
                   <div className="truncate text-sm font-medium" title={c.name}>{c.name}</div>
                   {c.nonCompliant ? <div><Chip tone="danger">Flagged</Chip></div> : null}
-                  <TextLink onClick={() => onView(c)}>View File</TextLink>
+                  <TextLink onClick={() => onView(c)}>View file</TextLink>
                 </Td>
                 <Td className="text-sm">
                   <span className="block truncate" title={c.type}>{c.type}</span>

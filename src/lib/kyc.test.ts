@@ -51,7 +51,7 @@ describe("renewal filters", () => {
 
   it("names the stage from the milestone reached", () => {
     expect(renewalStage(renewal(0))).toBe("Preparation");
-    expect(renewalStage(renewal(3))).toBe("Quotes & approval");
+    expect(renewalStage(renewal(3))).toBe("Quotes and approval");
     expect(renewalStage(renewal(6))).toBe("Placement");
     expect(renewalStage(renewal(9))).toBe("Delivery");
     expect(renewalStage(renewal(10))).toBe("Completed");

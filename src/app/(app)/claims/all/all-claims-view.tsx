@@ -21,7 +21,7 @@ import {
 } from "@/components/gral/claim-list";
 import { CardHeader, FloatCard, Loader, OutlineButton, PageLoader, SegmentedTabs } from "@/components/gral/ui";
 
-const TABS: readonly ClaimTab[] = ["All", "Open", "High Priority", "Missing Docs", "Escalation", "Disputed", "Awaiting Sign-off", "Closed"];
+const TABS: readonly ClaimTab[] = ["All", "Open", "High priority", "Missing docs", "Escalation", "Disputed", "Awaiting sign-off", "Closed"];
 
 export function AllClaimsView() {
   const { claims, loaded, reload } = useClaims();
@@ -41,14 +41,14 @@ export function AllClaimsView() {
   );
 
   if (openId) {
-    if (open) return <ClaimPage claim={open} backHref={backHref} backLabel="All Claims" onChanged={reload} />;
+    if (open) return <ClaimPage claim={open} backHref={backHref} backLabel="All claims" onChanged={reload} />;
     return loaded ? <p className="text-sm text-muted-foreground">This claim could not be found.</p> : <PageLoader label="Loading claim" />;
   }
 
   return (
     <>
       <PageHeader
-        title="All Claims"
+        title="All claims"
         extraPills={
           <>
             <FilterMenu

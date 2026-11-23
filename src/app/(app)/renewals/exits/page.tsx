@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { ExitRegisterView } from "./exits-view";
 
 export const metadata: Metadata = {
-  title: "Exit Register / GRAL Operations Platform",
+  title: "Exit register / GRAL Operations Platform",
   description: "Renewals GRAL lost each month, why the client left, and the premium at stake.",
 };
 

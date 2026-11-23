@@ -316,7 +316,7 @@ export function Shell({ children }: { children: ReactNode }) {
                 </div>
                 <div className="my-1 h-px bg-border" />
                 <DropdownMenuItem onSelect={() => router.push("/my-work")} className="rounded-xl px-3 py-2.5 text-sm">
-                  My Work
+                  My work
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => router.push("/approvals")} className="justify-between rounded-xl px-3 py-2.5 text-sm">
                   Approvals
@@ -698,5 +698,5 @@ const NAV_HREFS = NAV_ITEMS.map((i) => i.href);
 
 /** The first entry of a dropdown repeats the item itself, under a clearer name. */
 function firstLabel(item: NavItem) {
-  return { "/": "Overview", "/claims": "Claims Queue", "/clients": "Client Records" }[item.href] ?? item.label;
+  return { "/": "Overview", "/claims": "Claims queue", "/clients": "Client records" }[item.href] ?? item.label;
 }

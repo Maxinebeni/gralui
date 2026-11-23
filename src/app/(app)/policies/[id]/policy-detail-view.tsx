@@ -62,7 +62,7 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
             {loadError ?? `No client you can see holds a policy with the number ${policyId}.`}
           </p>
           <Link href="/clients" className="mt-4 inline-block text-sm text-primary underline underline-offset-2">
-            Go to Clients
+            Go to clients
           </Link>
         </div>
       </div>
@@ -117,7 +117,7 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
           </FloatCard>
 
           <FloatCard className="overflow-hidden" delay={180}>
-            <CardHeader title="Cover Periods" />
+            <CardHeader title="Cover periods" />
             <div className="mt-4 overflow-x-auto px-2 pb-4">
               <table className="stack-table w-full min-w-[680px] border-separate border-spacing-0 text-left">
                 <thead>
@@ -186,7 +186,7 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
           <FloatCard className="p-5" delay={160}>
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold tracking-tight">Status</h2>
-              <Chip tone={p.status === "Active" ? "success" : p.status === "In Renewal" ? "warning" : "neutral"}>{p.status}</Chip>
+              <Chip tone={p.status === "Active" ? "success" : p.status === "In renewal" ? "warning" : "neutral"}>{p.status}</Chip>
             </div>
             <p className="mt-3 text-xs text-muted-foreground">
               {current.from ? formatDate(current.from) : <NotRecorded />} to {current.to ? formatDate(current.to) : <NotRecorded />}
@@ -204,7 +204,7 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
           </FloatCard>
 
           <FloatCard className="p-5" delay={220}>
-            <h2 className="text-base font-semibold tracking-tight">Claims on this Policy</h2>
+            <h2 className="text-base font-semibold tracking-tight">Claims on this policy</h2>
             <div className="mt-3 space-y-2">
               {detail.claims.length === 0 ? <p className="text-xs text-muted-foreground">No claims on this policy.</p> : null}
               {detail.claims.map((c) => {
@@ -238,7 +238,7 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
               purpose="POLICY_SCHEDULE"
               canUpload={canUpload}
               canReplace={canReplace}
-              title="Policy Documents"
+              title="Policy documents"
               emptyText={p.uuid ? "No files yet. Policy files stay in this tab until the backend accepts policy documents." : "No schedule or endorsement uploaded yet."}
             />
           </FloatCard>

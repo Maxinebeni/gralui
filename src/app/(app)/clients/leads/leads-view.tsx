@@ -26,7 +26,7 @@ import {
 import { onboardingPermissions } from "@/lib/permissions";
 import type { Lead, PolicyTrack } from "@/lib/types";
 
-const TABS = ["In progress", "KYC", "Quotes & approval", "Overdue", "Onboarded"] as const;
+const TABS = ["In progress", "KYC", "Quotes and approval", "Overdue", "Onboarded"] as const;
 type Tab = (typeof TABS)[number];
 
 /** Leads shown on the Leads page before "See all". */
@@ -95,7 +95,7 @@ export function LeadsView({ full = false }: { full?: boolean }) {
     const list =
       tab === "KYC"
         ? by([3])
-        : tab === "Quotes & approval"
+        : tab === "Quotes and approval"
           ? by([6, 7, 8])
           : tab === "Overdue"
             ? overdue
@@ -128,12 +128,12 @@ export function LeadsView({ full = false }: { full?: boolean }) {
         </Link>
       ) : null}
       <PageHeader
-        title={full ? "All Leads" : "Leads"}
+        title={full ? "All leads" : "Leads"}
         extraPills={ownerOptions.length > 1 ? <FilterMenu label="Owner" value={owner} options={ownerOptions} onChange={setOwner} /> : null}
         action={
           canRegisterLead ? (
             <NavyButton className="px-4 py-2 text-sm" onClick={() => setNewOpen(true)}>
-              <Plus className="size-4" /> New Lead
+              <Plus className="size-4" /> New lead
             </NavyButton>
           ) : null
         }
@@ -141,16 +141,16 @@ export function LeadsView({ full = false }: { full?: boolean }) {
 
       {full ? null : (
         <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-          <StatTile label="Open Leads" value={String(active.length)} onClick={() => setTab("In progress")} active={tab === "In progress"} />
-          <StatTile label="Policies in Progress" value={String(policiesInProgress)} delay={60} />
-          <StatTile label="KYC Waiting for Approval" value={String(kycWaiting)} delay={120} onClick={() => setTab("KYC")} active={tab === "KYC"} />
+          <StatTile label="Open leads" value={String(active.length)} onClick={() => setTab("In progress")} active={tab === "In progress"} />
+          <StatTile label="Policies in progress" value={String(policiesInProgress)} delay={60} />
+          <StatTile label="KYC waiting for approval" value={String(kycWaiting)} delay={120} onClick={() => setTab("KYC")} active={tab === "KYC"} />
           <StatTile label="Overdue" value={String(overdue.length)} delay={180} onClick={() => setTab("Overdue")} active={tab === "Overdue"} />
         </div>
       )}
 
       <div className={cn("mt-4 grid items-start gap-3 sm:gap-4", !full && leads.length > 0 && "xl:grid-cols-[minmax(0,1fr)_340px]")}>
         <FloatCard className="overflow-hidden" delay={120}>
-          <CardHeader title={full ? `${rows.length} ${rows.length === 1 ? "lead" : "leads"}` : "Lead Pipeline"} right={<SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />} />
+          <CardHeader title={full ? `${rows.length} ${rows.length === 1 ? "lead" : "leads"}` : "Lead pipeline"} right={<SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />} />
           <div className="mt-5 px-4 sm:px-5">
             <label className="float-pill flex w-full items-center gap-2 px-3.5 py-2 sm:w-72">
               <Search className="size-3.5 shrink-0 text-subtle" />
@@ -197,7 +197,7 @@ export function LeadsView({ full = false }: { full?: boolean }) {
         {full || leads.length === 0 ? null : (
         <div className="min-w-0 space-y-3 sm:space-y-4">
           <FloatCard className="p-5" delay={160}>
-            <h2 className="text-base font-semibold tracking-tight">All Leads by Step</h2>
+            <h2 className="text-base font-semibold tracking-tight">All leads by step</h2>
             <div className="mt-4">
               <StageBar stages={perStep} wideLabels wrapLabels />
             </div>
@@ -214,7 +214,7 @@ export function LeadsView({ full = false }: { full?: boolean }) {
 
           {perSource.length ? (
             <FloatCard className="p-5" delay={240}>
-              <h2 className="text-base font-semibold tracking-tight">By Source</h2>
+              <h2 className="text-base font-semibold tracking-tight">By source</h2>
               <div className="mt-4">
                 <StageBar stages={perSource} wideLabels />
               </div>

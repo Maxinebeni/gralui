@@ -115,7 +115,7 @@ export function LoginForm() {
           </div>
 
           <NavyButton type="submit" disabled={submitting} className="w-full py-2.5 text-sm">
-            {submitting ? "Signing in…" : "Sign In"}
+            {submitting ? "Signing in…" : "Sign in"}
           </NavyButton>
         </form>
 

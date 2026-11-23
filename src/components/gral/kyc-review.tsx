@@ -2,7 +2,7 @@
 
 // A client's KYC review (SOP 3.2 step 3, AML section 9.2): GRAL's checklist for
 // the client type with each document's actual receipt date, the compliance
-// screening, and the Risk & Compliance Manager's decision with the signed KYC
+// screening, and the Risk and Compliance Manager's decision with the signed KYC
 // Approval Form. One review is shared by all of the client's policy tracks.
 
 import {
@@ -55,7 +55,7 @@ import {
 import { PageHeader } from "./shell";
 import { Chip, Dot, FloatCard, Loader, OutlineButton, SegmentedTabs } from "./ui";
 
-const EVIDENCE_LABELS: Record<string, string> = { SCREENING: "Screening record", KYC_APPROVAL: "Signed KYC Approval Form", KYC_ESCALATION: "Escalation note" };
+const EVIDENCE_LABELS: Record<string, string> = { SCREENING: "Screening record", KYC_APPROVAL: "Signed KYC approval form", KYC_ESCALATION: "Escalation note" };
 
 function statusTone(status: string) {
   return status === "APPROVED" ? "success" : status === "REJECTED" ? "danger" : status === "SUBMITTED" ? "warning" : "neutral";
@@ -68,7 +68,7 @@ export function KycReviewPage({ review: r, history, onChanged }: { review: KycRe
   const changed = async () => { refresh("leads", "clients", "approvals"); await onChanged(); };
   const router = useRouter();
   const [starting, setStarting] = useState(false);
-  const assigned = !!r.reviewerId && (r.reviewerId === user.id || (MOCK_AUTH && r.reviewerId === DEMO_REVIEWER && user.role === "Risk & Compliance Manager"));
+  const assigned = !!r.reviewerId && (r.reviewerId === user.id || (MOCK_AUTH && r.reviewerId === DEMO_REVIEWER && user.role === "Risk and Compliance Manager"));
   const stale = r.blockers.some((b) => ["KYC_IDENTITY_CHANGED", "KYC_TEMPLATE_CHANGED"].includes(b));
   if (starting) return <div className="space-y-3"><OutlineButton onClick={() => setStarting(false)}>Back to the previous review</OutlineButton><StartKycReview clientId={r.clientId} clientName={r.clientName} reviews={[r]} onStarted={(next) => router.push(`/clients/kyc/${encodeURIComponent(next.id)}`)} /></div>;
   const editable = r.status === "DRAFT" || r.status === "RETURNED";
@@ -147,7 +147,7 @@ export function KycReviewPage({ review: r, history, onChanged }: { review: KycRe
               disabled={!r.reviewerId || r.items.some((i) => i.required && !i.documentId)}
               disabledReason={!r.reviewerId ? "The CRM Manager or MD must assign a compliance reviewer first." : r.items.some((i) => i.required && !i.documentId) ? "File all required documents before submitting." : undefined}
               submitLabel="Send for decision"
-              success="Sent to the Risk & Compliance Manager."
+              success="Sent to the Risk and Compliance Manager."
               onSubmit={async (attempt) => {
                 await submitKycReview(r, attempt);
                 await changed();
@@ -348,7 +348,7 @@ function DecisionForm({ review, onChanged }: { review: KycReview; onChanged: () 
       }}
     >
       <TextInput id="kd-reason" label="Reason" value={reason} onChange={setReason} wide />
-      {choice === "Approve" ? <EvidenceField label="Signed KYC Approval Form" destination={`KYC Approval Form · ${review.clientName ?? "the client"}`} value={evidence} onChange={setEvidence} dateLabel="Signed on" /> : null}
+      {choice === "Approve" ? <EvidenceField label="Signed KYC approval form" destination={`KYC Approval Form · ${review.clientName ?? "the client"}`} value={evidence} onChange={setEvidence} dateLabel="Signed on" /> : null}
     </ActionForm>
   );
 }
@@ -414,7 +414,7 @@ export function StartKycReview({ clientId, clientName, reviews, onStarted }: { c
             <FloatCard className="p-5">
               <h2 className="text-base font-semibold tracking-tight">No KYC checklist set up yet</h2>
               <p className="mt-2 text-sm text-muted-foreground">
-                The system does not invent GRAL&apos;s KYC checklists: someone with the KYC policy permission (the Risk & Compliance
+                The system does not invent GRAL&apos;s KYC checklists: someone with the KYC policy permission (the Risk and Compliance
                 Manager) sets them up once per client type. Until then a review cannot start.
               </p>
             </FloatCard>

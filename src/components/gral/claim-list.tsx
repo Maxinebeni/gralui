@@ -32,14 +32,14 @@ import type { Claim } from "@/lib/types";
 export const CLAIM_TABS = [
   "Breached",
   "Approaching SLA",
-  "High Priority",
-  "Missing Docs",
+  "High priority",
+  "Missing docs",
   "Escalation",
   "Disputed",
 ] as const;
-/** "Open" and "Awaiting Sign-off" have no tab on the queue; their summary tiles set them. */
-export type ClaimTab = (typeof CLAIM_TABS)[number] | "All" | "Open" | "Awaiting Sign-off" | "Closed";
-const ALL_CLAIM_TABS: readonly ClaimTab[] = [...CLAIM_TABS, "All", "Open", "Awaiting Sign-off", "Closed"];
+/** "Open" and "Awaiting sign-off" have no tab on the queue; their summary tiles set them. */
+export type ClaimTab = (typeof CLAIM_TABS)[number] | "All" | "Open" | "Awaiting sign-off" | "Closed";
+const ALL_CLAIM_TABS: readonly ClaimTab[] = [...CLAIM_TABS, "All", "Open", "Awaiting sign-off", "Closed"];
 
 /** A view named in the URL (?view=Breached), or the fallback. */
 export function claimTabFrom(value: string | null, fallback: ClaimTab): ClaimTab {
@@ -67,9 +67,9 @@ export function filterClaims(claims: Claim[], tab: ClaimTab) {
       return open.filter((c) => claimSla(c) === "breached");
     case "Approaching SLA":
       return open.filter((c) => claimSla(c) === "approaching");
-    case "High Priority":
+    case "High priority":
       return open.filter((c) => c.priority === "P1");
-    case "Missing Docs":
+    case "Missing docs":
       return open.filter((c) => c.step === "DOCUMENTS" && missingDocuments(c).length > 0);
     case "Escalation":
       return open.filter(needsEscalation);
@@ -77,7 +77,7 @@ export function filterClaims(claims: Claim[], tab: ClaimTab) {
       return open.filter(isDisputed);
     case "Open":
       return open;
-    case "Awaiting Sign-off":
+    case "Awaiting sign-off":
       return open.filter((c) => nextSigner(c) !== null);
     case "Closed":
       return claims.filter(isClosed);
@@ -256,7 +256,7 @@ export function ClaimsTable({
           <HeadRow>
             <Th className="rounded-l-xl">Claim</Th>
             <Th>Priority</Th>
-            <Th>Days Open</Th>
+            <Th>Days open</Th>
             <Th>Amount (RWF)</Th>
             <Th>Step</Th>
             <Th className="rounded-r-xl">Handler</Th>

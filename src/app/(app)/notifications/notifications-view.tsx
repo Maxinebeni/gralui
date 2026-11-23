@@ -19,7 +19,7 @@ function moduleOf(type: string) {
   if (t.includes("RENEWAL")) return "Renewals";
   if (t.includes("CLIENT")) return "Clients";
   if (t.includes("CLAIM")) return "Claims";
-  if (t.includes("TASK")) return "My Work";
+  if (t.includes("TASK")) return "My work";
   return "Account";
 }
 

@@ -63,11 +63,11 @@ export function RolesView() {
   return (
     <>
       <PageHeader
-        title="Roles & Permissions"
+        title="Roles and permissions"
         action={
           canCreateRole ? (
             <NavyButton className="px-4 py-2 text-sm" onClick={() => setNewOpen(true)}>
-              <Plus className="size-4" /> New Role
+              <Plus className="size-4" /> New role
             </NavyButton>
           ) : null
         }

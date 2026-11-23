@@ -21,22 +21,22 @@ export function AllClientsView() {
   return (
     <>
       <PageHeader
-        title="All Client Records"
+        title="All client records"
         subtitle={
           loading && rows.length === 0
             ? undefined
-            : `${rows.length} ${rows.length === 1 ? "record" : "records"}${tab === "KYC Ready" ? " with KYC ready" : ""}`
+            : `${rows.length} ${rows.length === 1 ? "record" : "records"}${tab === "KYC ready" ? " with KYC ready" : ""}`
         }
         extraPills={<SectorFilter value={sector} sectors={sectors} onChange={setSector} />}
         action={
           <OutlineButton className="px-4 py-2 text-sm" disabled={rows.length === 0} onClick={() => downloadClients(rows)}>
-            <Download className="size-4" /> <span>Download<span className="hidden sm:inline"> {rows.length === allClients.length ? "All" : rows.length} Clients</span></span>
+            <Download className="size-4" /> <span>Download<span className="hidden sm:inline"> {rows.length === allClients.length ? "all" : rows.length} clients</span></span>
           </OutlineButton>
         }
       />
       <FloatCard className="mt-5 overflow-hidden">
         <CardHeader
-          title="Client List"
+          title="Client list"
           right={
             <div className="flex flex-wrap items-center gap-2">
               <ClientSearch value={query} onChange={setQuery} />

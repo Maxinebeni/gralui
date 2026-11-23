@@ -18,7 +18,7 @@ export const DEMO_IMPORT_LOOKUPS: ImportLookups = {
   ],
   products: [
     { id: PRODUCT_MOTOR, code: "MOTOR", name: "Motor Comprehensive" },
-    { id: PRODUCT_FIRE, code: "FIRE", name: "Fire & Allied Perils" },
+    { id: PRODUCT_FIRE, code: "FIRE", name: "Fire and Allied Perils" },
   ],
   managers: [
     { id: MANAGER_A, name: "Synthetic Accounts Executive 01" },
@@ -37,7 +37,7 @@ function client(n: number, name: string, manager: string, type: string, issues: 
     status,
     version: 0,
     original: { CLIENT: name.toUpperCase(), "ACC. MANAG": manager },
-    values: { "Client ID": ref, "Client Name": name, "Client Type": type, "Account Manager": manager },
+    values: { "Client ID": ref, "Client name": name, "Client type": type, "Account Manager": manager },
     issues,
   };
 }
@@ -54,14 +54,14 @@ function policy(n: number, clientRef: string, insurer: string, product: string, 
     original: { "POLICY NO": `SYN/${n}`, INSURER: insurer.toUpperCase(), "TYPE OF INSURANCE": product },
     values: {
       "Client ID": clientRef,
-      "Policy Number": `SYN/${n}`,
-      "Proposed Insurer": insurer,
-      "Proposed Type of Insurance": product,
+      "Policy number": `SYN/${n}`,
+      "Proposed insurer": insurer,
+      "Proposed type of insurance": product,
       "Insurer ID": "",
       "Product ID": "",
-      "Proposed Movement": "NEW",
-      "Date of Effect": "2024-01-01",
-      "Date of Expiry": "2024-12-31",
+      "Proposed movement": "NEW",
+      "Date of effect": "2024-01-01",
+      "Date of expiry": "2024-12-31",
       "Total Premium (RWF)": "450000",
     },
     issues,
@@ -75,12 +75,12 @@ const MAP_PRODUCT = issue("ERROR", "VALIDATION_PRODUCT_MAPPING_REQUIRED", "Produ
 const DEMO_ROW_TEMPLATE: Omit<ImportRow, "id">[] = [
   client(1, "Synthetic Client 01 Ltd", "S. EXECUTIVE", "Corporate", [MAP_MANAGER], "ERROR"),
   client(2, "Synthetic Client 02 Ltd", "S. EXECUTIVE", "Corporate", [MAP_MANAGER], "ERROR"),
-  client(3, "Synthetic Client 03", "S. EXECUTIVE", "", [MAP_MANAGER, issue("REVIEW", "VALIDATION_CLIENT_TYPE_REQUIRED", "Client Type", "Choose a confirmed client type before importing")], "ERROR"),
+  client(3, "Synthetic Client 03", "S. EXECUTIVE", "", [MAP_MANAGER, issue("REVIEW", "VALIDATION_CLIENT_TYPE_REQUIRED", "Client type", "Choose a confirmed client type before importing")], "ERROR"),
   client(4, "Synthetic Client 04 Ltd", MANAGER_A, "Corporate", [], "READY"),
   policy(1, "CL00001", "Synthetic Insurance", "Motor Comp.", [MAP_INSURER, MAP_PRODUCT], "ERROR"),
   policy(2, "CL00002", "Synthetic Insurance", "Motor Comp.", [MAP_INSURER, MAP_PRODUCT], "ERROR"),
   policy(3, "CL00003", "Synthetic Insurance", "Fire", [MAP_INSURER, MAP_PRODUCT], "ERROR"),
-  policy(4, "CL00004", "Example General", "Motor Comp.", [MAP_INSURER, MAP_PRODUCT, issue("WARNING", "VALIDATION_COMMISSION_RATE_UNKNOWN", "Commission Rate", "No commission rate was supplied; this historical rate remains unknown and commission amount cannot be calculated")], "ERROR"),
+  policy(4, "CL00004", "Example General", "Motor Comp.", [MAP_INSURER, MAP_PRODUCT, issue("WARNING", "VALIDATION_COMMISSION_RATE_UNKNOWN", "Commission rate", "No commission rate was supplied; this historical rate remains unknown and commission amount cannot be calculated")], "ERROR"),
 ];
 
 export const DEMO_IMPORTS: ImportBatch[] = [];
@@ -137,7 +137,7 @@ export function validateDemoImport(id: string): ImportBatch {
     const issues: ImportIssue[] = [];
     if (row.recordType === "CLIENT") {
       if (!isId(row.values["Account Manager"])) issues.push(MAP_MANAGER);
-      if (!row.values["Client Type"]) issues.push(issue("REVIEW", "VALIDATION_CLIENT_TYPE_REQUIRED", "Client Type", "Choose a confirmed client type before importing"));
+      if (!row.values["Client type"]) issues.push(issue("REVIEW", "VALIDATION_CLIENT_TYPE_REQUIRED", "Client type", "Choose a confirmed client type before importing"));
     } else {
       if (!isId(row.values["Insurer ID"])) issues.push(MAP_INSURER);
       if (!isId(row.values["Product ID"])) issues.push(MAP_PRODUCT);

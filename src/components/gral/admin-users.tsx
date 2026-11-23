@@ -119,7 +119,7 @@ export function UserPanel({
           </h3>
           <p className="mt-1 text-xs text-muted-foreground">
             A {CATEGORY_LABEL[u.profileCategory].toLowerCase()} account can only have{" "}
-            {CATEGORY_LABEL[u.profileCategory].toLowerCase()} roles. What each role can do is set under Roles & Permissions.
+            {CATEGORY_LABEL[u.profileCategory].toLowerCase()} roles. What each role can do is set under Roles and permissions.
           </p>
           {rolesLocked ? (
             <>
@@ -301,7 +301,7 @@ export function InviteUserForm({
     <form onSubmit={submit} noValidate className="flex min-h-full flex-col">
       <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">Invite User</h2>
+          <h2 className="text-lg font-semibold tracking-tight">Invite user</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             They get an email with a link to set their own password. You never see or set it.
           </p>
@@ -399,7 +399,7 @@ export function InviteUserForm({
           Cancel
         </OutlineButton>
         <NavyButton type="submit" disabled={saving} className="px-4 py-2 text-sm">
-          {saving ? "Sending…" : "Send Invitation"}
+          {saving ? "Sending…" : "Send invitation"}
         </NavyButton>
       </div>
     </form>

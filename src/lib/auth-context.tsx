@@ -14,7 +14,11 @@ const OLD_STORAGE_KEY = "gral.session";
 function readDemoSession(): SessionUser | null {
   try {
     const raw = localStorage.getItem(OLD_STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as SessionUser) : null;
+    if (!raw) return null;
+    const user = JSON.parse(raw) as SessionUser;
+    // Sessions saved before the role was renamed ("&" became "and").
+    if ((user.role as string) === "Risk & Compliance Manager") user.role = "Risk and Compliance Manager";
+    return user;
   } catch {
     return null;
   }

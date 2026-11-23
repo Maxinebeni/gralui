@@ -114,7 +114,7 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
     <form onSubmit={submit} noValidate className="flex min-h-full flex-col">
       <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">New Lead</h2>
+          <h2 className="text-lg font-semibold tracking-tight">New lead</h2>
         </div>
         <button
           type="button"
@@ -199,7 +199,7 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
           Cancel
         </OutlineButton>
         <NavyButton type="submit" disabled={saving} className="px-4 py-2 text-sm">
-          {saving ? "Saving…" : "Register Lead"}
+          {saving ? "Saving…" : "Register lead"}
         </NavyButton>
       </div>
     </form>

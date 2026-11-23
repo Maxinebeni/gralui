@@ -35,7 +35,7 @@ export function TrackWorkspace({ detail, onChanged }: { detail: TrackDetail; onC
   const actions = selected === t.stage && t.status === "OPEN" ? (STAGE_ACTIONS[selected] ?? []).filter((a) => t.availableActions.includes(a)) : [];
   const handoff = selected === t.stage ? trackHandoff(t) : null;
   return <>
-    <Link href="/my-work" className="mb-3 inline-flex text-xs text-muted-foreground hover:text-primary">Back to My Work</Link>
+    <Link href="/my-work" className="mb-3 inline-flex text-xs text-muted-foreground hover:text-primary">Back to my work</Link>
     <PageHeader title={t.productName ?? "Policy track"} subtitle={`${detail.lead?.name ?? "Assigned policy track"} · ${t.id}`} />
     <FloatCard className="mt-5 space-y-4 p-4 sm:p-5">
       <div className="flex flex-wrap items-center gap-2"><HealthChip health={trackHealth(t)} /><Chip>Step {t.stage} of 11</Chip>{detail.lead ? <Link className="text-xs text-primary underline" href={`/clients/leads/${encodeURIComponent(detail.lead.id)}?track=${encodeURIComponent(t.id)}`}>Open parent lead</Link> : null}</div>

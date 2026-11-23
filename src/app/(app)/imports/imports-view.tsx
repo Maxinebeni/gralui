@@ -132,12 +132,12 @@ export function ImportsView() {
   return (
     <>
       <PageHeader
-        title="Data Import"
+        title="Data import"
         subtitle="GRAL's historical clients and policies, from the cleaned registers"
         action={
           canUpload ? (
             <NavyButton className="px-4 py-2 text-sm" onClick={() => setUpload({})}>
-              <Plus className="size-4" /> New Import
+              <Plus className="size-4" /> New import
             </NavyButton>
           ) : null
         }
@@ -236,7 +236,7 @@ function UploadForm({ parentBatchId, onClose, onDone }: { parentBatchId?: string
   return (
     <div>
       <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-6 sm:py-5">
-        <h2 className="text-lg font-semibold tracking-tight">{parentBatchId ? "Upload Corrected File" : "New Import"}</h2>
+        <h2 className="text-lg font-semibold tracking-tight">{parentBatchId ? "Upload corrected file" : "New import"}</h2>
         <button
           type="button"
           aria-label="Close new import"
@@ -281,7 +281,7 @@ function UploadForm({ parentBatchId, onClose, onDone }: { parentBatchId?: string
         <p className="text-[11px] text-subtle">Only synthetic data until GRAL confirms where the system is hosted.</p>
         <div className="flex flex-wrap gap-2">
           <NavyButton className="px-4 py-2 text-sm" disabled={step !== "idle"} onClick={submit}>
-            {step === "uploading" ? "Uploading…" : step === "checking" ? "Checking every row…" : "Upload and Check"}
+            {step === "uploading" ? "Uploading…" : step === "checking" ? "Checking every row…" : "Upload and check"}
           </NavyButton>
           <OutlineButton className="px-4 py-2 text-sm" onClick={onClose}>
             Cancel
@@ -368,7 +368,7 @@ function BatchPage({ id, backHref, onUploadCorrected }: { id: string; backHref: 
 
   const back = (
     <Link href={backHref} scroll={false} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
-      <ArrowLeft className="size-4" /> Data Import
+      <ArrowLeft className="size-4" /> Data import
     </Link>
   );
 
@@ -445,7 +445,7 @@ function BatchPage({ id, backHref, onUploadCorrected }: { id: string; backHref: 
         <StatTile label="Clients" value={n(batch.clients)} />
         <StatTile label="Policies" value={n(batch.policies)} delay={40} />
         <StatTile label="Ready" value={n(batch.ready)} delay={80} />
-        <StatTile label="Needs a Decision" value={n(batch.review)} delay={120} />
+        <StatTile label="Needs a decision" value={n(batch.review)} delay={120} />
         <StatTile label="Blocked" value={n(batch.errors)} delay={160} />
         <StatTile label="Imported" value={n(batch.committed)} delay={200} />
       </div>
@@ -624,7 +624,7 @@ function displayValue(field: string, value: unknown, lookups?: ImportLookups): s
 }
 
 function RowValues({ row, lookups }: { row: ImportRow; lookups?: ImportLookups }) {
-  const entries = Object.entries(row.values).filter(([k, v]) => valueText(v) && !k.startsWith("Import Provenance") && k !== "Source Row ID");
+  const entries = Object.entries(row.values).filter(([k, v]) => valueText(v) && !k.startsWith("Import provenance") && k !== "Source row ID");
   return (
     <dl className="mt-2 grid gap-x-4 gap-y-1 rounded-xl bg-pale/60 px-3 py-2 text-[11px] sm:grid-cols-2">
       {entries.map(([k, v]) => (

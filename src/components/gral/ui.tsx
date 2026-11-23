@@ -406,7 +406,7 @@ export function ChartCard({
 export function QuickAction({ children, delay = 0 }: { children: ReactNode; delay?: number }) {
   return (
     <FloatCard className="p-4 sm:p-5" delay={delay}>
-      <h2 className="text-base font-semibold tracking-tight">Quick Action</h2>
+      <h2 className="text-base font-semibold tracking-tight">Quick action</h2>
       <div className="mt-3 space-y-2">{children}</div>
     </FloatCard>
   );

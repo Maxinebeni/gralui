@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { RenewalsView } from "../renewals-view";
 
 export const metadata: Metadata = {
-  title: "All Renewals / GRAL Operations Platform",
+  title: "All renewals / GRAL Operations Platform",
   description: "Every GRAL policy renewal and the milestone it is on.",
 };
 

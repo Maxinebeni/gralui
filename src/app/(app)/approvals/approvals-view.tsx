@@ -93,14 +93,14 @@ export function ApprovalsView() {
       />
 
       <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        <StatTile icon={Inbox} label="Waiting for Me" value={String(mine.length)} onClick={() => setTab("Waiting for me")} active={tab === "Waiting for me"} />
-        <StatTile icon={AlarmClock} label="Past Due" value={String(overdue.length)} tone="down" delay={60} />
-        <StatTile icon={CornerUpLeft} label="Returned to Me" value={String(returned.length)} delay={120} />
+        <StatTile icon={Inbox} label="Waiting for me" value={String(mine.length)} onClick={() => setTab("Waiting for me")} active={tab === "Waiting for me"} />
+        <StatTile icon={AlarmClock} label="Past due" value={String(overdue.length)} tone="down" delay={60} />
+        <StatTile icon={CornerUpLeft} label="Returned to me" value={String(returned.length)} delay={120} />
         <StatTile icon={CheckCircle2} label="Decided" value={String(decided.length)} delay={180} onClick={() => setTab("Decided")} active={tab === "Decided"} />
       </div>
 
       <FloatCard className="mt-4 overflow-hidden" delay={120}>
-        <CardHeader title="Approval Inbox" right={<SegmentedTabs tabs={tabs} value={tab} onChange={setTab} />} />
+        <CardHeader title="Approval inbox" right={<SegmentedTabs tabs={tabs} value={tab} onChange={setTab} />} />
         <div className="mt-4 px-2 pb-4">
           <table className="stack-table w-full table-fixed border-separate border-spacing-0 text-left">
             <colgroup>

@@ -134,7 +134,7 @@ export function RenewalsView({ full = false }: { full?: boolean }) {
           scroll={false}
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
         >
-          <ArrowLeft className="size-4" /> {full ? "All Renewals" : "Renewals"}
+          <ArrowLeft className="size-4" /> {full ? "All renewals" : "Renewals"}
         </Link>
         <FloatCard className="mt-4 overflow-hidden">
           <RenewalCasePanel key={open.id} renewal={open} onChanged={replaceCase} />
@@ -151,11 +151,11 @@ export function RenewalsView({ full = false }: { full?: boolean }) {
         </Link>
       ) : null}
       <PageHeader
-        title={full ? "All Renewals" : "Renewals Pipeline"}
+        title={full ? "All renewals" : "Renewals pipeline"}
         action={
           canSeeExits ? (
             <Link href="/renewals/exits" className="rounded-full bg-card px-4 py-2 text-xs font-medium shadow-sm hover:text-primary">
-              Exit Register
+              Exit register
             </Link>
           ) : undefined
         }
@@ -172,9 +172,9 @@ export function RenewalsView({ full = false }: { full?: boolean }) {
 
       {full ? null : (
       <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        <StatTile label="Due in 30 Days" value={String(dueIn30)} onClick={() => setTab("Next 30 days")} active={tab === "Next 30 days"} />
+        <StatTile label="Due in 30 days" value={String(dueIn30)} onClick={() => setTab("Next 30 days")} active={tab === "Next 30 days"} />
         <StatTile label="Overdue" value={String(overdue)} delay={60} onClick={() => setTab("Overdue")} active={tab === "Overdue"} />
-        <StatTile label="On Track" value={String(onTrack)} delay={120} onClick={() => setTab("On track")} active={tab === "On track"} />
+        <StatTile label="On track" value={String(onTrack)} delay={120} onClick={() => setTab("On track")} active={tab === "On track"} />
         <StatTile label="Premium Due for Renewal (RWF)" value={`${(totalPremium / 1000000).toFixed(1)}M`} delay={180} onClick={() => setTab("All")} active={tab === "All"} />
       </div>
       )}
@@ -183,7 +183,7 @@ export function RenewalsView({ full = false }: { full?: boolean }) {
         <div className="min-w-0 space-y-3 sm:space-y-4">
           <FloatCard className="overflow-hidden" delay={120}>
             <CardHeader
-              title={full ? `${rows.length} ${rows.length === 1 ? "renewal" : "renewals"}` : tab === "On track" ? "On Track" : "Renewal Pipeline"}
+              title={full ? `${rows.length} ${rows.length === 1 ? "renewal" : "renewals"}` : tab === "On track" ? "On track" : "Renewal pipeline"}
               right={
                 <div className="flex flex-wrap items-center gap-2">
                   <SegmentedTabs tabs={TABS} value={tab as (typeof TABS)[number]} onChange={setTab} />
@@ -238,12 +238,12 @@ export function RenewalsView({ full = false }: { full?: boolean }) {
           </QuickAction>
 
           <FloatCard className="p-5" delay={220}>
-            <h2 className="text-base font-semibold tracking-tight">Renewals by Insurer</h2>
+            <h2 className="text-base font-semibold tracking-tight">Renewals by insurer</h2>
             <DistributionRow items={byInsurer.map(([label, count]) => ({ label, value: String(count) }))} />
           </FloatCard>
 
           <FloatCard className="p-5" delay={280}>
-            <h2 className="text-base font-semibold tracking-tight">Renewals by Stage</h2>
+            <h2 className="text-base font-semibold tracking-tight">Renewals by stage</h2>
             <div className="mt-4">
               <StageBar stages={stageCounts} />
             </div>

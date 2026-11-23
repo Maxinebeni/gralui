@@ -138,22 +138,22 @@ export function MyWorkView() {
   return (
     <>
       <PageHeader
-        title="My Work"
+        title="My work"
         subtitle={`${mine.length} open ${mine.length === 1 ? "task" : "tasks"} for ${user.name}`}
         action={
           <NavyButton className="px-4 py-2 text-sm" onClick={() => setNewOpen(true)}>
-            <Plus className="size-4" /> New Task
+            <Plus className="size-4" /> New task
           </NavyButton>
         }
       />
 
       <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        <StatTile icon={ListTodo} label="My Open Tasks" value={String(mine.length)} onClick={() => { setScopeTab("Mine"); setDueFilter("All open"); }} active={scopeTab === "Mine" && dueFilter === "All open"} />
+        <StatTile icon={ListTodo} label="My open tasks" value={String(mine.length)} onClick={() => { setScopeTab("Mine"); setDueFilter("All open"); }} active={scopeTab === "Mine" && dueFilter === "All open"} />
         <StatTile icon={AlarmClock} label="Overdue" value={String(mine.filter((t) => t.dueDate < today).length)} tone="down" delay={60} onClick={() => { setScopeTab("Mine"); setDueFilter("Overdue"); }} active={scopeTab === "Mine" && dueFilter === "Overdue"} />
-        <StatTile icon={CalendarDays} label="Due Today" value={String(mine.filter((t) => t.dueDate === today).length)} delay={120} onClick={() => { setScopeTab("Mine"); setDueFilter("Due today"); }} active={scopeTab === "Mine" && dueFilter === "Due today"} />
+        <StatTile icon={CalendarDays} label="Due today" value={String(mine.filter((t) => t.dueDate === today).length)} delay={120} onClick={() => { setScopeTab("Mine"); setDueFilter("Due today"); }} active={scopeTab === "Mine" && dueFilter === "Due today"} />
         <StatTile
           icon={CheckCircle2}
-          label={managesTeamWork ? "Team Open Tasks" : "Done"}
+          label={managesTeamWork ? "Team open tasks" : "Done"}
           value={String(managesTeamWork ? open.length : visible.filter((t) => t.status === "DONE").length)}
           delay={180}
           onClick={() => selectScope(managesTeamWork ? "Team" : "Done")}
@@ -162,7 +162,7 @@ export function MyWorkView() {
       </div>
 
       <FloatCard className="mt-4 overflow-hidden" delay={120}>
-        <CardHeader title="Task List" right={<SegmentedTabs tabs={scopeTabs} value={scopeTab} onChange={selectScope} />} />
+        <CardHeader title="Task list" right={<SegmentedTabs tabs={scopeTabs} value={scopeTab} onChange={selectScope} />} />
         <div className="mt-3 flex flex-col gap-3 px-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
           {scopeTab !== "Done" ? (
             <SegmentedTabs tabs={["All open", "Overdue", "Due today", "Next 5 days"] as const} value={dueFilter} onChange={selectDueFilter} />
@@ -494,7 +494,7 @@ function NewTaskForm({
     <form onSubmit={submit} noValidate className="flex min-h-full flex-col">
       <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">New Task</h2>
+          <h2 className="text-lg font-semibold tracking-tight">New task</h2>
           <p className="mt-1 text-xs text-muted-foreground">
             For work that is not already a step on a claim, renewal or approval. Those appear in My Work by themselves.
           </p>
@@ -545,7 +545,7 @@ function NewTaskForm({
           Cancel
         </OutlineButton>
         <NavyButton type="submit" className="px-4 py-2 text-sm">
-          Add Task
+          Add task
         </NavyButton>
       </div>
     </form>

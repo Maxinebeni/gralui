@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { LeadsView } from "../leads-view";
 
 export const metadata: Metadata = {
-  title: "All Leads / GRAL Operations Platform",
+  title: "All leads / GRAL Operations Platform",
   description: "Every lead in GRAL's client acquisition pipeline.",
 };
 

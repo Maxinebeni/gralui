@@ -32,7 +32,7 @@ import { getPoliciesByInsurer } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import type { ClientType, InsurerSummary } from "@/lib/types";
 
-const CLIENT_TYPES: ClientType[] = ["Corporate", "State Enterprise", "NGO", "Financial Institution", "SME"];
+const CLIENT_TYPES: ClientType[] = ["Corporate", "State enterprise", "NGO", "Financial institution", "SME"];
 /** The dashboard shows a compact list; the full list is on /clients/all. */
 const PREVIEW_ROWS = 4;
 
@@ -63,16 +63,16 @@ export function ClientsView() {
   return (
     <>
       <PageHeader
-        title="Client Records"
+        title="Client records"
         extraPills={<SectorFilter value={sector} sectors={sectors} onChange={setSector} />}
         action={
           <>
             <OutlineButton className="px-4 py-2 text-sm" disabled={allClients.length === 0} onClick={() => downloadClients(allClients)}>
-              <Download className="size-4" /> <span>Download<span className="hidden sm:inline"> All Clients</span></span>
+              <Download className="size-4" /> <span>Download<span className="hidden sm:inline"> all clients</span></span>
             </OutlineButton>
             {canManageClients(user) ? (
               <NavyButton className="px-4 py-2 text-sm" onClick={() => setAdding(true)}>
-                <Plus className="size-4" /> Add Client
+                <Plus className="size-4" /> Add client
               </NavyButton>
             ) : null}
           </>
@@ -80,16 +80,16 @@ export function ClientsView() {
       />
 
       <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        <StatTile label="Total Clients" value={String(inSector.length)} onClick={() => setTab("All")} active={tab === "All"} />
-        <StatTile label="KYC Ready" value={String(kycReady)} delay={60} onClick={() => setTab("KYC Ready")} active={tab === "KYC Ready"} />
-        <StatTile label="KYC Not Ready" value={String(inSector.length - kycReady)} delay={120} onClick={() => setTab("KYC Not Ready")} active={tab === "KYC Not Ready"} />
-        <StatTile label="Non-Compliant Flags" value={String(flags)} delay={180} onClick={() => setTab("Non-Compliant")} active={tab === "Non-Compliant"} />
+        <StatTile label="Total clients" value={String(inSector.length)} onClick={() => setTab("All")} active={tab === "All"} />
+        <StatTile label="KYC ready" value={String(kycReady)} delay={60} onClick={() => setTab("KYC ready")} active={tab === "KYC ready"} />
+        <StatTile label="KYC not ready" value={String(inSector.length - kycReady)} delay={120} onClick={() => setTab("KYC not ready")} active={tab === "KYC not ready"} />
+        <StatTile label="Non-compliant flags" value={String(flags)} delay={180} onClick={() => setTab("Non-compliant")} active={tab === "Non-compliant"} />
       </div>
 
       <div className="mt-4">
         <FloatCard className="overflow-hidden" delay={120}>
           <CardHeader
-            title={tab === "KYC Ready" ? "KYC Ready" : "Client Records"}
+            title={tab === "KYC ready" ? "KYC ready" : "Client records"}
             right={
               <div className="flex flex-wrap items-center gap-2">
                 <ClientSearch value={query} onChange={setQuery} />
@@ -127,7 +127,7 @@ export function ClientsView() {
         </summary>
         <div className="mt-3 grid min-w-0 gap-3 sm:mt-4 sm:gap-4 md:grid-cols-2 2xl:grid-cols-3">
           <FloatCard className="p-5">
-            <h2 className="text-base font-semibold tracking-tight">Clients by Type</h2>
+            <h2 className="text-base font-semibold tracking-tight">Clients by type</h2>
             <div className="mt-4">
               <SegmentedBar segments={typeSegments} />
             </div>
@@ -135,7 +135,7 @@ export function ClientsView() {
           </FloatCard>
           <ChartCard
             delay={0}
-            title="Active Policies by Insurer"
+            title="Active policies by insurer"
             legend={[
               { label: "Policies", tone: "primary" },
               { label: "Premium (RWF m)", tone: "sky" },
