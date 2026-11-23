@@ -47,9 +47,9 @@ export function TwoStepLogin() {
       {MOCK_AUTH ? (
         <p className="mt-4 text-xs text-subtle">Available on the live system.</p>
       ) : step.name === "idle" ? (
-        <div className="mt-4 flex flex-wrap gap-2">
-          <NavyButton onClick={() => setStep({ name: "password" })}>Set up two-step login</NavyButton>
+        <div className="mt-4 flex flex-wrap justify-between gap-2">
           <OutlineButton onClick={() => setStep({ name: "disable" })}>Turn it off</OutlineButton>
+          <NavyButton onClick={() => setStep({ name: "password" })}>Set up two-step login</NavyButton>
         </div>
       ) : step.name === "password" ? (
         <StartSetup onCancel={() => setStep({ name: "idle" })} onStarted={(secret, uri) => setStep({ name: "scan", secret, uri })} />
@@ -99,11 +99,11 @@ function StartSetup({ onCancel, onStarted }: { onCancel: () => void; onStarted: 
           {error}
         </p>
       ) : null}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap justify-between gap-2">
+        <OutlineButton onClick={onCancel}>Cancel</OutlineButton>
         <NavyButton type="submit" disabled={busy}>
           {busy ? "Checking…" : "Continue"}
         </NavyButton>
-        <OutlineButton onClick={onCancel}>Cancel</OutlineButton>
       </div>
     </form>
   );
@@ -160,11 +160,11 @@ function ScanAndConfirm({
           {error}
         </p>
       ) : null}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap justify-between gap-2">
+        <OutlineButton onClick={onCancel}>Cancel</OutlineButton>
         <NavyButton type="submit" disabled={busy}>
           {busy ? "Checking…" : "Confirm"}
         </NavyButton>
-        <OutlineButton onClick={onCancel}>Cancel</OutlineButton>
       </div>
     </form>
   );
@@ -236,11 +236,11 @@ function TurnOff({ onCancel }: { onCancel: () => void }) {
           {error}
         </p>
       ) : null}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap justify-between gap-2">
+        <OutlineButton onClick={onCancel}>Cancel</OutlineButton>
         <NavyButton type="submit" disabled={busy}>
           {busy ? "Turning off…" : "Turn off two-step login"}
         </NavyButton>
-        <OutlineButton onClick={onCancel}>Cancel</OutlineButton>
       </div>
     </form>
   );

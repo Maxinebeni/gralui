@@ -4,19 +4,23 @@ import { useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { KycBadge } from "@/components/gral/kyc-badge";
 import { PageHeader, SlideOver } from "@/components/gral/shell";
 import {
+  ChartCard,
   Chip,
+  DistributionRow,
   FloatCard,
   NavyButton,
+  Person,
   SegmentedTabs,
   StageBar,
   StatTile,
 } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
-import { formatRwf } from "@/lib/format";
-import { toClaimSummary } from "@/lib/api";
+import { formatRwf, timeAgo } from "@/lib/format";
+import { activityFrom, toClaimSummary } from "@/lib/api";
 import { useClaims, useClients, useRenewals } from "@/lib/queries";
 import { isClosed } from "@/lib/claims";
 import { useCurrentUser } from "@/lib/auth-context";
@@ -26,6 +30,7 @@ import {
   claimStatus,
   claimsByStatus,
   claimsOpenedThisMonth,
+  clientsByCategory,
   expiringBetween,
   hasActivePolicy,
   inForce,
@@ -33,10 +38,12 @@ import {
   overdueClaims,
   overdueRenewals,
   policyRows,
+  settledPerMonth,
+  topClientsByPremium,
   unpaidPolicies,
   type PolicyRow,
 } from "@/lib/dashboard";
-import type { Claim, Client, ClientClaim, RenewalCase, Role } from "@/lib/types";
+import type { ActivityItem, Claim, Client, ClientClaim, RenewalCase, Role } from "@/lib/types";
 
 type Attention = {
   dot: "red" | "amber" | "blue";
@@ -184,6 +191,7 @@ export function OverviewView() {
     }
     return list;
   }, [openClaims, renewals, clients, canClients, role]);
+  const activity: ActivityItem[] = useMemo(() => activityFrom(allClaims, renewals).slice(0, 5), [allClaims, renewals]);
   const visibleAttention = view === "Clients"
     ? attention.filter((item) => item.module === "Clients")
     : view === "Claims"
@@ -220,12 +228,13 @@ export function OverviewView() {
         </FloatCard>
       ) : null}
 
-      {view ? visibleAttention.length === 0 ? (
-        <div className="mt-3 rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
-          You&apos;re all caught up.
-        </div>
-      ) : (
-        <div className="mt-3">
+      {view ? (
+        <Row>
+          {visibleAttention.length === 0 ? (
+            <div className="h-fit rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+              You&apos;re all caught up.
+            </div>
+          ) : (
           <FloatCard className="p-4 sm:p-5" delay={300}>
             <h2 className="text-base font-semibold tracking-tight">Needs your attention</h2>
             <div className="mt-3 divide-y divide-border">
@@ -254,9 +263,28 @@ export function OverviewView() {
               ))}
             </div>
           </FloatCard>
-        </div>
+          )}
+          <FloatCard className="p-4 sm:p-5" delay={340}>
+            <h2 className="text-base font-semibold tracking-tight">Recent activity</h2>
+            {activity.length === 0 ? <p className="mt-4 text-xs text-muted-foreground">Nothing recorded yet.</p> : null}
+            <div className="mt-4 space-y-4">
+              {activity.map((a, i) => (
+                <Link key={`${a.at}-${i}`} href={a.href} className="block min-w-0 hover:opacity-80">
+                  <Person name={a.who} />
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    {a.what} · {timeAgo(a.at)}
+                  </p>
+                </Link>
+              ))}
+            </div>
+            <Link href="/activity" className="mt-4 inline-block text-xs font-semibold text-primary underline underline-offset-4 hover:opacity-70">
+              View all
+            </Link>
+          </FloatCard>
+        </Row>
       ) : null}
 
+      {view === "Claims" ? <SettledChart claims={allClaims} /> : null}
     </>
   );
 }
@@ -578,11 +606,19 @@ function ClientsView({ clients }: { clients: Client[] }) {
   const active = clients.filter((c) => hasActivePolicy(c, today));
   const noPolicy = clients.filter((c) => !hasActivePolicy(c, today));
   const fresh = newThisMonth(clients, today);
+  const router = useRouter();
+  const top = topClientsByPremium(clients, 15, today);
+  const categories = clientsByCategory(clients);
+  const completeFiles = clients.filter((c) => c.docsFiled === c.docsTotal && !c.nonCompliant).length;
+  const nonCompliant = clients.filter((c) => c.nonCompliant).length;
 
   const drills: Record<string, Drill> = {
     "active-clients": clientDrill("Clients with an active policy", active),
     "new-clients": clientDrill("New clients this month", fresh),
     "no-policy": clientDrill("Clients with no active policy", noPolicy),
+    ...Object.fromEntries(
+      categories.map((cat) => [`category:${cat.label}`, clientDrill(`${cat.label} clients`, clients.filter((c) => c.type === cat.label))]),
+    ),
   };
 
   return (
@@ -595,6 +631,33 @@ function ClientsView({ clients }: { clients: Client[] }) {
         ]}
       />
       <DrillPanel drills={drills} />
+
+      <Row>
+        <SectionCard title="Top clients by premium" delay={120}>
+          <Rows
+            head={["#", "Client", "Category", "Premium"]}
+            rows={top.map((t, i) => ({ ...t, rank: i + 1 }))}
+            cols="2rem minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)"
+            cells={(t) => [t.rank, t.client.name, t.client.type, <span key="p" className="font-medium">{formatRwf(t.premium)}</span>]}
+            href={(t) => clientHref(t.client.id)}
+            empty="None."
+          />
+        </SectionCard>
+        <div className="min-w-0 space-y-3 sm:space-y-4">
+          <SectionCard title="Clients by category" delay={160}>
+            <StageBar wideLabels stages={categories} onSelect={(label) => router.replace(showHref(`category:${label}`), { scroll: false })} />
+          </SectionCard>
+          <SectionCard title="Client file status" delay={200}>
+            <DistributionRow
+              items={[
+                { label: "Complete", value: String(completeFiles), tone: "success" },
+                { label: "Partial", value: String(clients.length - completeFiles - nonCompliant), tone: "warning" },
+                { label: "Non-compliant", value: String(nonCompliant), tone: "danger" },
+              ]}
+            />
+          </SectionCard>
+        </div>
+      </Row>
 
       <div className="mt-3">
         <SectionCard title="Clients with no active policy" delay={200}>
@@ -628,8 +691,12 @@ function ClaimsView({ claims }: { claims: Claim[] }) {
   const overdue = overdueClaims(claims, today);
   const opened = claimsOpenedThisMonth(claims, today);
   const statusStages = claimsByStatus(claims).filter((stage) => stage.count > 0);
+  const monthly = settledPerMonth(claims, 6, today);
+  const settledIn = (key: string) => claims.filter((c) => c.closure?.outcome === "SETTLED" && c.closure.closedAt.startsWith(key));
+  const thisMonth = monthly.at(-1)!;
 
   const drills: Record<string, Drill> = {
+    ...Object.fromEntries(monthly.map((m) => [`settled:${m.key}`, claimDrill(`Claims settled in ${m.month}`, settledIn(m.key))])),
     "open-claims": claimDrill("Open claims", open),
     "opened-month": claimDrill("Claims opened this month", opened),
     "overdue-claims": claimDrill("Overdue claims", overdue),
@@ -644,6 +711,7 @@ function ClaimsView({ claims }: { claims: Claim[] }) {
         items={[
           { label: "Total open claims", value: open.length, href: showHref("open-claims") },
           { label: "Claims opened this month", value: opened.length, href: showHref("opened-month") },
+          { label: "Claims settled this month", value: thisMonth.count, href: showHref(`settled:${thisMonth.key}`) },
           { label: "Overdue claims", value: overdue.length, href: showHref("overdue-claims") },
         ]}
       />
@@ -679,5 +747,36 @@ function ClaimsView({ claims }: { claims: Claim[] }) {
         </SectionCard>
       </div>
     </>
+  );
+}
+
+/** Sits below Needs your attention and Recent activity on the Claims view. */
+function SettledChart({ claims }: { claims: Claim[] }) {
+  const router = useRouter();
+  const monthly = settledPerMonth(claims, 6, todayIso());
+  return (
+    <div className="mt-3 sm:mt-4">
+      <ChartCard delay={380} title="Claims settled per month" legend={[]} height={200}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={monthly} margin={{ top: 4, right: 8, left: -24, bottom: 0 }}>
+            <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" vertical={false} />
+            <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
+            <Tooltip cursor={{ fill: "var(--secondary)" }} contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", fontSize: 11 }} />
+            <Bar
+              dataKey="count"
+              name="Claims settled"
+              fill="var(--primary)"
+              radius={[6, 6, 0, 0]}
+              maxBarSize={36}
+              cursor="pointer"
+              onClick={(bar: { payload?: { key?: string } }) => {
+                if (bar.payload?.key) router.replace(showHref(`settled:${bar.payload.key}`), { scroll: false });
+              }}
+            />
+          </BarChart>
+        </ResponsiveContainer>
+      </ChartCard>
+    </div>
   );
 }
