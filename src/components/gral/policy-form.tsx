@@ -263,7 +263,7 @@ export function PolicyForm({
   return (
     <form onSubmit={handleSubmit} noValidate className="mt-4 rounded-2xl border border-border p-5">
       <h3 className="text-base font-semibold tracking-tight">
-        {editing ? `Edit Policy ${policy?.id}` : `Add Policy for ${client.name}`}
+        {editing ? `Edit policy ${policy?.id}` : `Add policy for ${client.name}`}
       </h3>
       <p className="mt-1 text-xs text-muted-foreground">
         All fields are required. Amounts are in RWF. Balance and commission are worked out automatically.
@@ -414,12 +414,12 @@ export function PolicyForm({
         </Section>
       </div>
  
-      <div className="mt-6 flex justify-end gap-2">
+      <div className="mt-6 flex justify-between gap-2">
         <OutlineButton onClick={onCancel} className="px-4 py-2 text-sm">
           Cancel
         </OutlineButton>
         <NavyButton type="submit" disabled={saving} className="px-4 py-2 text-sm">
-          {editing ? "Review and Save" : "Review and Add"}
+          {editing ? "Review and save" : "Review and add"}
         </NavyButton>
       </div>
 
@@ -441,7 +441,7 @@ export function PolicyForm({
             : []
         }
         warnings={review?.warnings ?? []}
-        confirmLabel={editing ? "Save Policy" : "Add Policy"}
+        confirmLabel={editing ? "Save policy" : "Add policy"}
         saving={saving}
         onConfirm={() => review && save(review.input)}
         onBack={() => setReview(null)}

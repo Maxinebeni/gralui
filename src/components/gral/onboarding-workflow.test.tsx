@@ -10,7 +10,7 @@ const mock = vi.hoisted(() => ({
   checkProspectDuplicates: vi.fn(), openProspect: vi.fn(), linkProspectCandidate: vi.fn(), listClients: vi.fn(), loadCommandHistory: vi.fn(), listDocuments: vi.fn(),
   getTrack: vi.fn(),
 }));
-vi.mock("@/lib/api", () => ({ ...mock, MOCK_AUTH: false, DEMO_REVIEWER: "Risk & Compliance Manager" }));
+vi.mock("@/lib/api", () => ({ ...mock, MOCK_AUTH: false, DEMO_REVIEWER: "Risk and Compliance Manager" }));
 vi.mock("@/lib/auth-context", () => ({ useCurrentUser: () => ({ user: state.user }) }));
 vi.mock("@/lib/queries", () => ({ useRefresh: () => state.refresh }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: state.push, replace: state.push }) }));
@@ -148,13 +148,13 @@ describe("KYC assignment and review", () => {
     expect(mock.listKycReviewers).not.toHaveBeenCalled();
   });
   it("hides screening and decision controls from an unassigned compliance user", () => {
-    state.user = { ...defaultUser, id: "other-reviewer", role: "Risk & Compliance Manager", permissions: ["CLIENT_READ", "KYC_READ", "KYC_SCREEN", "KYC_DECIDE"] };
+    state.user = { ...defaultUser, id: "other-reviewer", role: "Risk and Compliance Manager", permissions: ["CLIENT_READ", "KYC_READ", "KYC_SCREEN", "KYC_DECIDE"] };
     render(<KycReviewPage review={{ ...review, reviewerId, status: "SUBMITTED" }} history={[]} onChanged={vi.fn()} />);
     expect(screen.queryByRole("button", { name: "Record the screening" })).not.toBeInTheDocument();
     expect(screen.queryByText("Your decision")).not.toBeInTheDocument();
   });
   it("shows screening and decisions to the assigned reviewer", () => {
-    state.user = { ...defaultUser, id: reviewerId, role: "Risk & Compliance Manager", permissions: ["CLIENT_READ", "KYC_READ", "KYC_SCREEN", "KYC_DECIDE"] };
+    state.user = { ...defaultUser, id: reviewerId, role: "Risk and Compliance Manager", permissions: ["CLIENT_READ", "KYC_READ", "KYC_SCREEN", "KYC_DECIDE"] };
     render(<KycReviewPage review={{ ...review, reviewerId, status: "SUBMITTED" }} history={[]} onChanged={vi.fn()} />);
     expect(screen.getByRole("button", { name: "Record the screening" })).toBeInTheDocument();
     expect(screen.getByText("Your decision")).toBeInTheDocument();
@@ -338,7 +338,7 @@ describe("duplicate reviews and command recovery", () => {
     render(<TrackWorkspace detail={{ track: { ...track, stage: 4, availableActions: [] }, lead: null, history: [] }} onChanged={vi.fn()} />);
     await screen.findByText(/Assigned policy track/);
     expect(screen.queryByRole("link", { name: "Open parent lead" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Back to My Work" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to my work" })).toBeInTheDocument();
   });
   it("gates direct track and KYC routes independently from the lead menu", () => {
     const specialist = { ...defaultUser, permissions: ["CLIENT_READ", "ONBOARDING_READ"] };

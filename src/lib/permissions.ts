@@ -34,7 +34,7 @@ const CLAIM_ROLES: readonly Role[] = [
   "DMD",
   "Technical Director",
   "Finance Director",
-  "Risk & Compliance Manager",
+  "Risk and Compliance Manager",
   "Claims Manager",
   "Claims Underwriter",
   "Internal Audit Manager",
@@ -50,19 +50,19 @@ const ONBOARDING_ROLES: readonly Role[] = [
   "Client Relation Records Officer",
   "Technical Director",
   "GI Underwriting Manager",
-  "Risk & Compliance Manager",
+  "Risk and Compliance Manager",
   "Internal Audit Manager",
 ];
 
 /** The backend's permission matrix (REPORT_READ). Reports are worked out from lists each role can already see. */
-const REPORT_ROLES: readonly Role[] = ["CRM Manager", "GI Underwriting Manager", "Claims Manager", "Technical Director", "MD", "DMD", "Risk & Compliance Manager", "Internal Audit Manager"];
+const REPORT_ROLES: readonly Role[] = ["CRM Manager", "GI Underwriting Manager", "Claims Manager", "Technical Director", "MD", "DMD", "Risk and Compliance Manager", "Internal Audit Manager"];
 
 /**
  * On the backend only the built-in ADMINISTRATOR role holds IMPORT_* permissions
  * (migration V20261117164000), so there the menu follows the permission codes.
  * These roles only apply in demo mode.
  */
-const IMPORT_ROLES: readonly Role[] = ["CRM Manager", "GI Underwriting Manager", "Claims Manager", "Risk & Compliance Manager", "Internal Audit Manager"];
+const IMPORT_ROLES: readonly Role[] = ["CRM Manager", "GI Underwriting Manager", "Claims Manager", "Risk and Compliance Manager", "Internal Audit Manager"];
 const IMPORT_AUTHORS: readonly Role[] = ["CRM Manager", "GI Underwriting Manager", "Claims Manager"];
 
 const RENEWAL_ROLES: readonly Role[] = [
@@ -87,24 +87,24 @@ export const ACCOUNT_MENU = "account";
 export const NAV_ITEMS: NavItem[] = [
   { label: "Overview", href: "/", permission: null, roles: ROLES, businessOnly: true },
   // Everyone has work assigned to them; the list only shows what they may see.
-  { label: "My Work", href: "/my-work", permission: null, roles: ROLES, parent: "/" },
+  { label: "My work", href: "/my-work", permission: null, roles: ROLES, parent: "/" },
   // Everyone can follow the requests they sent; deciding depends on the step's role.
   { label: "Approvals", href: "/approvals", permission: null, roles: ROLES, parent: "/" },
-  { label: "Insurer Products", href: "/insurer-products", permission: "INSURER_REFERENCE_UPDATE", roles: ["GI Underwriting Manager"], businessOnly: true },
+  { label: "Insurer products", href: "/insurer-products", permission: "INSURER_REFERENCE_UPDATE", roles: ["GI Underwriting Manager"], businessOnly: true },
   { label: "Claims", href: "/claims", permission: "CLAIM_READ", roles: CLAIM_ROLES, businessOnly: true },
-  { label: "All Claims", href: "/claims/all", permission: "CLAIM_READ", roles: CLAIM_ROLES, parent: "/claims", businessOnly: true },
+  { label: "All claims", href: "/claims/all", permission: "CLAIM_READ", roles: CLAIM_ROLES, parent: "/claims", businessOnly: true },
   { label: "Clients", href: "/clients", permission: "CLIENT_READ", roles: ROLES, businessOnly: true },
-  { label: "All Clients", href: "/clients/all", permission: "CLIENT_READ", roles: ROLES, parent: "/clients", businessOnly: true },
+  { label: "All clients", href: "/clients/all", permission: "CLIENT_READ", roles: ROLES, parent: "/clients", businessOnly: true },
   { label: "Leads", href: "/clients/leads", permission: "LEAD_READ", roles: ONBOARDING_ROLES, parent: "/clients", businessOnly: true },
   { label: "Renewals", href: "/renewals", permission: "RENEWAL_READ", roles: RENEWAL_ROLES, businessOnly: true },
   { label: "Reports", href: "/reports", permission: "REPORT_READ", roles: REPORT_ROLES, businessOnly: true },
   // Admin pages sit in the name (account) menu, not the top bar. Real backend
   // permissions; in demo mode only the MD sees them.
   // Not business-only: the Administration account is the one that imports.
-  { label: "Data Import", href: "/imports", permission: "IMPORT_READ", roles: IMPORT_ROLES, parent: ACCOUNT_MENU },
+  { label: "Data import", href: "/imports", permission: "IMPORT_READ", roles: IMPORT_ROLES, parent: ACCOUNT_MENU },
   { label: "Users", href: "/admin", permission: "USER_READ", roles: ["MD"], parent: ACCOUNT_MENU },
-  { label: "Roles & Permissions", href: "/admin/roles", permission: "ROLE_READ", roles: ["MD"], parent: ACCOUNT_MENU },
-  { label: "Active Sessions", href: "/admin/sessions", permission: "SESSION_READ", roles: ["MD"], parent: ACCOUNT_MENU },
+  { label: "Roles and permissions", href: "/admin/roles", permission: "ROLE_READ", roles: ["MD"], parent: ACCOUNT_MENU },
+  { label: "Active sessions", href: "/admin/sessions", permission: "SESSION_READ", roles: ["MD"], parent: ACCOUNT_MENU },
 ];
 
 /** Pages without a menu item of their own, and the menu item that controls them. */
@@ -196,7 +196,7 @@ export function renewalPermissions(user: SessionUser) {
  * Who can work on claims. PROVISIONAL — the design's roles plus the SOP's
  * claims roles; replace with CLAIM_* permissions once the backend has them.
  * DMD chairs the Claims Committee; the fraud flag is limited to Technical
- * Director, Risk & Compliance Manager and MD (data-shapes proposal).
+ * Director, Risk and Compliance Manager and MD (data-shapes proposal).
  */
 export function importPermissions(user: SessionUser) {
   const can = (code: string) => (usesBackendPermissions(user) ? hasPermission(user, code) : IMPORT_AUTHORS.includes(user.role));
@@ -214,7 +214,7 @@ export function claimPermissions(role: Role) {
   return {
     canUpdateClaims: ["Technical Director", "DMD", "MD", "Claims Manager", "Claims Underwriter"].includes(role),
     canDecideDisputes: role === "DMD" || role === "MD",
-    canSeeFraudFlag: ["Technical Director", "Risk & Compliance Manager", "MD"].includes(role),
+    canSeeFraudFlag: ["Technical Director", "Risk and Compliance Manager", "MD"].includes(role),
     seesDocumentDetail: role !== "Finance Director",
     /** Whether this role may give the next settlement sign-off. */
     canSign: (signer: string | null) => !!signer && (signer === role || (signer === "Board" && role === "MD")),
@@ -256,7 +256,7 @@ export function clientEditPermissions(user: SessionUser) {
 /** Fine-grained permissions used inside the client screens (from the design). */
 export function clientPermissions(role: Role) {
   return {
-    canFlagNonCompliant: role === "Risk & Compliance Manager",
+    canFlagNonCompliant: role === "Risk and Compliance Manager",
     seesDocumentDetail: role !== "Finance Director",
   };
 }
@@ -268,7 +268,7 @@ export function clientPermissions(role: Role) {
  */
 export function approvalPermissions(role: Role) {
   return {
-    seesAllRequests: ["MD", "DMD", "Technical Director", "Risk & Compliance Manager", "Internal Audit Manager"].includes(role),
+    seesAllRequests: ["MD", "DMD", "Technical Director", "Risk and Compliance Manager", "Internal Audit Manager"].includes(role),
   };
 }
 
@@ -339,13 +339,13 @@ const ONBOARDING_DEMO_GRANTS: Record<string, readonly Role[]> = {
   LEAD_ASSESS: ["Accounts Executive", "CRM Manager"],
   LEAD_CLOSE: ["CRM Manager", "Commercial Director", "MD"],
   ONBOARDING_START: ["Accounts Executive", "CRM Manager"],
-  KYC_READ: ["Accounts Executive", "CRM Manager", "Risk & Compliance Manager", "MD"],
+  KYC_READ: ["Accounts Executive", "CRM Manager", "Risk and Compliance Manager", "MD"],
   KYC_ASSIGN: ["CRM Manager", "MD"],
   ONBOARDING_DEADLINE_ADJUST: ["CRM Manager"],
   KYC_PREPARE: ["Accounts Executive", "CRM Manager"],
-  KYC_SCREEN: ["Risk & Compliance Manager"],
-  KYC_DECIDE: ["Risk & Compliance Manager"],
-  KYC_POLICY_UPDATE: ["Risk & Compliance Manager"],
+  KYC_SCREEN: ["Risk and Compliance Manager"],
+  KYC_DECIDE: ["Risk and Compliance Manager"],
+  KYC_POLICY_UPDATE: ["Risk and Compliance Manager"],
   ONBOARDING_ASSIGN: ["CRM Manager", "MD"],
   ONBOARDING_SURVEY: ["Technical Director"],
   ONBOARDING_PROGRAM: ["Technical Director"],

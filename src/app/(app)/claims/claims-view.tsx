@@ -54,7 +54,7 @@ import { todayIso } from "@/lib/renewals";
 import type { Claim } from "@/lib/types";
 
 const QUEUE_ROWS = 5;
-const QUEUE_TABS = ["Open", "High Priority", "Missing Docs", "Escalation", "Disputed"] as const;
+const QUEUE_TABS = ["Open", "High priority", "Missing docs", "Escalation", "Disputed"] as const;
 
 /** Who has to act next on a blocked claim. */
 function actionOwner(c: Claim) {
@@ -97,14 +97,14 @@ export function ClaimsView() {
 
   // A claim is a long process, so it opens as its own full page.
   if (openId) {
-    if (open) return <ClaimPage claim={open} backHref={backHref} backLabel="Claims Queue" onChanged={reload} />;
+    if (open) return <ClaimPage claim={open} backHref={backHref} backLabel="Claims queue" onChanged={reload} />;
     return loaded ? <p className="text-sm text-muted-foreground">This claim could not be found.</p> : <PageLoader label="Loading claim" />;
   }
 
   return (
     <>
       <PageHeader
-        title="Claims Queue"
+        title="Claims queue"
         extraPills={
           <>
             <FilterMenu
@@ -119,25 +119,25 @@ export function ClaimsView() {
         action={
           canUpdateClaims ? (
             <NavyButton className="px-4 py-2 text-sm" onClick={() => setNewOpen(true)}>
-              <Plus className="size-4" /> New Claim
+              <Plus className="size-4" /> New claim
             </NavyButton>
           ) : null
         }
       />
 
       <div className={`mt-5 grid grid-cols-2 gap-3 sm:gap-4 ${awaitingSignOff > 0 ? "xl:grid-cols-3" : "xl:grid-cols-2"}`}>
-        <StatTile label="Open Claims" value={shown(openClaims.length)} onClick={() => setTab("Open")} active={tab === "Open"} />
+        <StatTile label="Open claims" value={shown(openClaims.length)} onClick={() => setTab("Open")} active={tab === "Open"} />
         {awaitingSignOff > 0 ? (
-          <StatTile label="Awaiting Sign-off" value={shown(awaitingSignOff)} delay={60} onClick={() => setTab("Awaiting Sign-off")} active={tab === "Awaiting Sign-off"} />
+          <StatTile label="Awaiting sign-off" value={shown(awaitingSignOff)} delay={60} onClick={() => setTab("Awaiting sign-off")} active={tab === "Awaiting sign-off"} />
         ) : null}
-        <StatTile label="Avg Working Days Open" value={loaded ? avgDaysLabel : "…"} delay={120} />
+        <StatTile label="Avg working days open" value={loaded ? avgDaysLabel : "…"} delay={120} />
       </div>
 
       <div className={hasQuickActions ? "mt-4 grid gap-3 sm:gap-4 xl:grid-cols-[minmax(0,1fr)_340px]" : "mt-4 grid gap-3 sm:gap-4"}>
         <div className="min-w-0 space-y-3 sm:space-y-4">
           <FloatCard className="overflow-hidden" delay={120}>
             <CardHeader
-              title={tab === "Open" ? "Open Claims" : tab === "Awaiting Sign-off" ? "Awaiting Sign-off" : "Claims Queue"}
+              title={tab === "Open" ? "Open claims" : tab === "Awaiting sign-off" ? "Awaiting sign-off" : "Claims queue"}
               right={
                 <div className="flex flex-wrap items-center gap-2">
                   <SegmentedTabs tabs={QUEUE_TABS} value={tab as (typeof QUEUE_TABS)[number]} onChange={setTab} />
@@ -165,7 +165,7 @@ export function ClaimsView() {
           </FloatCard>
 
           <FloatCard className="overflow-hidden" delay={200}>
-            <CardHeader title="Needs Action" right={blocked.length ? <Chip tone="warning">{blocked.length} blocked</Chip> : null} />
+            <CardHeader title="Needs action" right={blocked.length ? <Chip tone="warning">{blocked.length} blocked</Chip> : null} />
             {blocked.length === 0 ? (
               <p className="px-4 pt-3 pb-5 text-xs text-muted-foreground sm:px-5">{loaded ? "Nothing is blocked." : <Loader label="Loading claims" />}</p>
             ) : (
@@ -206,7 +206,7 @@ export function ClaimsView() {
           {activeMonths >= 3 ? (
             <ChartCard
               delay={260}
-              title="Claims per Month"
+              title="Claims per month"
               legend={[
                 { label: "Amount (RWF m)", tone: "sky" },
                 { label: "Number of claims", tone: "primary" },

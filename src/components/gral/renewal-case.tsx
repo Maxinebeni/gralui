@@ -375,7 +375,7 @@ function QuotesTab({ renewal, canUpdate, run }: { renewal: RenewalCase; canUpdat
             className={INPUT}
           />
           <NavyButton onClick={add} disabled={saving}>
-            {saving ? "Saving…" : "Add Quote"}
+            {saving ? "Saving…" : "Add quote"}
           </NavyButton>
         </div>
       ) : null}
@@ -461,7 +461,7 @@ function AcceptanceTab({
             className={INPUT}
           />
           <NavyButton onClick={record} disabled={saving}>
-            {saving ? "Saving…" : "Record Acceptance"}
+            {saving ? "Saving…" : "Record acceptance"}
           </NavyButton>
         </div>
       ) : (

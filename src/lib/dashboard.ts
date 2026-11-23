@@ -30,13 +30,13 @@ export const PAYMENT_DAYS: Record<ClientType, number> = {
   Corporate: 30,
   SME: 30,
   NGO: 30,
-  "Financial Institution": 30,
-  "State Enterprise": 60,
+  "Financial institution": 30,
+  "State enterprise": 60,
 };
 
 /** Policies still being looked after (not cancelled or lapsed). */
 function isLive(p: Policy) {
-  return p.status === "Active" || p.status === "In Renewal";
+  return p.status === "Active" || p.status === "In renewal";
 }
 
 export function policyRows(clients: Client[], today = todayIso()): PolicyRow[] {
@@ -113,7 +113,7 @@ export function topClientsByPremium(clients: Client[], limit = 15, today = today
 
 /* --------------------------------- Claims ----------------------------------- */
 
-export const CLAIM_STATUSES = ["Reported", "Under Assessment", "Pending Insurer", "Settled", "Rejected"] as const;
+export const CLAIM_STATUSES = ["Reported", "Under assessment", "Pending insurer", "Settled", "Rejected"] as const;
 export type ClaimStatusLabel = (typeof CLAIM_STATUSES)[number];
 
 /** Expected time to resolve a claim (GRAL: 30 days). */
@@ -132,9 +132,9 @@ export function claimStatus(c: Claim): ClaimStatusLabel {
       return "Reported";
     case "DOCUMENTS":
     case "SUBMIT":
-      return "Under Assessment";
+      return "Under assessment";
     case "FOLLOW_UP":
-      return "Pending Insurer";
+      return "Pending insurer";
     default:
       return "Settled";
   }

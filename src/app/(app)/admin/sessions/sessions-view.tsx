@@ -111,7 +111,7 @@ export function SessionsView() {
   return (
     <>
       <PageHeader
-        title="Active Sessions"
+        title="Active sessions"
         action={
           <OutlineButton className="px-4 py-2 text-sm" onClick={reload}>
             <RefreshCw className="size-4" /> Refresh
@@ -235,12 +235,12 @@ function EndForm({
         placeholder="Reason"
         aria-label="Reason for ending the session"
         autoFocus
-        className="min-w-0 flex-1 rounded-xl border border-input bg-card px-3 py-1.5 text-xs outline-none focus:border-sky focus:ring-2 focus:ring-sky/30"
+        className="w-full rounded-xl border border-input bg-card px-3 py-1.5 text-xs outline-none focus:border-sky focus:ring-2 focus:ring-sky/30"
       />
-      <NavyButton disabled={busy || !reason.trim()} onClick={onConfirm}>
+      <OutlineButton onClick={onCancel}>Cancel</OutlineButton>
+      <NavyButton className="ml-auto" disabled={busy || !reason.trim()} onClick={onConfirm}>
         {busy ? "Ending…" : "End"}
       </NavyButton>
-      <OutlineButton onClick={onCancel}>Cancel</OutlineButton>
     </div>
   );
 }

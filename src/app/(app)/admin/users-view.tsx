@@ -43,7 +43,7 @@ export function UsersView() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("All");
   const [query, setQuery] = useState("");
-  // Roles & Permissions links here with ?role=CODE to show who holds a role.
+  // Roles and permissions links here with ?role=CODE to show who holds a role.
   const [roleFilter, setRoleFilter] = useState(searchParams.get("role") ?? ALL_OPTION);
   const [typeFilter, setTypeFilter] = useState(ALL_OPTION);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -139,7 +139,7 @@ export function UsersView() {
         action={
           rights.canInvite ? (
             <NavyButton className="px-4 py-2 text-sm" onClick={() => setInviteOpen(true)}>
-              <UserPlus className="size-4" /> Invite User
+              <UserPlus className="size-4" /> Invite user
             </NavyButton>
           ) : null
         }
@@ -147,14 +147,14 @@ export function UsersView() {
 
       <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         <StatTile icon={UserCheck} label="Active" value={String(count("ACTIVE"))} onClick={() => showTile("Active")} active={tab === "Active" && typeFilter === ALL_OPTION} />
-        <StatTile icon={Mail} label="Invitation Pending" value={String(count("INVITED"))} delay={60} onClick={() => showTile("Invited")} active={tab === "Invited" && typeFilter === ALL_OPTION} />
+        <StatTile icon={Mail} label="Invitation pending" value={String(count("INVITED"))} delay={60} onClick={() => showTile("Invited")} active={tab === "Invited" && typeFilter === ALL_OPTION} />
         <StatTile icon={UserX} label="Deactivated" value={String(count("INACTIVE"))} delay={120} onClick={() => showTile("Deactivated")} active={tab === "Deactivated" && typeFilter === ALL_OPTION} />
-        <StatTile icon={ShieldCheck} label="Active Administrators" value={String(admins)} delay={180} onClick={() => showTile("Active", "ADMINISTRATION")} active={tab === "Active" && typeFilter === "ADMINISTRATION"} />
+        <StatTile icon={ShieldCheck} label="Active administrators" value={String(admins)} delay={180} onClick={() => showTile("Active", "ADMINISTRATION")} active={tab === "Active" && typeFilter === "ADMINISTRATION"} />
       </div>
 
       <FloatCard className="mt-4 overflow-hidden" delay={120}>
         <CardHeader
-          title="User Accounts"
+          title="User accounts"
           right={
             <div className="flex flex-wrap items-center gap-2">
               <label className="float-pill flex w-full items-center gap-2 px-3.5 py-2 sm:w-64">

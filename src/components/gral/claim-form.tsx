@@ -215,7 +215,7 @@ function NewClaimForm({
   return (
     <form onSubmit={handleSubmit} noValidate className="flex min-h-full flex-col">
       <div className="flex items-center justify-between gap-4 border-b border-border px-6 py-5 sm:px-8">
-        <h2 className="text-lg font-semibold tracking-tight">New Claim</h2>
+        <h2 className="text-lg font-semibold tracking-tight">New claim</h2>
         <button
           type="button"
           aria-label="Close"
@@ -380,12 +380,12 @@ function NewClaimForm({
         </Section>
       </div>
 
-      <div className="sticky bottom-0 flex justify-end gap-2 border-t border-border bg-card px-6 py-4 sm:px-8">
+      <div className="sticky bottom-0 flex justify-between gap-2 border-t border-border bg-card px-6 py-4 sm:px-8">
         <OutlineButton onClick={onClose} className="px-4 py-2 text-sm">
           Cancel
         </OutlineButton>
         <NavyButton type="submit" disabled={saving} className="px-4 py-2 text-sm">
-          Review and Register
+          Review and register
         </NavyButton>
       </div>
 
@@ -400,7 +400,7 @@ function NewClaimForm({
           { label: "Handler", value: values.handler },
         ]}
         warnings={review ?? []}
-        confirmLabel="Register Claim"
+        confirmLabel="Register claim"
         saving={saving}
         onConfirm={save}
         onBack={() => setReview(null)}

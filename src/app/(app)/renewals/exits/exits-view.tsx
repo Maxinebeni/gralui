@@ -74,7 +74,7 @@ export function ExitRegisterView() {
         <ArrowLeft className="size-3.5" /> Renewals
       </Link>
       <PageHeader
-        title="Exit Register"
+        title="Exit register"
         subtitle="Renewals lost each month, and why"
         extraPills={
           <div className="flex flex-wrap items-center gap-2">
@@ -98,9 +98,9 @@ export function ExitRegisterView() {
       />
 
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4">
-        <StatTile label="Renewals Lost" value={exits === null ? "…" : String(list.length)} />
-        <StatTile label="Premium Lost (RWF)" value={exits === null ? "…" : lostPremium.toLocaleString("en-US")} delay={60} />
-        <StatTile label="Need Details" value={exits === null ? "…" : String(needDetails)} delay={120} />
+        <StatTile label="Renewals lost" value={exits === null ? "…" : String(list.length)} />
+        <StatTile label="Premium lost (RWF)" value={exits === null ? "…" : lostPremium.toLocaleString("en-US")} delay={60} />
+        <StatTile label="Need details" value={exits === null ? "…" : String(needDetails)} delay={120} />
       </div>
 
       <FloatCard className="mt-4 space-y-2 p-5" delay={160}>

@@ -119,7 +119,7 @@ export function UserPanel({
           </h3>
           <p className="mt-1 text-xs text-muted-foreground">
             A {CATEGORY_LABEL[u.profileCategory].toLowerCase()} account can only have{" "}
-            {CATEGORY_LABEL[u.profileCategory].toLowerCase()} roles. What each role can do is set under Roles & Permissions.
+            {CATEGORY_LABEL[u.profileCategory].toLowerCase()} roles. What each role can do is set under Roles and permissions.
           </p>
           {rolesLocked ? (
             <>
@@ -188,21 +188,24 @@ export function UserPanel({
               from here.
             </p>
             {confirming ? (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">Deactivate {u.fullName}?</span>
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={async () => {
-                    if (await act(() => deactivateUser(u), `${u.fullName} was deactivated.`)) setConfirming(false);
-                  }}
-                  className="rounded-full bg-danger px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
-                >
-                  Yes, deactivate
-                </button>
-                <OutlineButton className="px-4 py-2 text-sm" onClick={() => setConfirming(false)}>
-                  Cancel
-                </OutlineButton>
+              <div className="mt-3 space-y-2">
+                <p className="text-sm font-medium">Deactivate {u.fullName}?</p>
+                {/* Cancel on the left, the confirming action on the far right, so they are not side by side. */}
+                <div className="flex flex-wrap justify-between gap-2">
+                  <OutlineButton className="px-4 py-2 text-sm" onClick={() => setConfirming(false)}>
+                    Cancel
+                  </OutlineButton>
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={async () => {
+                      if (await act(() => deactivateUser(u), `${u.fullName} was deactivated.`)) setConfirming(false);
+                    }}
+                    className="rounded-full bg-danger px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+                  >
+                    Yes, deactivate
+                  </button>
+                </div>
               </div>
             ) : (
               <OutlineButton className="mt-3 px-4 py-2 text-sm" onClick={() => setConfirming(true)}>
@@ -301,7 +304,7 @@ export function InviteUserForm({
     <form onSubmit={submit} noValidate className="flex min-h-full flex-col">
       <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">Invite User</h2>
+          <h2 className="text-lg font-semibold tracking-tight">Invite user</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             They get an email with a link to set their own password. You never see or set it.
           </p>
@@ -394,12 +397,12 @@ export function InviteUserForm({
         </Section>
       </div>
 
-      <div className="sticky bottom-0 flex justify-end gap-2 border-t border-border bg-card px-6 py-4">
+      <div className="sticky bottom-0 flex justify-between gap-2 border-t border-border bg-card px-6 py-4">
         <OutlineButton onClick={onClose} className="px-4 py-2 text-sm">
           Cancel
         </OutlineButton>
         <NavyButton type="submit" disabled={saving} className="px-4 py-2 text-sm">
-          {saving ? "Sending…" : "Send Invitation"}
+          {saving ? "Sending…" : "Send invitation"}
         </NavyButton>
       </div>
     </form>

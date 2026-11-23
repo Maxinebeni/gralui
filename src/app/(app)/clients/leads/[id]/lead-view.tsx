@@ -76,7 +76,7 @@ export function LeadView({ caseId }: { caseId: string }) {
         <div className="float-card max-w-md p-6 text-center">
           <h1 className="text-xl font-semibold tracking-tight">Lead not found</h1>
           <Link href="/clients/leads" className="mt-4 inline-block text-sm text-primary underline underline-offset-2">
-            Go to Leads
+            Go to leads
           </Link>
         </div>
       </div>

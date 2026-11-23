@@ -15,7 +15,7 @@ it("demo KYC enforces reviewer assignment and reviewer-only screening/decisions"
   review = await api.submitKycReview(review);
   const evidence = { file: new File(["signed"], "signed.pdf", { type: "application/pdf" }), occurredAt: "2026-01-01" };
   await expect(api.recordKycScreening(review, { result: "CLEAR", notes: "Synthetic screening", evidence })).rejects.toThrow(/assigned compliance reviewer/);
-  api.setDemoRole("Risk & Compliance Manager");
+  api.setDemoRole("Risk and Compliance Manager");
   review = await api.recordKycScreening(review, { result: "CLEAR", notes: "Synthetic screening", evidence });
   review = await api.decideKycReview(review, { decision: "APPROVE", reason: "Synthetic approval", evidence });
   expect(review.status).toBe("APPROVED");

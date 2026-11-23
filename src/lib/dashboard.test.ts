@@ -32,9 +32,9 @@ const clients = [
   client("A", "Corporate", [
     policy("P1", "10 Nov 2025", "10 Nov 2026", { amountPaid: 1000 }), // 12 days left, paid
     policy("P2", "15 Dec 2025", "15 Dec 2026", { amountPaid: 0 }), // 47 days left, unpaid after 30 days
-    policy("P3", "01 Oct 2025", "01 Oct 2026", { status: "In Renewal", amountPaid: 1000 }), // overdue renewal
+    policy("P3", "01 Oct 2025", "01 Oct 2026", { status: "In renewal", amountPaid: 1000 }), // overdue renewal
   ], "2026-10-02"),
-  client("B", "State Enterprise", [policy("P4", "15 Sep 2026", "15 Sep 2027", { premium: 5000, amountPaid: 0 })]), // 44 days in, within 60
+  client("B", "State enterprise", [policy("P4", "15 Sep 2026", "15 Sep 2027", { premium: 5000, amountPaid: 0 })]), // 44 days in, within 60
   client("C", "SME", [policy("P5", "01 Jan 2025", "01 Jan 2026", { status: "Lapsed" })], "2026-09-30"),
 ];
 
@@ -73,8 +73,8 @@ describe("claim figures", () => {
 
   it("maps our steps to GRAL's status names", () => {
     expect(claimStatus(base)).toBe("Reported");
-    expect(claimStatus({ ...base, step: "SUBMIT" })).toBe("Under Assessment");
-    expect(claimStatus({ ...base, step: "FOLLOW_UP" })).toBe("Pending Insurer");
+    expect(claimStatus({ ...base, step: "SUBMIT" })).toBe("Under assessment");
+    expect(claimStatus({ ...base, step: "FOLLOW_UP" })).toBe("Pending insurer");
     expect(claimStatus(settled)).toBe("Settled");
     expect(claimStatus({ ...base, dispute: { raisedAt: "", reason: "" } })).toBe("Rejected");
   });

@@ -19,15 +19,15 @@ export type StageDef = {
 
 /** Steps 3 to 11, one policy track each. */
 export const TRACK_STAGES: StageDef[] = [
-  { n: 3, code: "KYC", name: "KYC & AML verification", owner: "Accounts Executive · Risk & Compliance Manager approves", deadlineLabel: "Before any quotation", task: "The client's KYC review must be approved. It is shared by all of the client's policy tracks." },
+  { n: 3, code: "KYC", name: "KYC and AML verification", owner: "Accounts Executive · Risk and Compliance Manager approves", deadlineLabel: "Before any quotation", task: "The client's KYC review must be approved. It is shared by all of the client's policy tracks." },
   { n: 4, code: "SURVEY", name: "Risk survey", owner: "Technical Director", deadlineLabel: "5 working days after the meeting", task: "Site visit, hazards and controls, a Low, Medium or High grade, and the written report. Not needed for individuals." },
   { n: 5, code: "PROGRAM", name: "Insurance programme", owner: "Technical Director", deadlineLabel: "3 working days", task: "The recommended covers, with the programme signed by the Technical Director." },
   { n: 6, code: "RFQ", name: "Request for quotations", owner: "Underwriting Manager", deadlineLabel: "24 hours after the programme", task: "Send the terms of reference to at least 3 licensed insurers, or ask the MD for a single-source exception." },
-  { n: 7, code: "COMPARISON", name: "Quotes & comparison", owner: "Underwriting Manager", deadlineLabel: "2 working days", task: "Record every insurer's answer, compare the quotes and recommend one. Two usable quotes are enough; one needs the MD's exception." },
+  { n: 7, code: "COMPARISON", name: "Quotes and comparison", owner: "Underwriting Manager", deadlineLabel: "2 working days", task: "Record every insurer's answer, compare the quotes and recommend one. Two usable quotes are enough; one needs the MD's exception." },
   { n: 8, code: "APPROVAL", name: "Internal approval", owner: "Technical Director / MD", deadlineLabel: "Before the presentation", task: "Approval by expected annual commission: under RWF 1m the TD; RWF 1m to 10m the TD then the MD; above that the MD, then the Board's written approval recorded by the MD." },
-  { n: 9, code: "ACCEPTANCE", name: "Presentation & acceptance", owner: "Accounts Executive", deadlineLabel: "3 working days after approval", task: "Present the approved recommendation and get the client's written acceptance. Accepting is not cover yet." },
-  { n: 10, code: "PLACEMENT", name: "Placement & verification", owner: "Underwriting Manager", deadlineLabel: "2 working days after acceptance", task: "Instruct the insurer, record its confirmation and the schedule, check the schedule matches the accepted terms, then convert it into the client's policy." },
-  { n: 11, code: "WELCOME", name: "Welcome & filing", owner: "Accounts Executive", deadlineLabel: "2 working days after the schedule", task: "Send the welcome letter, deliver the verified policy documents and complete the client file checklist." },
+  { n: 9, code: "ACCEPTANCE", name: "Presentation and acceptance", owner: "Accounts Executive", deadlineLabel: "3 working days after approval", task: "Present the approved recommendation and get the client's written acceptance. Accepting is not cover yet." },
+  { n: 10, code: "PLACEMENT", name: "Placement and verification", owner: "Underwriting Manager", deadlineLabel: "2 working days after acceptance", task: "Instruct the insurer, record its confirmation and the schedule, check the schedule matches the accepted terms, then convert it into the client's policy." },
+  { n: 11, code: "WELCOME", name: "Welcome and filing", owner: "Accounts Executive", deadlineLabel: "2 working days after the schedule", task: "Send the welcome letter, deliver the verified policy documents and complete the client file checklist." },
 ];
 
 /** The tracker's stages: steps 3 to 11 in three groups. */
@@ -57,7 +57,7 @@ export const LEAD_STEPS: { key: LeadStepKey; step: 1 | 2; name: string; owner: s
   { key: "ASSIGN", step: 1, name: "Assign the Accounts Executive", owner: "CRM Manager", deadline: "Same day" },
   { key: "CONFIRM", step: 1, name: "Confirm the registration", owner: "Commercial Director", deadline: "Same day" },
   { key: "RESPOND", step: 2, name: "First response to the prospect", owner: "Accounts Executive", deadline: "Within 24 hours" },
-  { key: "ASSESS", step: 2, name: "Meeting & needs assessment", owner: "Accounts Executive", deadline: "3 working days" },
+  { key: "ASSESS", step: 2, name: "Meeting and needs assessment", owner: "Accounts Executive", deadline: "3 working days" },
   { key: "CLIENT", step: 2, name: "Open the prospect client", owner: "Accounts Executive", deadline: "After the assessment" },
 ];
 
@@ -189,8 +189,8 @@ const BLOCKERS: Record<string, string> = {
   CLIENT_IDENTITY_REQUIRED: "The prospect client has not been opened or linked yet.",
   NOT_STARTED: "The client's KYC review has not been started.",
   DRAFT: "The client's KYC review is still being prepared.",
-  SUBMITTED: "The client's KYC review is waiting for the Risk & Compliance Manager.",
-  RETURNED: "The Risk & Compliance Manager returned the KYC review for changes.",
+  SUBMITTED: "The client's KYC review is waiting for the Risk and Compliance Manager.",
+  RETURNED: "The Risk and Compliance Manager returned the KYC review for changes.",
   REJECTED: "The client's KYC review was rejected.",
   KYC_REVIEW_OVERDUE: "The KYC review is past its 3-working-day deadline.",
   NO_ELIGIBLE_KYC_REVIEWER: "Ask the CRM Manager or MD to assign an eligible compliance reviewer.",
@@ -250,7 +250,7 @@ export const ACTION_LABEL: Record<string, string> = {
   TECHNICAL_VERIFICATION: "Record the TD's check",
   VERIFY: "Verify the schedule",
   CONVERT: "Convert into the client's policy",
-  WELCOME: "Complete welcome & filing",
+  WELCOME: "Complete welcome and filing",
   ASSIGN: "Change who is assigned",
   ON_HOLD: "Put on hold",
   RESUME: "Resume",
@@ -289,8 +289,8 @@ export const PROSPECT_TYPES: { code: string; label: string; leadType: "CORPORATE
   { code: "CORPORATE", label: "Corporate", leadType: "CORPORATE" },
   { code: "SME", label: "SME", leadType: "CORPORATE" },
   { code: "NGO", label: "NGO", leadType: "CORPORATE" },
-  { code: "STATE_ENTERPRISE", label: "State Enterprise", leadType: "CORPORATE" },
-  { code: "FINANCIAL_INSTITUTION", label: "Financial Institution", leadType: "CORPORATE" },
+  { code: "STATE_ENTERPRISE", label: "State enterprise", leadType: "CORPORATE" },
+  { code: "FINANCIAL_INSTITUTION", label: "Financial institution", leadType: "CORPORATE" },
   { code: "INDIVIDUAL", label: "Individual", leadType: "INDIVIDUAL" },
 ];
 
@@ -312,7 +312,7 @@ export const KYC_STATUS_LABEL: Record<string, string> = {
  */
 export const SUGGESTED_KYC_REQUIREMENTS: Record<"CORPORATE" | "INDIVIDUAL", { code: string; label: string; required: boolean }[]> = {
   CORPORATE: [
-    { code: "CERTIFICATE_OF_INCORPORATION", label: "Certificate of Incorporation", required: true },
+    { code: "CERTIFICATE_OF_INCORPORATION", label: "Certificate of incorporation", required: true },
     { code: "TIN_CERTIFICATE", label: "TIN / VAT registration certificate", required: true },
     { code: "REPRESENTATIVE_ID", label: "ID or passport of the company representative", required: true },
     { code: "BENEFICIAL_OWNERS", label: "Beneficial owners list (25% or more)", required: true },
@@ -335,7 +335,7 @@ export type JourneyStep = { n: number; name: string; owner: string; deadline: st
 
 export const JOURNEY_STEPS: JourneyStep[] = [
   { n: 1, name: "Lead registration", owner: "Commercial Director · CRM Manager assigns", deadline: "Same day" },
-  { n: 2, name: "Meeting & needs assessment", owner: "Accounts Executive", deadline: "3 working days" },
+  { n: 2, name: "Meeting and needs assessment", owner: "Accounts Executive", deadline: "3 working days" },
   ...TRACK_STAGES.map((s) => ({
     n: s.n,
     name: { 5: "Insurance programme design", 6: "Quotation request", 7: "Comparative analysis", 10: "Policy placement" }[s.n] ?? s.name,

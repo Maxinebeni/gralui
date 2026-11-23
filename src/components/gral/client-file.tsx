@@ -17,7 +17,7 @@ import { PolicyForm } from "./policy-form";
 import { DocumentPanel } from "./documents";
 import { ContactsPanel, InteractionsPanel } from "./client-records";
 
-const TABS = ["KYC & Compliance", "Policies", "Claims", "Contacts", "Interactions"] as const;
+const TABS = ["KYC and compliance", "Policies", "Claims", "Contacts", "Interactions"] as const;
 export type ClientFileTab = (typeof TABS)[number];
 
 export function ClientFile({
@@ -25,7 +25,7 @@ export function ClientFile({
   onClose,
   onEdit,
   onChanged,
-  initialTab = "KYC & Compliance",
+  initialTab = "KYC and compliance",
 }: {
   client: Client;
   onClose: () => void;
@@ -86,7 +86,7 @@ export function ClientFile({
     };
   }, [client.id, client.uuid, client.policies]);
 
-  const policyHeadings = ["Policy ID", "Class", "Insurer", "Sum Insured", "Premium", "Start", "Renewal", "Status"];
+  const policyHeadings = ["Policy ID", "Class", "Insurer", "Sum insured", "Premium", "Start", "Renewal", "Status"];
   if (canEditPolicy) policyHeadings.push("");
 
   return (
@@ -96,7 +96,7 @@ export function ClientFile({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-lg font-semibold tracking-tight">{client.name}</span>
-              {client.nonCompliant ? <Chip tone="danger">Non-Compliant</Chip> : <Chip tone="success">Compliant</Chip>}
+              {client.nonCompliant ? <Chip tone="danger">Non-compliant</Chip> : <Chip tone="success">Compliant</Chip>}
               <KycBadge kyc={client.kyc} status={client.kycStatus} gateStatus={client.kycGateStatus} />
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
@@ -110,7 +110,7 @@ export function ClientFile({
                 href={clientReportHref(client.id)}
                 className="inline-flex min-h-9 items-center rounded-full border border-border bg-card px-3.5 py-1.5 text-xs font-medium whitespace-nowrap transition-colors hover:bg-secondary sm:min-h-0"
               >
-                Client Report
+                Client report
               </Link>
             ) : null}
             {canEditClient && onEdit ? (
@@ -180,7 +180,7 @@ export function ClientFile({
       <div className="px-5 py-7 sm:px-8">
         <SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />
 
-        {tab === "KYC & Compliance" ? (
+        {tab === "KYC and compliance" ? (
           seesDocumentDetail ? (
             <div className="mt-6 space-y-2.5">
               {client.documents.map((d) => (
@@ -212,7 +212,7 @@ export function ClientFile({
                   className="mt-2"
                   onClick={() => toast.success(`${client.name} flagged as non-compliant.`)}
                 >
-                  <Flag className="size-3.5" /> Flag as Non-Compliant
+                  <Flag className="size-3.5" /> Flag as non-compliant
                 </NavyButton>
               ) : null}
               <div className={client.documents.length ? "pt-6" : undefined}>
@@ -223,7 +223,7 @@ export function ClientFile({
                   purpose="KYC_EVIDENCE"
                   canUpload={canUploadDocuments}
                   canReplace={canReplaceDocuments}
-                  title="KYC Files"
+                  title="KYC files"
                   emptyText="No KYC files yet."
                 />
               </div>
@@ -253,7 +253,7 @@ export function ClientFile({
               {canAddPolicy && onChanged ? (
                 <div className="mb-3 flex justify-end">
                   <NavyButton onClick={() => setPolicyEditor("new")}>
-                    <Plus className="size-3.5" /> Add Policy
+                    <Plus className="size-3.5" /> Add policy
                   </NavyButton>
                 </div>
               ) : null}
@@ -321,7 +321,7 @@ export function ClientFile({
                               tone={
                                 p.status === "Active"
                                   ? "success"
-                                  : p.status === "In Renewal"
+                                  : p.status === "In renewal"
                                     ? "sky"
                                     : p.status === "Cancelled"
                                       ? "danger"

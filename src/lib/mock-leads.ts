@@ -112,7 +112,7 @@ export const DEMO_LEADS: Lead[] = [
   lead({
     id: "LD-2026-009",
     name: "Kivu Lakeside Hotels Ltd",
-    industry: "Hospitality & Tourism",
+    industry: "Hospitality and tourism",
     source: "Website enquiry",
     contactName: "Patrick Mugabo",
     email: "p.mugabo@kivulakeside.rw",
@@ -137,7 +137,7 @@ export const DEMO_LEADS: Lead[] = [
   lead({
     id: "LD-2026-008",
     name: "Nyarugenge Logistics Ltd",
-    industry: "Transport & Logistics",
+    industry: "Transport and logistics",
     source: "Referral from a partner or insurer",
     contactName: "Samuel Kayitare",
     email: "s.kayitare@nyarugenge-logistics.rw",
@@ -154,7 +154,7 @@ export const DEMO_LEADS: Lead[] = [
   lead({
     id: "LD-2026-007",
     name: "Umurage Microfinance Ltd",
-    industry: "Banking & Finance",
+    industry: "Banking and finance",
     source: "Tender invitation",
     contactName: "Grace Uwase",
     email: "g.uwase@umurage.rw",
@@ -170,7 +170,7 @@ export const DEMO_LEADS: Lead[] = [
   lead({
     id: "LD-2026-006",
     name: "Inzira Construction Ltd",
-    industry: "Construction & Real Estate",
+    industry: "Construction and real estate",
     source: "Referral from an existing client",
     contactName: "Eric Ndayisaba",
     email: "e.ndayisaba@inzira.rw",
@@ -359,7 +359,7 @@ function review(id: string, clientId: string, clientName: string, status: KycRev
     clientName,
     version: 1,
     status,
-    reviewerId: status === "DRAFT" ? undefined : "Risk & Compliance Manager",
+    reviewerId: status === "DRAFT" ? undefined : "Risk and Compliance Manager",
     templateCode: template.code,
     templateVersion: template.version,
     items,
@@ -372,9 +372,9 @@ function review(id: string, clientId: string, clientName: string, status: KycRev
 export const DEMO_KYC_REVIEWS: KycReview[] = [
   // Midterm demo: only the AML questionnaire is missing (docs/midterm-demo-leads.md).
   review("KYC-2026-009", "CLT-P009", "Kivu Lakeside Hotels Ltd", "DRAFT", 5),
-  review("KYC-2026-008", "CLT-P008", "Nyarugenge Logistics Ltd", "APPROVED", 6, { screeningResult: "CLEAR", decidedBy: "Risk & Compliance Manager", decidedAt: at(-9), completeDocumentsAt: at(-11) }),
-  review("KYC-2026-007", "CLT-P007", "Umurage Microfinance Ltd", "APPROVED", 6, { screeningResult: "CLEAR", decidedBy: "Risk & Compliance Manager", decidedAt: at(-11) }),
-  review("KYC-2026-006", "CLT-P006", "Inzira Construction Ltd", "APPROVED", 6, { screeningResult: "CLEAR", decidedBy: "Risk & Compliance Manager", decidedAt: at(-14) }),
-  review("KYC-2026-005", "CLT-P005", "Aline Mukeshimana", "APPROVED", 3, { screeningResult: "CLEAR", decidedBy: "Risk & Compliance Manager", decidedAt: at(-6) }),
-  review("KYC-2026-004", "CLT-P004", "Rwanda Coffee Exporters Ltd", "APPROVED", 6, { screeningResult: "CLEAR", decidedBy: "Risk & Compliance Manager", decidedAt: at(-25) }),
+  review("KYC-2026-008", "CLT-P008", "Nyarugenge Logistics Ltd", "APPROVED", 6, { screeningResult: "CLEAR", decidedBy: "Risk and Compliance Manager", decidedAt: at(-9), completeDocumentsAt: at(-11) }),
+  review("KYC-2026-007", "CLT-P007", "Umurage Microfinance Ltd", "APPROVED", 6, { screeningResult: "CLEAR", decidedBy: "Risk and Compliance Manager", decidedAt: at(-11) }),
+  review("KYC-2026-006", "CLT-P006", "Inzira Construction Ltd", "APPROVED", 6, { screeningResult: "CLEAR", decidedBy: "Risk and Compliance Manager", decidedAt: at(-14) }),
+  review("KYC-2026-005", "CLT-P005", "Aline Mukeshimana", "APPROVED", 3, { screeningResult: "CLEAR", decidedBy: "Risk and Compliance Manager", decidedAt: at(-6) }),
+  review("KYC-2026-004", "CLT-P004", "Rwanda Coffee Exporters Ltd", "APPROVED", 6, { screeningResult: "CLEAR", decidedBy: "Risk and Compliance Manager", decidedAt: at(-25) }),
 ];

@@ -92,7 +92,7 @@ export function ContactsPanel({
       {canEdit ? (
         <div className="mb-3 flex justify-end">
           <NavyButton onClick={() => setEditing("new")}>
-            <Plus className="size-3.5" /> Add Contact
+            <Plus className="size-3.5" /> Add contact
           </NavyButton>
         </div>
       ) : null}
@@ -184,13 +184,13 @@ function ContactForm({
 
   return (
     <form onSubmit={submit} className="mt-6 space-y-6" noValidate>
-      <Section title={initial ? "Edit Contact" : "Add Contact"}>
+      <Section title={initial ? "Edit contact" : "Add contact"}>
         {input("name", "Full name")}
         {input("title", "Job title")}
         {input("email", "Email", "email", "name@company.rw")}
         {input("phone", "Phone", "tel", "+250 788 123 456")}
       </Section>
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-between gap-2">
         <OutlineButton onClick={onCancel} disabled={saving}>
           Cancel
         </OutlineButton>
@@ -253,7 +253,7 @@ export function InteractionsPanel({ client, canRecord }: { client: Client; canRe
       {canRecord ? (
         <div className="mb-3 flex justify-end">
           <NavyButton onClick={() => setRecording("new")}>
-            <Plus className="size-3.5" /> Record Interaction
+            <Plus className="size-3.5" /> Record interaction
           </NavyButton>
         </div>
       ) : null}
@@ -318,7 +318,7 @@ function InteractionForm({
 
   return (
     <form onSubmit={submit} className="mt-6 space-y-6" noValidate>
-      <Section title={corrects ? "Correct Interaction" : "Record Interaction"}>
+      <Section title={corrects ? "Correct interaction" : "Record interaction"}>
         <Field id="interaction-date" label="Date" error={errors.date}>
           <input
             id="interaction-date"
@@ -360,7 +360,7 @@ function InteractionForm({
           />
         </Field>
       </Section>
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-between gap-2">
         <OutlineButton onClick={onCancel} disabled={saving}>
           Cancel
         </OutlineButton>

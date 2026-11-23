@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { TrackView } from "./track-view";
 
 export const metadata: Metadata = {
-  title: "Policy Track / GRAL Operations Platform",
+  title: "Policy track / GRAL Operations Platform",
   description: "One policy's onboarding track: quotes, approval and placement.",
 };
 

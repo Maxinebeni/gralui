@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { ImportsView } from "./imports-view";
 
 export const metadata: Metadata = {
-  title: "Data Import / GRAL Operations Platform",
+  title: "Data import / GRAL Operations Platform",
   description: "Upload the cleaned GRAL registers, fix the rows that need a decision, and import the ready clients and policies.",
 };
 

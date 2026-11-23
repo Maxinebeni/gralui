@@ -177,7 +177,7 @@ export function OverviewView() {
       list = [...list].sort((a, b) => Number(b.module === "Claims") - Number(a.module === "Claims"));
     } else if (role === "Commercial Director") {
       list = [...list].sort((a, b) => Number(b.module === "Renewals") - Number(a.module === "Renewals"));
-    } else if (role === "Risk & Compliance Manager") {
+    } else if (role === "Risk and Compliance Manager") {
       list = list.filter((a) => a.kind === "compliance");
     } else if (role === "Finance Director") {
       list = list.filter((a) => a.kind !== "compliance");
@@ -215,7 +215,7 @@ export function OverviewView() {
             Your role has no dashboard figures yet. Your tasks are in My Work.
           </p>
           <NavyButton className="mt-3" onClick={() => router.push("/my-work")}>
-            Open My Work
+            Open my work
           </NavyButton>
         </FloatCard>
       ) : null}
@@ -227,7 +227,7 @@ export function OverviewView() {
       ) : (
         <div className="mt-3">
           <FloatCard className="p-4 sm:p-5" delay={300}>
-            <h2 className="text-base font-semibold tracking-tight">Needs Your Attention</h2>
+            <h2 className="text-base font-semibold tracking-tight">Needs your attention</h2>
             <div className="mt-3 divide-y divide-border">
               {visibleAttention.slice(0, 7).map((a) => (
                 <div key={`${a.module}:${a.title}:${a.detail}`} className="grid gap-2 py-3 first:pt-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
@@ -329,7 +329,7 @@ function clientDrill(title: string, list: Client[]): Drill {
     title,
     count: list.length,
     body: <Rows head={CLIENT_HEAD} rows={list} cols={CLIENT_COLS} cells={clientCells} href={(c) => clientHref(c.id)} empty="None." />,
-    more: { href: "/clients", label: "Open Clients" },
+    more: { href: "/clients", label: "Open clients" },
   };
 }
 
@@ -338,7 +338,7 @@ function claimDrill(title: string, list: Claim[]): Drill {
     title,
     count: list.length,
     body: <Rows head={CLAIM_HEAD} rows={list} cols={CLAIM_COLS} cells={claimCells} href={claimHref} empty="None." />,
-    more: { href: "/claims/all", label: "Open All Claims" },
+    more: { href: "/claims/all", label: "Open all claims" },
   };
 }
 
@@ -490,15 +490,15 @@ function RenewalsView({ clients }: { clients: Client[] }) {
     title,
     count: list.length,
     body: <Rows head={POLICY_HEAD} rows={list} cols={POLICY_COLS} cells={policyCells} href={(r) => clientHref(r.clientId)} empty="None." />,
-    more: { href: "/renewals", label: "Open the Renewals Pipeline" },
+    more: { href: "/renewals", label: "Open the renewals pipeline" },
   });
   const drills: Record<string, Drill> = {
-    "active-policies": policyDrill("Active Policies", active),
-    "due-30": policyDrill("Expiring in the Next 30 Days", due30),
-    "due-60": policyDrill("Expiring in 31-60 Days", due60),
-    "overdue-renewals": policyDrill("Overdue Renewals", overdue),
+    "active-policies": policyDrill("Active policies", active),
+    "due-30": policyDrill("Expiring in the next 30 days", due30),
+    "due-60": policyDrill("Expiring in 31-60 days", due60),
+    "overdue-renewals": policyDrill("Overdue renewals", overdue),
     unpaid: {
-      title: "Unpaid Policies",
+      title: "Unpaid policies",
       count: unpaid.length,
       body: (
         <Rows
@@ -517,11 +517,11 @@ function RenewalsView({ clients }: { clients: Client[] }) {
     <>
       <Tiles
         items={[
-          { label: "Total Active Policies", value: active.length, href: showHref("active-policies") },
-          { label: "Expiring in Next 30 Days", value: due30.length, href: showHref("due-30") },
-          { label: "Expiring in 31-60 Days", value: due60.length, href: showHref("due-60") },
-          { label: "Overdue Renewals", value: overdue.length, href: showHref("overdue-renewals") },
-          { label: "Unpaid Policies", value: unpaid.length, href: showHref("unpaid") },
+          { label: "Total active policies", value: active.length, href: showHref("active-policies") },
+          { label: "Expiring in next 30 days", value: due30.length, href: showHref("due-30") },
+          { label: "Expiring in 31-60 days", value: due60.length, href: showHref("due-60") },
+          { label: "Overdue renewals", value: overdue.length, href: showHref("overdue-renewals") },
+          { label: "Unpaid policies", value: unpaid.length, href: showHref("unpaid") },
         ]}
       />
       <DrillPanel drills={drills} />
@@ -533,12 +533,12 @@ function RenewalsView({ clients }: { clients: Client[] }) {
           </SectionCard>
         ) : null}
         {due30.length > 0 ? (
-          <SectionCard title="Expiring in the Next 30 Days" delay={120}>
+          <SectionCard title="Expiring in the next 30 days" delay={120}>
             <Rows head={POLICY_HEAD} rows={due30} cols={POLICY_COLS} cells={policyCells} href={(r) => clientHref(r.clientId)} empty="None." />
           </SectionCard>
         ) : null}
         {overdue.length > 0 ? (
-          <SectionCard title="Overdue Renewals" delay={160}>
+          <SectionCard title="Overdue renewals" delay={160}>
             <SideList
               rows={overdue}
               title={(r) => r.client}
@@ -550,12 +550,12 @@ function RenewalsView({ clients }: { clients: Client[] }) {
           </SectionCard>
         ) : null}
         {due60.length > 0 ? (
-          <SectionCard title="Expiring in 31-60 Days" delay={200}>
+          <SectionCard title="Expiring in 31-60 days" delay={200}>
             <Rows head={POLICY_HEAD} rows={due60} cols={POLICY_COLS} cells={policyCells} href={(r) => clientHref(r.clientId)} empty="None." />
           </SectionCard>
         ) : null}
         {unpaid.length > 0 ? (
-          <SectionCard title="Unpaid Policies" delay={240}>
+          <SectionCard title="Unpaid policies" delay={240}>
             <SideList
               rows={unpaid}
               title={(r) => r.client}
@@ -580,24 +580,24 @@ function ClientsView({ clients }: { clients: Client[] }) {
   const fresh = newThisMonth(clients, today);
 
   const drills: Record<string, Drill> = {
-    "active-clients": clientDrill("Clients with an Active Policy", active),
-    "new-clients": clientDrill("New Clients This Month", fresh),
-    "no-policy": clientDrill("Clients with No Active Policy", noPolicy),
+    "active-clients": clientDrill("Clients with an active policy", active),
+    "new-clients": clientDrill("New clients this month", fresh),
+    "no-policy": clientDrill("Clients with no active policy", noPolicy),
   };
 
   return (
     <>
       <Tiles
         items={[
-          { label: "Clients with an Active Policy", value: active.length, href: showHref("active-clients") },
-          { label: "New Clients This Month", value: fresh.length, href: showHref("new-clients") },
-          { label: "Clients with No Active Policy", value: noPolicy.length, href: showHref("no-policy") },
+          { label: "Clients with an active policy", value: active.length, href: showHref("active-clients") },
+          { label: "New clients this month", value: fresh.length, href: showHref("new-clients") },
+          { label: "Clients with no active policy", value: noPolicy.length, href: showHref("no-policy") },
         ]}
       />
       <DrillPanel drills={drills} />
 
       <div className="mt-3">
-        <SectionCard title="Clients with No Active Policy" delay={200}>
+        <SectionCard title="Clients with no active policy" delay={200}>
           <Rows
             head={["Client", "Category", "Account manager"]}
             rows={noPolicy.slice(0, 5)}
@@ -630,9 +630,9 @@ function ClaimsView({ claims }: { claims: Claim[] }) {
   const statusStages = claimsByStatus(claims).filter((stage) => stage.count > 0);
 
   const drills: Record<string, Drill> = {
-    "open-claims": claimDrill("Open Claims", open),
-    "opened-month": claimDrill("Claims Opened This Month", opened),
-    "overdue-claims": claimDrill("Overdue Claims", overdue),
+    "open-claims": claimDrill("Open claims", open),
+    "opened-month": claimDrill("Claims opened this month", opened),
+    "overdue-claims": claimDrill("Overdue claims", overdue),
     ...Object.fromEntries(
       claimsByStatus(claims).map((s) => [`status:${s.label}`, claimDrill(`${s.label} Claims`, claims.filter((c) => claimStatus(c) === s.label))]),
     ),
@@ -642,16 +642,16 @@ function ClaimsView({ claims }: { claims: Claim[] }) {
     <>
       <Tiles
         items={[
-          { label: "Total Open Claims", value: open.length, href: showHref("open-claims") },
-          { label: "Claims Opened This Month", value: opened.length, href: showHref("opened-month") },
-          { label: "Overdue Claims", value: overdue.length, href: showHref("overdue-claims") },
+          { label: "Total open claims", value: open.length, href: showHref("open-claims") },
+          { label: "Claims opened this month", value: opened.length, href: showHref("opened-month") },
+          { label: "Overdue claims", value: overdue.length, href: showHref("overdue-claims") },
         ]}
       />
       <DrillPanel drills={drills} />
 
       <div className={cn("mt-3 grid items-start gap-3 sm:gap-4", overdue.length > 0 && "xl:grid-cols-[minmax(0,1fr)_380px]")}>
         {overdue.length > 0 ? (
-          <SectionCard title="Overdue Claims" delay={120}>
+          <SectionCard title="Overdue claims" delay={120}>
             <Rows
               head={["Claim", "Client", "Class", "Reported", ""]}
               rows={overdue}
@@ -670,7 +670,7 @@ function ClaimsView({ claims }: { claims: Claim[] }) {
             />
           </SectionCard>
         ) : null}
-        <SectionCard title="Claims by Status" delay={160}>
+        <SectionCard title="Claims by status" delay={160}>
           {statusStages.length > 0 ? (
             <StageBar wideLabels stages={statusStages} onSelect={(label) => router.replace(showHref(`status:${label}`), { scroll: false })} />
           ) : (

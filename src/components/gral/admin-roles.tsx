@@ -273,7 +273,7 @@ export function NewRoleForm({
     <form onSubmit={submit} noValidate className="flex min-h-full flex-col">
       <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">New Role</h2>
+          <h2 className="text-lg font-semibold tracking-tight">New role</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Give it a name and choose what it can do. You can then give it to people from the Users page.
           </p>
@@ -365,12 +365,12 @@ export function NewRoleForm({
         </Field>
       </div>
 
-      <div className="sticky bottom-0 flex justify-end gap-2 border-t border-border bg-card px-6 py-4">
+      <div className="sticky bottom-0 flex justify-between gap-2 border-t border-border bg-card px-6 py-4">
         <OutlineButton onClick={onClose} className="px-4 py-2 text-sm">
           Cancel
         </OutlineButton>
         <NavyButton type="submit" disabled={saving} className="px-4 py-2 text-sm">
-          {saving ? "Creating…" : "Create Role"}
+          {saving ? "Creating…" : "Create role"}
         </NavyButton>
       </div>
     </form>

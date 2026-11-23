@@ -10,7 +10,7 @@ const mock = vi.hoisted(() => ({
   assignKycReviewer: vi.fn(), getKycReview: vi.fn(), listKycReviewers: vi.fn(), recordKycScreening: vi.fn(), attachKycDocument: vi.fn(),
   onboardingOptions: vi.fn(), runTrackAction: vi.fn(), listDocuments: vi.fn(),
 }));
-vi.mock("@/lib/api", () => ({ ...mock, MOCK_AUTH: false, DEMO_REVIEWER: "Risk & Compliance Manager" }));
+vi.mock("@/lib/api", () => ({ ...mock, MOCK_AUTH: false, DEMO_REVIEWER: "Risk and Compliance Manager" }));
 vi.mock("@/lib/auth-context", () => ({ useCurrentUser: () => ({ user: state.user }) }));
 vi.mock("@/lib/queries", () => ({ useRefresh: () => state.refresh }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));

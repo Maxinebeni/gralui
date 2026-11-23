@@ -10,7 +10,7 @@ export const ROLES = [
   "Technical Director",
   "Commercial Director",
   "Finance Director",
-  "Risk & Compliance Manager",
+  "Risk and Compliance Manager",
   "Accounts Executive",
   "CRM Manager",
   "Client Relation Records Officer",
@@ -28,7 +28,7 @@ export const ROLES = [
  */
 export type Role = (typeof ROLES)[number] | "Staff" | "Administrator";
 
-export type ClientType = "Corporate" | "State Enterprise" | "NGO" | "Financial Institution" | "SME";
+export type ClientType = "Corporate" | "State enterprise" | "NGO" | "Financial institution" | "SME";
  
 export type ClientDoc = {
   name: string;
@@ -38,7 +38,7 @@ export type ClientDoc = {
 };
  
 /** Policy statuses. Active, Lapsed and Cancelled come from the requirements document. */
-export const POLICY_STATUSES = ["Active", "In Renewal", "Lapsed", "Cancelled"] as const;
+export const POLICY_STATUSES = ["Active", "In renewal", "Lapsed", "Cancelled"] as const;
 export type PolicyStatus = (typeof POLICY_STATUSES)[number];
  
 export type Policy = {
@@ -338,7 +338,7 @@ export type Claim = {
   dispute?: ClaimDispute;
   settlement?: ClaimSettlement;
   closure?: ClaimClosure;
-  /** Visible only to Technical Director, Risk & Compliance Manager and MD. */
+  /** Visible only to Technical Director, Risk and Compliance Manager and MD. */
   fraudFlag?: boolean;
   notes: ClaimEvent[];
   history: ClaimEvent[];

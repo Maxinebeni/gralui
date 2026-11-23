@@ -112,9 +112,9 @@ export function valueText(v: unknown): string {
 /** A short name for a row: the client, or the policy and the client it belongs to. */
 export function rowTitle(row: Pick<ImportRow, "recordType" | "values">): string {
   const v = row.values;
-  if (row.recordType === "CLIENT") return [valueText(v["Client ID"]), valueText(v["Client Name"])].filter(Boolean).join(" · ") || "Client with no name";
+  if (row.recordType === "CLIENT") return [valueText(v["Client ID"]), valueText(v["Client name"])].filter(Boolean).join(" · ") || "Client with no name";
   if (row.recordType === "POLICY") {
-    const number = valueText(v["Policy Number"]) || "no policy number";
+    const number = valueText(v["Policy number"]) || "no policy number";
     return `Policy ${number} · ${valueText(v["Client ID"]) || "no client"}`;
   }
   return "Source row";
@@ -131,35 +131,35 @@ export type FieldKind = "manager" | "insurer" | "product" | "clientType" | "dupl
 
 export const CLIENT_FIELDS = [
   "Account Manager",
-  "Client Type",
-  "Duplicate Review",
-  "Client Name",
+  "Client type",
+  "Duplicate review",
+  "Client name",
   "Client ID",
   "Sector",
-  "Physical Address",
-  "Contact Name",
-  "Contact Job Title",
-  "Contact Email",
-  "Contact Phone",
+  "Physical address",
+  "Contact name",
+  "Contact job title",
+  "Contact email",
+  "Contact phone",
   "Remarks",
 ] as const;
 
 export const POLICY_FIELDS = [
   "Insurer ID",
   "Product ID",
-  "Proposed Movement",
-  "Policy Number",
+  "Proposed movement",
+  "Policy number",
   "Client ID",
-  "Date of Effect",
-  "Date of Expiry",
+  "Date of effect",
+  "Date of expiry",
   "Net Premium (RWF)",
   "Total Premium (RWF)",
   "Amount Paid (RWF)",
-  "Commission Rate",
+  "Commission rate",
   "Currency",
-  "Proposed Plate",
+  "Proposed plate",
   "Proposed UPI",
-  "Insurer Booking Note",
+  "Insurer booking note",
   "Remarks",
 ] as const;
 
@@ -172,8 +172,8 @@ export const FIELD_LABEL: Record<string, string> = {
   "Account Manager": "Account manager",
   "Insurer ID": "Insurer",
   "Product ID": "Product",
-  "Proposed Movement": "Movement",
-  "Duplicate Review": "Duplicate decision",
+  "Proposed movement": "Movement",
+  "Duplicate review": "Duplicate decision",
 };
 export const fieldLabel = (field: string) => FIELD_LABEL[field] ?? field;
 
@@ -185,19 +185,19 @@ export function fieldKind(field: string): FieldKind {
       return "insurer";
     case "Product ID":
       return "product";
-    case "Client Type":
+    case "Client type":
       return "clientType";
-    case "Duplicate Review":
+    case "Duplicate review":
       return "duplicate";
-    case "Proposed Movement":
+    case "Proposed movement":
       return "movement";
-    case "Date of Effect":
-    case "Date of Expiry":
+    case "Date of effect":
+    case "Date of expiry":
       return "date";
     case "Net Premium (RWF)":
     case "Total Premium (RWF)":
     case "Amount Paid (RWF)":
-    case "Commission Rate":
+    case "Commission rate":
       return "money";
     default:
       return "text";
@@ -207,9 +207,9 @@ export function fieldKind(field: string): FieldKind {
 /** The client types the backend accepts. */
 export const IMPORT_CLIENT_TYPES = [
   { value: "CORPORATE", label: "Corporate" },
-  { value: "STATE_ENTERPRISE", label: "State Enterprise" },
+  { value: "STATE_ENTERPRISE", label: "State enterprise" },
   { value: "NGO", label: "NGO" },
-  { value: "FINANCIAL_INSTITUTION", label: "Financial Institution" },
+  { value: "FINANCIAL_INSTITUTION", label: "Financial institution" },
   { value: "SME", label: "SME" },
   { value: "INDIVIDUAL", label: "Individual" },
 ];
@@ -225,29 +225,29 @@ export const IMPORT_MOVEMENTS = [
 const ISSUE_FIELD_TO_FIX: Record<string, string> = {
   Insurer: "Insurer ID",
   INSURER: "Insurer ID",
-  "Source Insurer": "Insurer ID",
-  "Proposed Insurer": "Insurer ID",
-  "Type of Insurance": "Product ID",
+  "Source insurer": "Insurer ID",
+  "Proposed insurer": "Insurer ID",
+  "Type of insurance": "Product ID",
   "TYPE OF INSURANCE": "Product ID",
-  "Source Type of Insurance": "Product ID",
-  "Proposed Type of Insurance": "Product ID",
-  Movement: "Proposed Movement",
-  MOVEMENT: "Proposed Movement",
-  "Amount Paid": "Amount Paid (RWF)",
+  "Source type of insurance": "Product ID",
+  "Proposed type of insurance": "Product ID",
+  Movement: "Proposed movement",
+  MOVEMENT: "Proposed movement",
+  "Amount paid": "Amount Paid (RWF)",
   "AMOUNT PAID": "Amount Paid (RWF)",
-  Rate: "Commission Rate",
+  Rate: "Commission rate",
   UPI: "Proposed UPI",
-  Plate: "Proposed Plate",
-  Client: "Client Name",
-  CLIENT: "Client Name",
-  "POLICY NO": "Policy Number",
-  "DATE OF EFFECT": "Date of Effect",
-  "DATE OF EXPIRY": "Date of Expiry",
+  Plate: "Proposed plate",
+  Client: "Client name",
+  CLIENT: "Client name",
+  "POLICY NO": "Policy number",
+  "DATE OF EFFECT": "Date of effect",
+  "DATE OF EXPIRY": "Date of expiry",
   "NET PREM": "Net Premium (RWF)",
-  "Source Net Premium": "Net Premium (RWF)",
+  "Source net premium": "Net Premium (RWF)",
   "TOTAL PREMIUM": "Total Premium (RWF)",
-  "Source Total Premium": "Total Premium (RWF)",
-  "PHONE NUMBER": "Contact Phone",
+  "Source total premium": "Total Premium (RWF)",
+  "PHONE NUMBER": "Contact phone",
   "ACC. MANAG": "Account Manager",
 };
 
@@ -275,8 +275,8 @@ export function fieldsToFix(row: Pick<ImportRow, "recordType" | "issues">): stri
  * insurer or type of insurance written in the register instead.
  */
 export function matchField(field: string): string {
-  if (field === "Insurer ID") return "Proposed Insurer";
-  if (field === "Product ID") return "Proposed Type of Insurance";
+  if (field === "Insurer ID") return "Proposed insurer";
+  if (field === "Product ID") return "Proposed type of insurance";
   return field;
 }
 
@@ -285,7 +285,7 @@ export function matchValue(row: Pick<ImportRow, "values">, field: string): strin
   const v = valueText(row.values[key]);
   if (v || key === field) return v;
   // Older workbooks may only carry the register's own column.
-  return valueText(row.values[field === "Insurer ID" ? "Source Insurer" : "Source Type of Insurance"]);
+  return valueText(row.values[field === "Insurer ID" ? "Source insurer" : "Source type of insurance"]);
 }
 
 /** Rows in the list that would take the same fix as this one (same record type, same register value, not yet imported). */

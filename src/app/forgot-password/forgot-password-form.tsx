@@ -86,7 +86,7 @@ export function ForgotPasswordForm() {
               </div>
 
               <NavyButton type="submit" disabled={submitting} className="w-full py-2.5 text-sm">
-                {submitting ? "Sending…" : "Send Reset Link"}
+                {submitting ? "Sending…" : "Send reset link"}
               </NavyButton>
             </form>
           </>

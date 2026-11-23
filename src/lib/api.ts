@@ -163,17 +163,17 @@ type BackendClientType = "CORPORATE" | "STATE_ENTERPRISE" | "NGO" | "FINANCIAL_I
 
 const TYPE_TO_BACKEND: Record<ClientType, BackendClientType> = {
   Corporate: "CORPORATE",
-  "State Enterprise": "STATE_ENTERPRISE",
+  "State enterprise": "STATE_ENTERPRISE",
   NGO: "NGO",
-  "Financial Institution": "FINANCIAL_INSTITUTION",
+  "Financial institution": "FINANCIAL_INSTITUTION",
   SME: "SME",
 };
 
 const TYPE_FROM_BACKEND: Record<BackendClientType, ClientType> = {
   CORPORATE: "Corporate",
-  STATE_ENTERPRISE: "State Enterprise",
+  STATE_ENTERPRISE: "State enterprise",
   NGO: "NGO",
-  FINANCIAL_INSTITUTION: "Financial Institution",
+  FINANCIAL_INSTITUTION: "Financial institution",
   SME: "SME",
 };
 
@@ -270,7 +270,7 @@ function toBackendPhone(phone: string): string {
 
 function toClient(v: ClientView, managers: ManagerChoice[]): Client {
   const policies = LOCAL_POLICIES.get(v.reference) ?? [];
-  const active = policies.filter((p) => p.status === "Active" || p.status === "In Renewal").length;
+  const active = policies.filter((p) => p.status === "Active" || p.status === "In renewal").length;
   const client: Client = {
     id: v.reference,
     uuid: v.id,
@@ -279,7 +279,8 @@ function toClient(v: ClientView, managers: ManagerChoice[]): Client {
     createdAt: v.createdAt?.slice(0, 10),
     name: v.profile.registeredName,
     type: TYPE_FROM_BACKEND[v.profile.type] ?? "Corporate",
-    sector: v.profile.sector,
+    // Older records say "Banking & Finance"; show them the way the list now reads.
+    sector: v.profile.sector?.replace(/ & /g, " and "),
     address: v.profile.physicalAddress,
     remarks: v.profile.remarks,
     contact: v.primaryContact
@@ -951,7 +952,7 @@ function policyNumberTaken(policyId: string, ignore?: { clientId: string; policy
 
 /** Rebuild a client after its policies change, keeping the active count live. */
 function withPolicies(client: Client, policies: Policy[]): Client {
-  const active = policies.filter((p) => p.status === "Active" || p.status === "In Renewal").length;
+  const active = policies.filter((p) => p.status === "Active" || p.status === "In renewal").length;
   return {
     ...client,
     policies,
@@ -1166,8 +1167,8 @@ export async function listRenewals(): Promise<RenewalCase[]> {
 
 /* ------------------------- Renewals on the backend (REN-01 to REN-06) ------------------------- */
 // The backend keeps one renewal case per policy period, with ten milestones
-// that match the screen's ten (ACTIVATION is "Extract & Brief" and PLACEMENT
-// is "Acceptance & Placement"). Each action is its own command; the case's
+// that match the screen's ten (ACTIVATION is "Extract and brief" and PLACEMENT
+// is "Acceptance and placement"). Each action is its own command; the case's
 // availableActions say which ones the signed-in user may run right now.
 
 type RenewalMilestoneView = {
@@ -3207,7 +3208,7 @@ async function readAllOnboarding<T>(path: string, fallback: string): Promise<T[]
 }
 
 export type StaffChoice = { id: string; fullName: string };
-export const DEMO_REVIEWER = "Risk & Compliance Manager";
+export const DEMO_REVIEWER = "Risk and Compliance Manager";
 
 export async function listKycReviewers(): Promise<StaffChoice[]> {
   if (MOCK_AUTH) return [{ id: DEMO_REVIEWER, fullName: DEMO_REVIEWER }];
@@ -4009,7 +4010,7 @@ export async function attachKycDocument(review: KycReview, code: string, evidenc
 }
 
 export async function recordKycScreening(review: KycReview, input: { result: "CLEAR" | "REVIEW_REQUIRED" | "REJECTED"; notes: string; evidence: EvidenceInput }, attempt?: CommandAttempt): Promise<KycReview> {
-  if (MOCK_AUTH && (DEMO_ROLE !== "Risk & Compliance Manager" || review.reviewerId !== DEMO_REVIEWER)) throw new Error(ONBOARDING_MESSAGES.APPROVER_INELIGIBLE);
+  if (MOCK_AUTH && (DEMO_ROLE !== "Risk and Compliance Manager" || review.reviewerId !== DEMO_REVIEWER)) throw new Error(ONBOARDING_MESSAGES.APPROVER_INELIGIBLE);
   if (!input.notes.trim()) throw new Error("Say which lists were checked and what was found.");
   const p = await uploadProof({ type: "KYC", id: review.id }, input.evidence, "SCREENING", "KYC", attempt);
   if (MOCK_AUTH) {
@@ -4038,9 +4039,9 @@ export async function submitKycReview(review: KycReview, attempt?: CommandAttemp
   return sendOnboarding<KycReview>("POST", `/api/v1/kyc-cases/${review.id}/submit`, kycCommand(review, attempt), "Could not send the KYC review.", attempt);
 }
 
-/** The Risk & Compliance Manager's decision. Approval needs a clear screening and the signed KYC Approval Form. */
+/** The Risk and Compliance Manager's decision. Approval needs a clear screening and the signed KYC Approval Form. */
 export async function decideKycReview(review: KycReview, input: { decision: "APPROVE" | "RETURN" | "REJECT"; reason: string; evidence?: EvidenceInput }, attempt?: CommandAttempt): Promise<KycReview> {
-  if (MOCK_AUTH && (DEMO_ROLE !== "Risk & Compliance Manager" || review.reviewerId !== DEMO_REVIEWER)) throw new Error(ONBOARDING_MESSAGES.APPROVER_INELIGIBLE);
+  if (MOCK_AUTH && (DEMO_ROLE !== "Risk and Compliance Manager" || review.reviewerId !== DEMO_REVIEWER)) throw new Error(ONBOARDING_MESSAGES.APPROVER_INELIGIBLE);
   if (!input.reason.trim()) throw new Error("Give the reason for the decision.");
   if (input.decision === "APPROVE" && !input.evidence) throw new Error("Attach the signed KYC Approval Form.");
   const p = input.evidence ? await uploadProof({ type: "KYC", id: review.id }, input.evidence, "KYC_APPROVAL", "APPROVAL_EVIDENCE", attempt) : undefined;
@@ -4053,7 +4054,7 @@ export async function decideKycReview(review: KycReview, input: { decision: "APP
         status,
         decisionReason: input.reason.trim(),
         decidedAt: new Date().toISOString(),
-        decidedBy: CURRENT_USER?.name ?? "Risk & Compliance Manager",
+        decidedBy: CURRENT_USER?.name ?? "Risk and Compliance Manager",
         evidence: p ? [...r.evidence, { purpose: "KYC_APPROVAL", documentId: p.documentId, documentVersion: 1, occurredAt: p.occurredAt, fileName: p.fileName }] : r.evidence,
       };
     });
@@ -4504,7 +4505,7 @@ function onboardingTasks(): WorkTask[] {
       resourceRef: r.id,
       client: r.clientName,
       owner: r.reviewerId,
-      ownerRole: "Risk & Compliance Manager",
+      ownerRole: "Risk and Compliance Manager",
       dueDate: (r.revisedDueAt ?? r.dueAt ?? new Date().toISOString()).slice(0, 10),
       status: "OPEN",
       source: "SYSTEM",
@@ -5438,9 +5439,9 @@ const BACKEND_TO_FRONTEND_ROLE: Record<string, Role> = {
   COMMERCIAL_DIRECTOR: "Commercial Director",
   FD: "Finance Director",
   FINANCE_DIRECTOR: "Finance Director",
-  RCM: "Risk & Compliance Manager",
-  RISK_AND_COMPLIANCE_MANAGER: "Risk & Compliance Manager",
-  RISK_COMPLIANCE_MANAGER: "Risk & Compliance Manager",
+  RCM: "Risk and Compliance Manager",
+  RISK_AND_COMPLIANCE_MANAGER: "Risk and Compliance Manager",
+  RISK_COMPLIANCE_MANAGER: "Risk and Compliance Manager",
   // Business roles in the backend's roles table (migration V9).
   ACCOUNTS_EXECUTIVE: "Accounts Executive",
   CRM_MANAGER: "CRM Manager",

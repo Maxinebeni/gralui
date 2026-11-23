@@ -15,15 +15,15 @@ export type MilestoneDef = {
 };
 
 export const RENEWAL_MILESTONES: MilestoneDef[] = [
-  { code: "BRIEF", name: "Extract & Brief", offset: -120, owner: "Accounts Executive", output: "Case opened, owner and risk flags set" },
-  { code: "VISIT", name: "Strategic Visit", offset: -100, owner: "Accounts Executive / CRM Manager", output: "Visit report" },
-  { code: "NOTICE", name: "Formal Notice", offset: -90, owner: "Accounts Executive", output: "Renewal notice sent to client" },
-  { code: "RFQ", name: "Request for Quotes", offset: -75, owner: "GI Underwriting Manager", output: "RFQ sent to insurers" },
-  { code: "QUOTES", name: "Quotes & Comparison", offset: -60, owner: "GI Underwriting Manager", output: "Quotes compared, option recommended" },
-  { code: "APPROVAL", name: "Approval & Presentation", offset: -45, owner: "Technical Director / MD", output: "Internal approval, options presented" },
-  { code: "ACCEPTANCE", name: "Acceptance & Placement", offset: -30, owner: "Accounts Executive / GI Underwriting", output: "Written client acceptance, cover placed" },
-  { code: "SCHEDULE", name: "Schedule Verification", offset: -15, owner: "GI Underwriting Manager", output: "Policy schedule received and checked" },
-  { code: "DELIVERY", name: "Delivery to Client", offset: -7, owner: "Servicing staff", output: "Verified schedule delivered" },
+  { code: "BRIEF", name: "Extract and brief", offset: -120, owner: "Accounts Executive", output: "Case opened, owner and risk flags set" },
+  { code: "VISIT", name: "Strategic visit", offset: -100, owner: "Accounts Executive / CRM Manager", output: "Visit report" },
+  { code: "NOTICE", name: "Formal notice", offset: -90, owner: "Accounts Executive", output: "Renewal notice sent to client" },
+  { code: "RFQ", name: "Request for quotes", offset: -75, owner: "GI Underwriting Manager", output: "RFQ sent to insurers" },
+  { code: "QUOTES", name: "Quotes and comparison", offset: -60, owner: "GI Underwriting Manager", output: "Quotes compared, option recommended" },
+  { code: "APPROVAL", name: "Approval and presentation", offset: -45, owner: "Technical Director / MD", output: "Internal approval, options presented" },
+  { code: "ACCEPTANCE", name: "Acceptance and placement", offset: -30, owner: "Accounts Executive / GI Underwriting", output: "Written client acceptance, cover placed" },
+  { code: "SCHEDULE", name: "Schedule verification", offset: -15, owner: "GI Underwriting Manager", output: "Policy schedule received and checked" },
+  { code: "DELIVERY", name: "Delivery to client", offset: -7, owner: "Servicing staff", output: "Verified schedule delivered" },
   { code: "COMPLETION", name: "Completion", offset: 0, owner: "Accounts Executive", output: "Next policy period recorded" },
 ];
 
@@ -113,7 +113,7 @@ export function completionBlocker(c: RenewalCase): string | null {
 /** The pipeline's stages, by the milestone a renewal is on. */
 export const RENEWAL_STAGES = [
   { label: "Preparation", from: 1, to: 3 },
-  { label: "Quotes & approval", from: 4, to: 6 },
+  { label: "Quotes and approval", from: 4, to: 6 },
   { label: "Placement", from: 7, to: 8 },
   { label: "Delivery", from: 9, to: 10 },
 ] as const;

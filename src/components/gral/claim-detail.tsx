@@ -50,7 +50,7 @@ import { DocumentPanel, FilePickButton } from "./documents";
 import { ReviewDialog } from "./review-dialog";
 import { Chip, Dot, Loader, NavyButton, OutlineButton, Person, PriorityPill, SegmentedTabs } from "./ui";
 
-const TABS = ["Documents", "Follow-ups", "Activity Log", "Internal Notes"] as const;
+const TABS = ["Documents", "Follow-ups", "Activity log", "Internal notes"] as const;
 type Tab = (typeof TABS)[number];
 
 const INPUT =
@@ -163,14 +163,14 @@ export function ClaimDetailPanel({
             <FollowUpsTab claim={claim} />
           )
         ) : null}
-        {tab === "Activity Log" ? (
+        {tab === "Activity log" ? (
           claim.serverState ? (
             <ClaimHistoryList claim={claim} />
           ) : (
             <EventList events={[...claim.history].reverse()} empty="No activity yet." />
           )
         ) : null}
-        {tab === "Internal Notes" ? (
+        {tab === "Internal notes" ? (
           <NotesTab
             claim={claim}
             canAdd={perms.canUpdateClaims || perms.canDecideDisputes}
@@ -645,7 +645,7 @@ function DocumentsTab({ claim, canUpdate, userName, run }: { claim: Claim; canUp
             classification="CLAIM_EVIDENCE"
             purpose="CLAIM_DOCUMENT"
             canUpload={editable}
-            title="Claim Files"
+            title="Claim files"
             emptyText="No files uploaded yet."
           />
         </div>
@@ -707,7 +707,7 @@ function DocumentsTab({ claim, canUpdate, userName, run }: { claim: Claim; canUp
           classification="CLAIM_EVIDENCE"
           purpose="CLAIM_DOCUMENT"
           canUpload={editable}
-          title="Claim Files"
+          title="Claim files"
           emptyText={claim.uuid ? "No files uploaded yet." : "No files uploaded yet. Files on sample claims stay in this tab."}
         />
       </div>
@@ -879,7 +879,7 @@ function NotesTab({ claim, canAdd, userName, run }: { claim: Claim; canAdd: bool
               if (await run(() => addClaimNote(claim.id, text, userName), "Internal note added.")) setText("");
             }}
           >
-            Add Note
+            Add note
           </NavyButton>
         </>
       ) : null}
