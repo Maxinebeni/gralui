@@ -191,9 +191,15 @@ export function Shell({ children }: { children: ReactNode }) {
             <div className={cn("fixed inset-y-0 left-0 z-20 border-r border-border bg-card px-3 py-5", sidebarCollapsed ? "w-[76px]" : "w-[240px]")}>
             <div className="flex h-full min-h-0 flex-col overflow-hidden">
               {sidebarCollapsed ? (
-                <button type="button" onClick={() => setSidebarCollapsed(false)} aria-label="Expand sidebar" aria-expanded="false" title="Expand sidebar" className="mx-auto flex size-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground hover:bg-secondary hover:text-foreground">
-                  <PanelLeftOpen aria-hidden="true" className="size-4" />
-                </button>
+                <div className="flex flex-col items-center gap-2">
+                  <Link href={homePathFor(user)} aria-label="Global Risk Advisors Ltd home" title="Global Risk Advisors Ltd" className="flex size-10 items-center justify-center overflow-hidden rounded-xl bg-card p-1">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src="/favicon_io/android-chrome-512x512.png" alt="" className="size-full object-contain" />
+                  </Link>
+                  <button type="button" onClick={() => setSidebarCollapsed(false)} aria-label="Expand sidebar" aria-expanded="false" title="Expand sidebar" className="flex size-9 shrink-0 items-center justify-center rounded-xl text-muted-foreground hover:bg-secondary hover:text-foreground">
+                    <PanelLeftOpen aria-hidden="true" className="size-4" />
+                  </button>
+                </div>
               ) : (
                 <div className="flex items-center justify-between gap-2">
                   <SidebarBrand home={homePathFor(user)} />
@@ -228,7 +234,7 @@ export function Shell({ children }: { children: ReactNode }) {
             </button>
             <Link href={homePathFor(user)} aria-label="Global Risk Advisors Ltd, go to the home page" className="flex min-w-0 items-center rounded-xl">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/favicon_io/android-chrome-512x512.png" alt="" className="h-11 w-auto" />
+              <img src="/gral-logo.png" alt="" className="h-auto w-[72px] rounded-xl bg-card p-1" />
             </Link>
           </div>
 
@@ -406,15 +412,11 @@ function sidebarLinkClass(active: boolean, collapsed = false) {
 
 function SidebarBrand({ home }: { home: string }) {
   return (
-    <div className="flex min-w-0 items-center gap-2 px-1 py-2">
-      <Link href={home} aria-label="Global Risk Advisors Ltd, go to the home page" className="flex shrink-0 items-center rounded-xl focus-visible:outline-none">
+    <div className="min-w-0 flex-1 px-1 py-2">
+      <Link href={home} aria-label="Global Risk Advisors Ltd, go to the home page" className="flex w-full items-center rounded-2xl bg-card p-1.5 focus-visible:outline-none">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/favicon_io/android-chrome-512x512.png" alt="" className="h-9 w-auto" />
+        <img src="/gral-logo.png" alt="" className="h-auto w-[150px] max-w-full" />
       </Link>
-      <div className="min-w-0">
-        <p className="text-sm font-semibold tracking-tight text-foreground">GRAL</p>
-        <p className="text-xs text-muted-foreground">Operations</p>
-      </div>
     </div>
   );
 }

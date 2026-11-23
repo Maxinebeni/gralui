@@ -36,9 +36,9 @@ export function ForgotPasswordForm() {
         <div className="flex flex-col items-center text-center">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/favicon_io/android-chrome-512x512.png"
+            src="/gral-logo.png"
             alt="Global Risk Advisors Ltd"
-            className="h-24 w-auto"
+            className="h-auto w-48 max-w-full rounded-2xl bg-card p-2"
           />
         </div>
 

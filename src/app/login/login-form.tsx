@@ -57,7 +57,7 @@ export function LoginForm() {
       <div className="float-card rise-in w-full max-w-md p-5 sm:p-8">
         <div className="flex flex-col items-center text-center">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/favicon_io/android-chrome-512x512.png" alt="Global Risk Advisors Ltd" className="h-24 w-auto" />
+          <img src="/gral-logo.png" alt="Global Risk Advisors Ltd" className="h-auto w-48 max-w-full rounded-2xl bg-card p-2" />
           <p className="mt-3 text-sm text-muted-foreground">Thinking Beyond Tomorrow.</p>
         </div>
 
