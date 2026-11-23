@@ -75,8 +75,7 @@ export function StatTile({
         onClick={onClick}
         aria-pressed={active}
         className={cn(
-          "float-card rise-in block w-full min-w-0 p-3.5 text-left sm:px-4 sm:py-4 transition-shadow hover:shadow-[var(--shadow-float)]",
-          active && "ring-2 ring-sky",
+          "float-card rise-in block w-full min-w-0 p-3.5 text-left transition-colors hover:border-sky/50 sm:px-4 sm:py-4",
         )}
         style={{ animationDelay: `${delay}ms` }}
       >
@@ -177,7 +176,7 @@ export function FilterPill({
     <button
       type="button"
       onClick={onClick}
-      className="float-pill flex max-w-full items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-foreground transition-shadow hover:shadow-[var(--shadow-float)]"
+      className="float-pill flex max-w-full items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-foreground transition-colors hover:border-sky/50"
     >
       {label ? <span className="text-muted-foreground">{label}:</span> : null}
       <span className="truncate">{value}</span>
@@ -189,9 +188,11 @@ export function FilterPill({
 export function Chip({
   children,
   tone = "neutral",
+  className,
 }: {
   children: ReactNode;
   tone?: "neutral" | "success" | "warning" | "danger" | "sky";
+  className?: string;
 }) {
   return (
     <span
@@ -202,6 +203,7 @@ export function Chip({
         tone === "warning" && "bg-warning-soft text-warning",
         tone === "danger" && "bg-danger-soft text-danger",
         tone === "sky" && "bg-pale text-primary",
+        className,
       )}
     >
       {children}
@@ -281,7 +283,7 @@ export function DistributionRow({
   items: { label: string; value: string; tone?: "danger" | "warning" | "success" }[];
 }) {
   return (
-    <div className="mt-4 grid grid-cols-3 divide-x divide-border">
+    <div className={cn("mt-4 grid divide-x divide-border", items.length === 1 ? "grid-cols-1 divide-x-0" : items.length === 2 ? "grid-cols-2" : "grid-cols-3")}>
       {items.map((it) => (
         <div key={it.label} className="flex-1 px-2 text-center">
           <div className="text-[11px] text-muted-foreground">{it.label}</div>
@@ -332,11 +334,14 @@ export function StageBar({
   stages,
   onSelect,
   wideLabels = false,
+  wrapLabels = false,
 }: {
   stages: { label: string; count: number }[];
   onSelect?: (label: string) => void;
   /** Room for longer stage names. */
   wideLabels?: boolean;
+  /** Display full names over multiple lines instead of truncating them. */
+  wrapLabels?: boolean;
 }) {
   const max = Math.max(...stages.map((s) => s.count), 1);
   return (
@@ -353,7 +358,7 @@ export function StageBar({
             )}
             title={`${s.label}: ${s.count}`}
           >
-            <span className="truncate text-xs text-muted-foreground">{s.label}</span>
+            <span className={cn("text-xs text-muted-foreground", wrapLabels ? "break-words leading-tight" : "truncate")}>{s.label}</span>
             <span className="h-2 overflow-hidden rounded-full bg-secondary">
               <span className="block h-full rounded-full bg-sky" style={{ width: `${(s.count / max) * 100}%` }} />
             </span>

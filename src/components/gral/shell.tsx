@@ -185,8 +185,8 @@ export function Shell({ children }: { children: ReactNode }) {
       >
         Skip to main content
       </a>
-      <div className="mx-auto max-w-[1600px] px-3 pt-3 pb-4 sm:px-6 sm:py-6">
-        <div className={cn("lg:grid lg:gap-6", sidebarCollapsed ? "lg:grid-cols-[76px_minmax(0,1fr)]" : "lg:grid-cols-[240px_minmax(0,1fr)]")}>
+      <div className="mx-auto w-full max-w-[1600px] px-3 pt-3 pb-4 sm:px-6 sm:py-6 lg:mx-0 lg:max-w-none lg:px-0">
+        <div className={cn("lg:grid lg:gap-3", sidebarCollapsed ? "lg:grid-cols-[76px_minmax(0,1fr)]" : "lg:grid-cols-[240px_minmax(0,1fr)]")}>
           <aside className="relative hidden lg:block print:hidden">
             <div className={cn("fixed inset-y-0 left-0 z-20 border-r border-border bg-card px-3 py-5", sidebarCollapsed ? "w-[76px]" : "w-[240px]")}>
             <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -219,7 +219,7 @@ export function Shell({ children }: { children: ReactNode }) {
             </div>
           </aside>
 
-          <div className="min-w-0">
+          <div className="min-w-0 lg:max-w-[1800px] lg:px-3">
         <header className="flex min-w-0 items-center justify-between gap-3 print:hidden">
           <div className="flex min-w-0 items-center gap-2 lg:hidden">
             <button
@@ -232,10 +232,6 @@ export function Shell({ children }: { children: ReactNode }) {
             >
               <Menu aria-hidden="true" className="size-4" />
             </button>
-            <Link href={homePathFor(user)} aria-label="Global Risk Advisors Ltd, go to the home page" className="flex min-w-0 items-center rounded-xl">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/gral-logo.png" alt="" className="h-auto w-[72px] rounded-xl bg-card p-1" />
-            </Link>
           </div>
 
           <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -337,7 +333,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main id="main" tabIndex={-1} className="mt-4 pb-12 outline-none sm:mt-6 sm:pb-24">{children}</main>
+        <main id="main" tabIndex={-1} className="mt-3 pb-12 outline-none sm:mt-4 sm:pb-24">{children}</main>
           </div>
         </div>
       </div>

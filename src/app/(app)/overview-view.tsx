@@ -4,23 +4,19 @@ import { useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { X } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { KycBadge } from "@/components/gral/kyc-badge";
 import { PageHeader, SlideOver } from "@/components/gral/shell";
 import {
-  ChartCard,
   Chip,
-  DistributionRow,
   FloatCard,
   NavyButton,
-  Person,
   SegmentedTabs,
   StageBar,
   StatTile,
 } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
-import { formatRwf, timeAgo } from "@/lib/format";
-import { activityFrom, toClaimSummary } from "@/lib/api";
+import { formatRwf } from "@/lib/format";
+import { toClaimSummary } from "@/lib/api";
 import { useClaims, useClients, useRenewals } from "@/lib/queries";
 import { isClosed } from "@/lib/claims";
 import { useCurrentUser } from "@/lib/auth-context";
@@ -30,7 +26,6 @@ import {
   claimStatus,
   claimsByStatus,
   claimsOpenedThisMonth,
-  clientsByCategory,
   expiringBetween,
   hasActivePolicy,
   inForce,
@@ -38,16 +33,15 @@ import {
   overdueClaims,
   overdueRenewals,
   policyRows,
-  settledPerMonth,
-  topClientsByPremium,
   unpaidPolicies,
   type PolicyRow,
 } from "@/lib/dashboard";
-import type { ActivityItem, Claim, Client, ClientClaim, RenewalCase, Role } from "@/lib/types";
+import type { Claim, Client, ClientClaim, RenewalCase, Role } from "@/lib/types";
 
 type Attention = {
   dot: "red" | "amber" | "blue";
-  text: string;
+  title: string;
+  detail: string;
   module: "Claims" | "Clients" | "Renewals";
   when: string;
   action: string;
@@ -69,7 +63,8 @@ function buildAttention(claims: ClientClaim[], renewals: RenewalCase[], clients:
     if (c.step === 5) {
       items.push({
         dot: "blue",
-        text: `${c.id} ${c.client} at settlement (${formatRwf(c.amount)})`,
+        title: c.client,
+        detail: `Claim ${c.id} · Settlement · ${formatRwf(c.amount)}`,
         module: "Claims",
         when: "Sign-off or payment",
         action: "Open",
@@ -79,7 +74,8 @@ function buildAttention(claims: ClientClaim[], renewals: RenewalCase[], clients:
     } else if (c.sla === "breached") {
       items.push({
         dot: "red",
-        text: `${c.id} ${c.client}: claim SLA breached`,
+        title: c.client,
+        detail: `Claim ${c.id} · SLA breached`,
         module: "Claims",
         when: "Overdue",
         action: "Open",
@@ -95,7 +91,8 @@ function buildAttention(claims: ClientClaim[], renewals: RenewalCase[], clients:
     if (health === "overdue" && m) {
       items.push({
         dot: "red",
-        text: `${r.policyId} ${r.client}: renewal step "${m.name}" overdue by ${daysOverdue(r)} days`,
+        title: r.client,
+        detail: `${m.name} · ${r.policyId}`,
         module: "Renewals",
         when: `${daysOverdue(r)}d overdue`,
         action: "Open",
@@ -105,7 +102,8 @@ function buildAttention(claims: ClientClaim[], renewals: RenewalCase[], clients:
     } else if (health === "due-soon") {
       items.push({
         dot: "amber",
-        text: `${r.policyId} ${r.client}: renewal in ${daysToExpiry(r)} days`,
+        title: r.client,
+        detail: `${r.policyId} · Renewal coming up`,
         module: "Renewals",
         when: `${daysToExpiry(r)}d left`,
         action: "Open",
@@ -120,7 +118,8 @@ function buildAttention(claims: ClientClaim[], renewals: RenewalCase[], clients:
       if (d.status === "expired" || d.status === "soon") {
         items.push({
           dot: "amber",
-          text: `${c.name}: ${d.name} ${d.status === "expired" ? "expired" : "expires"} ${d.expiry}`,
+          title: c.name,
+          detail: `${d.name} · ${d.status === "expired" ? "Expired" : "Expires"} ${d.expiry}`,
           module: "Clients",
           when: d.status === "expired" ? "Expired" : "Expiring soon",
           action: "Request",
@@ -164,7 +163,6 @@ export function OverviewView() {
   const openClaims: ClientClaim[] = useMemo(() => allClaims.filter((c) => !isClosed(c)).map(toClaimSummary), [allClaims]);
   const clients: Client[] = useMemo(() => clientsQuery.data ?? [], [clientsQuery.data]);
   const renewals: RenewalCase[] = useMemo(() => (canRenewals ? (renewalsQuery.data ?? []) : []), [canRenewals, renewalsQuery.data]);
-  const activity: ActivityItem[] = useMemo(() => activityFrom(allClaims, renewals).slice(0, 5), [allClaims, renewals]);
 
   const views = VIEWS.filter((v) => (v === "Renewals" ? canRenewals : v === "Clients" ? canClients : canClaims));
   const preferred: View = CLAIMS_FIRST.includes(role as Role) ? "Claims" : "Renewals";
@@ -186,6 +184,11 @@ export function OverviewView() {
     }
     return list;
   }, [openClaims, renewals, clients, canClients, role]);
+  const visibleAttention = view === "Clients"
+    ? attention.filter((item) => item.module === "Clients")
+    : view === "Claims"
+      ? attention.filter((item) => item.module === "Claims")
+      : attention;
 
   const now = new Date();
   const firstName = user.name.split(" ")[0];
@@ -196,7 +199,7 @@ export function OverviewView() {
       <PageHeader title={`${greeting(now.getHours())}, ${firstName}`} subtitle={today} />
 
       {views.length > 1 ? (
-        <div className="mt-5 grid justify-items-start">
+        <div className="mt-4 grid justify-items-start">
           <SegmentedTabs tabs={views} value={view!} onChange={setPicked} />
         </div>
       ) : null}
@@ -217,62 +220,43 @@ export function OverviewView() {
         </FloatCard>
       ) : null}
 
-      {view ? (
-        <Row>
+      {view ? visibleAttention.length === 0 ? (
+        <div className="mt-3 rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+          You&apos;re all caught up.
+        </div>
+      ) : (
+        <div className="mt-3">
           <FloatCard className="p-4 sm:p-5" delay={300}>
             <h2 className="text-base font-semibold tracking-tight">Needs Your Attention</h2>
-            {attention.length === 0 ? (
-              <p className="mt-4 text-xs text-muted-foreground">You&apos;re all caught up.</p>
-            ) : (
-              <div className="mt-3 divide-y divide-border">
-                {attention.slice(0, 7).map((a) => (
-                  <div key={a.text} className="grid gap-2 py-3 first:pt-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                    <div className="flex min-w-0 items-center gap-2.5">
-                      <span
-                        className={cn(
-                          "size-2 shrink-0 rounded-full",
-                          a.dot === "red" && "bg-danger",
-                          a.dot === "amber" && "bg-warning",
-                          a.dot === "blue" && "bg-sky",
-                        )}
-                      />
-                      <span className="text-sm text-foreground">{a.text}</span>
-                    </div>
-                    <div className="flex min-w-0 flex-wrap items-center gap-2 pl-4 sm:shrink-0 sm:justify-end sm:pl-0">
-                      <Chip tone="sky">{a.module}</Chip>
-                      <span className="text-xs text-muted-foreground">{a.when}</span>
-                      <NavyButton onClick={() => router.push(a.href)}>{a.action}</NavyButton>
-                    </div>
+            <div className="mt-3 divide-y divide-border">
+              {visibleAttention.slice(0, 7).map((a) => (
+                <div key={`${a.module}:${a.title}:${a.detail}`} className="grid gap-2 py-3 first:pt-1 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span
+                      className={cn(
+                        "size-2 shrink-0 rounded-full",
+                        a.dot === "red" && "bg-danger",
+                        a.dot === "amber" && "bg-warning",
+                        a.dot === "blue" && "bg-sky",
+                      )}
+                    />
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium text-foreground" title={a.title}>{a.title}</span>
+                      <span className="mt-0.5 block truncate text-xs text-muted-foreground" title={a.detail}>{a.detail}</span>
+                    </span>
                   </div>
-                ))}
-              </div>
-            )}
-          </FloatCard>
-
-          <FloatCard className="p-5" delay={340}>
-            <h2 className="text-base font-semibold tracking-tight">Recent Activity</h2>
-            {activity.length === 0 ? <p className="mt-4 text-xs text-muted-foreground">Nothing recorded yet.</p> : null}
-            <div className="mt-4 space-y-4">
-              {activity.map((a, i) => (
-                <Link key={`${a.at}-${i}`} href={a.href} className="block min-w-0 hover:opacity-80">
-                  <Person name={a.who} />
-                  <p className="mt-1.5 text-xs text-muted-foreground">
-                    {a.what} · {timeAgo(a.at)}
-                  </p>
-                </Link>
+                  <div className="flex min-w-0 flex-wrap items-center gap-2 pl-4 sm:shrink-0 sm:justify-end sm:pl-0">
+                    <Chip tone="sky">{a.module}</Chip>
+                    <span className="text-xs text-muted-foreground">{a.when}</span>
+                    <NavyButton onClick={() => router.push(a.href)}>{a.action}</NavyButton>
+                  </div>
+                </div>
               ))}
             </div>
-            <Link
-              href="/activity"
-              className="mt-4 inline-block text-xs font-semibold text-primary underline underline-offset-4 hover:opacity-70"
-            >
-              View all
-            </Link>
           </FloatCard>
-        </Row>
+        </div>
       ) : null}
 
-      {view === "Claims" ? <SettledChart claims={allClaims} /> : null}
     </>
   );
 }
@@ -360,7 +344,7 @@ function claimDrill(title: string, list: Claim[]): Drill {
 
 function Tiles({ items }: { items: { label: string; value: number | string; href: string }[] }) {
   return (
-    <div className={cn("mt-4 grid grid-cols-2 gap-3 sm:gap-4", items.length === 5 ? "xl:grid-cols-5" : "xl:grid-cols-4")}>
+    <div className={cn("mt-3 grid grid-cols-2 gap-3 sm:gap-4", items.length === 5 ? "xl:grid-cols-5" : items.length === 3 ? "xl:grid-cols-3" : "xl:grid-cols-4")}>
       {items.map((t, i) => (
         <Link key={t.label} href={t.href} scroll={false} className="block">
           <div className="lift-card">
@@ -374,7 +358,7 @@ function Tiles({ items }: { items: { label: string; value: number | string; href
 
 /** Every row below the tiles: a wide card on the left and a side card on the right. */
 function Row({ children }: { children: ReactNode }) {
-  return <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">{children}</div>;
+  return <div className="mt-3 grid gap-3 sm:gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">{children}</div>;
 }
 
 function SectionCard({
@@ -500,6 +484,7 @@ function RenewalsView({ clients }: { clients: Client[] }) {
   const overdue = overdueRenewals(rows);
   const unpaid = unpaidPolicies(rows, today);
   const active = inForce(rows);
+  const policyRenewalPanelCount = Number(due30.length > 0) + Number(due60.length > 0) + Number(overdue.length > 0) + Number(unpaid.length > 0);
 
   const policyDrill = (title: string, list: PolicyRow[]): Drill => ({
     title,
@@ -541,37 +526,47 @@ function RenewalsView({ clients }: { clients: Client[] }) {
       />
       <DrillPanel drills={drills} />
 
-      <Row>
-        <SectionCard title="Expiring in the Next 30 Days" delay={120}>
-          <Rows head={POLICY_HEAD} rows={due30} cols={POLICY_COLS} cells={policyCells} href={(r) => clientHref(r.clientId)} empty="None." />
-        </SectionCard>
-        <SectionCard title="Overdue Renewals" delay={160}>
-          <SideList
-            rows={overdue}
-            title={(r) => r.client}
-            chip={(r) => <DaysChip days={r.daysLeft} />}
-            detail={(r) => `${r.policy.id} · ${r.policy.classOfInsurance} · expired ${formatDate(r.expiry)}`}
-            href={(r) => clientHref(r.clientId)}
-            empty="None."
-          />
-        </SectionCard>
-      </Row>
-
-      <Row>
-        <SectionCard title="Expiring in 31-60 Days" delay={200}>
-          <Rows head={POLICY_HEAD} rows={due60} cols={POLICY_COLS} cells={policyCells} href={(r) => clientHref(r.clientId)} empty="None." />
-        </SectionCard>
-        <SectionCard title="Unpaid Policies" delay={240}>
-          <SideList
-            rows={unpaid}
-            title={(r) => r.client}
-            chip={(r) => <span className="shrink-0 font-medium">{formatRwf(r.balance ?? 0)}</span>}
-            detail={(r) => `${r.policy.id} · cover started ${r.policy.start}`}
-            href={(r) => clientHref(r.clientId)}
-            empty="None."
-          />
-        </SectionCard>
-      </Row>
+      <div className={cn("mt-3 grid gap-3 sm:gap-4", policyRenewalPanelCount > 1 && "xl:grid-cols-2")}>
+        {policyRenewalPanelCount === 0 ? (
+          <SectionCard title="Policy renewals">
+            <Empty>No policy expiries or unpaid balances to show.</Empty>
+          </SectionCard>
+        ) : null}
+        {due30.length > 0 ? (
+          <SectionCard title="Expiring in the Next 30 Days" delay={120}>
+            <Rows head={POLICY_HEAD} rows={due30} cols={POLICY_COLS} cells={policyCells} href={(r) => clientHref(r.clientId)} empty="None." />
+          </SectionCard>
+        ) : null}
+        {overdue.length > 0 ? (
+          <SectionCard title="Overdue Renewals" delay={160}>
+            <SideList
+              rows={overdue}
+              title={(r) => r.client}
+              chip={(r) => <DaysChip days={r.daysLeft} />}
+              detail={(r) => `${r.policy.id} · ${r.policy.classOfInsurance} · expired ${formatDate(r.expiry)}`}
+              href={(r) => clientHref(r.clientId)}
+              empty="None."
+            />
+          </SectionCard>
+        ) : null}
+        {due60.length > 0 ? (
+          <SectionCard title="Expiring in 31-60 Days" delay={200}>
+            <Rows head={POLICY_HEAD} rows={due60} cols={POLICY_COLS} cells={policyCells} href={(r) => clientHref(r.clientId)} empty="None." />
+          </SectionCard>
+        ) : null}
+        {unpaid.length > 0 ? (
+          <SectionCard title="Unpaid Policies" delay={240}>
+            <SideList
+              rows={unpaid}
+              title={(r) => r.client}
+              chip={(r) => <span className="shrink-0 font-medium">{formatRwf(r.balance ?? 0)}</span>}
+              detail={(r) => `${r.policy.id} · cover started ${r.policy.start}`}
+              href={(r) => clientHref(r.clientId)}
+              empty="None."
+            />
+          </SectionCard>
+        ) : null}
+      </div>
     </>
   );
 }
@@ -583,76 +578,43 @@ function ClientsView({ clients }: { clients: Client[] }) {
   const active = clients.filter((c) => hasActivePolicy(c, today));
   const noPolicy = clients.filter((c) => !hasActivePolicy(c, today));
   const fresh = newThisMonth(clients, today);
-  const top = topClientsByPremium(clients, 15, today);
-  const categories = clientsByCategory(clients);
-  const completeFiles = clients.filter((c) => c.docsFiled === c.docsTotal && !c.nonCompliant).length;
-  const nonCompliant = clients.filter((c) => c.nonCompliant).length;
-  const router = useRouter();
 
   const drills: Record<string, Drill> = {
-    "active-clients": clientDrill("Active Clients", active),
+    "active-clients": clientDrill("Clients with an Active Policy", active),
     "new-clients": clientDrill("New Clients This Month", fresh),
     "no-policy": clientDrill("Clients with No Active Policy", noPolicy),
-    ...Object.fromEntries(
-      categories.map((cat) => [`category:${cat.label}`, clientDrill(`${cat.label} Clients`, clients.filter((c) => c.type === cat.label))]),
-    ),
   };
 
   return (
     <>
       <Tiles
         items={[
-          { label: "Total Active Clients", value: active.length, href: showHref("active-clients") },
+          { label: "Clients with an Active Policy", value: active.length, href: showHref("active-clients") },
           { label: "New Clients This Month", value: fresh.length, href: showHref("new-clients") },
           { label: "Clients with No Active Policy", value: noPolicy.length, href: showHref("no-policy") },
-          { label: "SLA Agreements Due", value: "–", href: "/clients" },
         ]}
       />
       <DrillPanel drills={drills} />
 
-      <Row>
-        <SectionCard title="Top Clients by Premium" delay={120}>
-          <Rows
-            head={["#", "Client", "Category", "Premium"]}
-            rows={top.map((t, i) => ({ ...t, rank: i + 1 }))}
-            cols="2rem minmax(0,2fr) minmax(0,1fr) minmax(0,1fr)"
-            cells={(t) => [t.rank, t.client.name, t.client.type, <span key="p" className="font-medium">{formatRwf(t.premium)}</span>]}
-            href={(t) => clientHref(t.client.id)}
-            empty="None."
-          />
-        </SectionCard>
-
-        <div className="min-w-0 space-y-4">
-          <SectionCard title="Clients by Category" delay={160}>
-            <StageBar wideLabels stages={categories} onSelect={(label) => router.replace(showHref(`category:${label}`), { scroll: false })} />
-          </SectionCard>
-          <SectionCard title="Client File Status" delay={200}>
-            <DistributionRow
-              items={[
-                { label: "Complete", value: String(completeFiles), tone: "success" },
-                { label: "Partial", value: String(clients.length - completeFiles - nonCompliant), tone: "warning" },
-                { label: "Non-Compliant", value: String(nonCompliant), tone: "danger" },
-              ]}
-            />
-          </SectionCard>
-        </div>
-      </Row>
-
-      <Row>
-        <SectionCard title="Clients with No Active Policy" delay={240}>
+      <div className="mt-3">
+        <SectionCard title="Clients with No Active Policy" delay={200}>
           <Rows
             head={["Client", "Category", "Account manager"]}
-            rows={noPolicy}
+            rows={noPolicy.slice(0, 5)}
             cols="minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.2fr)"
             cells={(c) => [c.name, c.type, c.manager || "Not assigned"]}
             href={(c) => clientHref(c.id)}
             empty="None."
           />
+          {noPolicy.length > 5 ? (
+            <div className="mt-3 border-t border-border pt-3 text-right">
+              <Link href="/clients" className="text-xs font-medium text-primary underline-offset-4 hover:underline">
+                View all {noPolicy.length} clients
+              </Link>
+            </div>
+          ) : null}
         </SectionCard>
-        <SectionCard title="SLA Agreements Due for Renewal" delay={280}>
-          <Empty>Not recorded yet.</Empty>
-        </SectionCard>
-      </Row>
+      </div>
     </>
   );
 }
@@ -664,16 +626,13 @@ function ClaimsView({ claims }: { claims: Claim[] }) {
   const today = todayIso();
   const open = claims.filter((c) => !isClosed(c));
   const overdue = overdueClaims(claims, today);
-  const monthly = settledPerMonth(claims, 6, today);
   const opened = claimsOpenedThisMonth(claims, today);
-  const settledIn = (key: string) => claims.filter((c) => c.closure?.outcome === "SETTLED" && c.closure.closedAt.startsWith(key));
-  const thisMonth = monthly.at(-1)!;
+  const statusStages = claimsByStatus(claims).filter((stage) => stage.count > 0);
 
   const drills: Record<string, Drill> = {
     "open-claims": claimDrill("Open Claims", open),
     "opened-month": claimDrill("Claims Opened This Month", opened),
     "overdue-claims": claimDrill("Overdue Claims", overdue),
-    ...Object.fromEntries(monthly.map((m) => [`settled:${m.key}`, claimDrill(`Claims Settled in ${m.month}`, settledIn(m.key))])),
     ...Object.fromEntries(
       claimsByStatus(claims).map((s) => [`status:${s.label}`, claimDrill(`${s.label} Claims`, claims.filter((c) => claimStatus(c) === s.label))]),
     ),
@@ -686,65 +645,39 @@ function ClaimsView({ claims }: { claims: Claim[] }) {
           { label: "Total Open Claims", value: open.length, href: showHref("open-claims") },
           { label: "Claims Opened This Month", value: opened.length, href: showHref("opened-month") },
           { label: "Overdue Claims", value: overdue.length, href: showHref("overdue-claims") },
-          { label: "Claims Settled This Month", value: thisMonth.count, href: showHref(`settled:${thisMonth.key}`) },
         ]}
       />
       <DrillPanel drills={drills} />
 
-      <Row>
-        <SectionCard title="Overdue Claims" delay={120}>
-          <Rows
-            head={["Claim", "Client", "Class", "Reported", ""]}
-            rows={overdue}
-            cols="minmax(0,1fr) minmax(0,1.6fr) minmax(0,1.2fr) minmax(0,0.9fr) 6.5rem"
-            cells={(c) => [
-              c.id,
-              c.client,
-              c.classOfInsurance,
-              formatDate(c.dateReported),
-              <Chip key="d" tone="danger">
-                {daysBetween(c.dateReported, today)} days open
-              </Chip>,
-            ]}
-            href={(c) => `/claims?claim=${encodeURIComponent(c.id)}`}
-            empty="None."
-          />
-        </SectionCard>
-        <SectionCard title="Claims by Status" delay={160}>
-          <StageBar wideLabels stages={claimsByStatus(claims)} onSelect={(label) => router.replace(showHref(`status:${label}`), { scroll: false })} />
-        </SectionCard>
-      </Row>
-    </>
-  );
-}
-
-/** Sits below Needs Your Attention and Recent Activity on the Claims view. */
-function SettledChart({ claims }: { claims: Claim[] }) {
-  const router = useRouter();
-  const monthly = settledPerMonth(claims, 6, todayIso());
-  return (
-    <div className="mt-4">
-      <ChartCard delay={380} title="Claims Settled per Month" legend={[]} height={200}>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={monthly} margin={{ top: 4, right: 8, left: -24, bottom: 0 }}>
-            <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" vertical={false} />
-            <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
-            <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
-            <Tooltip cursor={{ fill: "var(--secondary)" }} contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", fontSize: 11 }} />
-            <Bar
-              dataKey="count"
-              name="Claims settled"
-              fill="var(--primary)"
-              radius={[6, 6, 0, 0]}
-              maxBarSize={36}
-              cursor="pointer"
-              onClick={(bar: { payload?: { key?: string } }) => {
-                if (bar.payload?.key) router.replace(showHref(`settled:${bar.payload.key}`), { scroll: false });
-              }}
+      <div className={cn("mt-3 grid items-start gap-3 sm:gap-4", overdue.length > 0 && "xl:grid-cols-[minmax(0,1fr)_380px]")}>
+        {overdue.length > 0 ? (
+          <SectionCard title="Overdue Claims" delay={120}>
+            <Rows
+              head={["Claim", "Client", "Class", "Reported", ""]}
+              rows={overdue}
+              cols="minmax(0,1fr) minmax(0,1.6fr) minmax(0,1.2fr) minmax(0,0.9fr) 6.5rem"
+              cells={(c) => [
+                c.id,
+                c.client,
+                c.classOfInsurance,
+                formatDate(c.dateReported),
+                <Chip key="d" tone="danger">
+                  {daysBetween(c.dateReported, today)} days open
+                </Chip>,
+              ]}
+              href={(c) => `/claims?claim=${encodeURIComponent(c.id)}`}
+              empty="No overdue claims."
             />
-          </BarChart>
-        </ResponsiveContainer>
-      </ChartCard>
-    </div>
+          </SectionCard>
+        ) : null}
+        <SectionCard title="Claims by Status" delay={160}>
+          {statusStages.length > 0 ? (
+            <StageBar wideLabels stages={statusStages} onSelect={(label) => router.replace(showHref(`status:${label}`), { scroll: false })} />
+          ) : (
+            <Empty>No claims to show by status.</Empty>
+          )}
+        </SectionCard>
+      </div>
+    </>
   );
 }

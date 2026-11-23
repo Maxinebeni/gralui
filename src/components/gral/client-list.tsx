@@ -14,23 +14,21 @@ import { ALL_OPTION, FilterMenu, optionsFrom } from "@/components/gral/filter-me
 import { KycBadge } from "@/components/gral/kyc-badge";
 import { usePaged } from "@/components/gral/pager";
 import { SlideOver } from "@/components/gral/shell";
-import { Chip, Loader, NotRecorded, Person, Recorded, TextLink } from "@/components/gral/ui";
+import { Chip, Loader, NotRecorded, Recorded, TextLink } from "@/components/gral/ui";
 import { downloadCsv } from "@/lib/csv";
 import { useClients, useRefresh } from "@/lib/queries";
 import type { Client } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-export const CLIENT_TABS = ["All", "KYC Pending", "Missing Docs", "Non-Compliant"] as const;
-/** "KYC Complete" has no tab; its summary tile sets it. */
-export type ClientTab = (typeof CLIENT_TABS)[number] | "KYC Complete";
-const ALL_TABS: readonly ClientTab[] = [...CLIENT_TABS, "KYC Complete"];
+export const CLIENT_TABS = ["All", "KYC Ready", "KYC Not Ready", "Non-Compliant"] as const;
+export type ClientTab = (typeof CLIENT_TABS)[number];
+const ALL_TABS: readonly ClientTab[] = CLIENT_TABS;
 
 /** Filters the client list the same way the tabs do. */
 export function filterClientsBy(clients: Client[], tab: ClientTab, sector = "") {
   const inSector = sector ? clients.filter((c) => c.sector === sector) : clients;
-  if (tab === "KYC Pending") return inSector.filter((c) => !c.kyc);
-  if (tab === "KYC Complete") return inSector.filter((c) => c.kyc);
-  if (tab === "Missing Docs") return inSector.filter((c) => c.docsFiled < c.docsTotal);
+  if (tab === "KYC Not Ready") return inSector.filter((c) => !c.kyc);
+  if (tab === "KYC Ready") return inSector.filter((c) => c.kyc);
   if (tab === "Non-Compliant") return inSector.filter((c) => c.nonCompliant);
   return inSector;
 }
@@ -90,8 +88,10 @@ export function ClientSearch({ value, onChange }: { value: string; onChange: (v:
   );
 }
 
-const HEADINGS = ["Client", "Type", "Sector", "Active", "KYC", "Policies", "Claims", "Corr.", "Docs Progress", "Manager"];
-const COMPACT_HEADINGS = ["Client", "Type", "Sector", "Active", "KYC", "Docs Progress", "Manager"];
+const HEADINGS = ["Client", "Type", "Sector", "Active Policies", "KYC", "Manager"];
+const COMPACT_HEADINGS = HEADINGS;
+const COMPACT_WIDTHS = ["25%", "13%", "16%", "12%", "14%", "20%"];
+const FULL_WIDTHS = COMPACT_WIDTHS;
 
 export function ClientsTable({
   clients,
@@ -107,7 +107,6 @@ export function ClientsTable({
 }) {
   const { items, pager } = usePaged(clients);
   const headings = compact ? COMPACT_HEADINGS : HEADINGS;
-  const hasExtras = (key: "policies" | "claims" | "correspondence") => !compact;
   return (
     <>
     {/* Phones: one card per client instead of a wide table. */}
@@ -118,7 +117,7 @@ export function ClientsTable({
             <div className="min-w-0">
               <p className="text-sm font-semibold">{c.name}</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {[c.id, c.sector].filter(Boolean).join(" · ")}
+                {c.sector}
               </p>
             </div>
             {c.nonCompliant ? <Chip tone="danger">Flagged</Chip> : <KycBadge short kyc={c.kyc} status={c.kycStatus} gateStatus={c.kycGateStatus} />}
@@ -126,9 +125,9 @@ export function ClientsTable({
           <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3">
             <div className="min-w-0 text-xs text-muted-foreground">
               <p>
-                {c.activePolicies} active {c.activePolicies === 1 ? "policy" : "policies"} · {c.docsFiled}/{c.docsTotal} documents
+                {c.activePolicies} active {c.activePolicies === 1 ? "policy" : "policies"}
               </p>
-              {c.manager ? <p className="mt-0.5 truncate">{c.manager}</p> : null}
+              {c.manager ? <p className="mt-0.5 break-words">{c.manager}</p> : null}
             </div>
             <button
               type="button"
@@ -145,6 +144,9 @@ export function ClientsTable({
     <div className="hidden max-w-full overflow-x-auto px-2 pb-4 sm:block">
       <table className={cn("w-full table-fixed border-separate border-spacing-0 text-left", !compact && "min-w-[1050px]")}>
         <caption className="sr-only">Client records</caption>
+        <colgroup>
+          {(compact ? COMPACT_WIDTHS : FULL_WIDTHS).map((width, i) => <col key={i} style={{ width }} />)}
+        </colgroup>
         <thead>
           <tr className="bg-pale text-[11px] text-muted-foreground">
             {headings.map((h, i, arr) => (
@@ -155,8 +157,8 @@ export function ClientsTable({
                   i === 0 && "rounded-l-xl",
                   i === arr.length - 1 && "rounded-r-xl",
                   i === 0 && "sticky left-0 z-20 bg-pale",
+                  h === "Active Policies" && "whitespace-normal leading-tight",
                 )}
-                style={compact ? { width: ["27%", "13%", "15%", "8%", "12%", "13%", "12%"][i] } : undefined}
               >
                 {h}
               </th>
@@ -174,11 +176,8 @@ export function ClientsTable({
             items.map((c) => (
               <tr key={c.id} className="group transition-colors hover:bg-secondary/20">
                 <Td className="sticky left-0 z-[1] bg-card group-hover:bg-secondary/20">
-                  <div className="max-w-[180px] truncate text-sm font-medium" title={c.name}>{c.name}</div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground" title={c.id}>{c.id}</span>
-                    {c.nonCompliant ? <Chip tone="danger">Flagged</Chip> : null}
-                  </div>
+                  <div className="truncate text-sm font-medium" title={c.name}>{c.name}</div>
+                  {c.nonCompliant ? <div><Chip tone="danger">Flagged</Chip></div> : null}
                   <TextLink onClick={() => onView(c)}>View File</TextLink>
                 </Td>
                 <Td className="text-sm">
@@ -193,26 +192,9 @@ export function ClientsTable({
                 <Td>
                   <KycBadge short kyc={c.kyc} status={c.kycStatus} gateStatus={c.kycGateStatus} />
                 </Td>
-                {hasExtras("policies") ? <Td><StatusDot ok={c.policiesOk} title={c.policiesOk ? "Policy information recorded" : "No policy information recorded"} /></Td> : null}
-                {hasExtras("claims") ? <Td><StatusDot ok={c.claimsOk} title={c.claimsOk ? "Claims information recorded" : "No claims recorded"} /></Td> : null}
-                {hasExtras("correspondence") ? <Td><StatusDot ok={c.correspondenceOk} title={c.correspondenceOk ? "Correspondence recorded" : "No correspondence recorded"} /></Td> : null}
                 <Td>
-                  <div className="w-full max-w-24">
-                    <div className="text-xs text-muted-foreground">
-                      <span className="tabular-nums">{c.docsFiled} / {c.docsTotal}</span>
-                      <span className="sr-only"> documents complete</span>
-                    </div>
-                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-secondary">
-                      <div
-                        className="h-full rounded-full bg-sky"
-                        style={{ width: `${(c.docsFiled / c.docsTotal) * 100}%` }}
-                      />
-                    </div>
-                  </div>
-                </Td>
-                <Td>
-                  <div className="max-w-[150px] truncate" title={c.manager || "Manager not recorded"}>
-                    {c.manager ? <Person name={c.manager} /> : <NotRecorded />}
+                  <div className="min-w-0 break-words text-sm leading-snug" title={c.manager || "Manager not recorded"}>
+                    {c.manager || <NotRecorded />}
                   </div>
                 </Td>
               </tr>
@@ -297,22 +279,6 @@ export function ClientFileSlideOver({
   );
 }
 
-function StatusDot({ ok, title }: { ok: boolean; title?: string }) {
-  return (
-    <span
-      title={title}
-      role="img"
-      aria-label={title ?? (ok ? "Recorded" : "Not recorded")}
-      className={cn(
-        "flex size-5 items-center justify-center rounded-full text-[10px] font-semibold",
-        ok ? "bg-success-soft text-success" : "bg-warning-soft text-warning",
-      )}
-    >
-      {ok ? "✓" : "!"}
-    </span>
-  );
-}
-
 function Td({ children, className }: { children?: React.ReactNode; className?: string }) {
   return <td className={cn("border-b border-border px-3 py-3 align-middle", className)}>{children}</td>;
 }
@@ -320,7 +286,7 @@ function Td({ children, className }: { children?: React.ReactNode; className?: s
 /** The clients as listed, for Download. */
 export function downloadClients(clients: Client[], fileName = "clients.csv") {
   downloadCsv(fileName, [
-    ["Client ID", "Client", "Type", "Sector", "Address", "Contact person", "Contact email", "Contact phone", "Active policies", "KYC", "Non-compliant", "Documents filed", "Account manager"],
+    ["Client ID", "Client", "Type", "Sector", "Address", "Contact person", "Contact email", "Contact phone", "Active policies", "KYC", "Non-compliant", "Account manager"],
     ...clients.map((c) => [
       c.id,
       c.name,
@@ -333,7 +299,6 @@ export function downloadClients(clients: Client[], fileName = "clients.csv") {
       c.activePolicies,
       c.kyc ? "Approved" : "Not approved",
       c.nonCompliant ? "Yes" : "No",
-      `${c.docsFiled} / ${c.docsTotal}`,
       c.manager,
     ]),
   ]);

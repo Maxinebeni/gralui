@@ -179,8 +179,8 @@ export function RenewalsView({ full = false }: { full?: boolean }) {
       </div>
       )}
 
-      <div className={cn("mt-4 grid gap-4", !full && "xl:grid-cols-[1fr_340px]")}>
-        <div className="min-w-0 space-y-4">
+      <div className={cn("mt-4 grid gap-3 sm:gap-4", !full && "xl:grid-cols-[1fr_340px]")}>
+        <div className="min-w-0 space-y-3 sm:space-y-4">
           <FloatCard className="overflow-hidden" delay={120}>
             <CardHeader
               title={full ? `${rows.length} ${rows.length === 1 ? "renewal" : "renewals"}` : tab === "On track" ? "On Track" : "Renewal Pipeline"}
@@ -193,7 +193,7 @@ export function RenewalsView({ full = false }: { full?: boolean }) {
                 </div>
               }
             />
-            <div className="mt-4 grid gap-4 p-4 pt-0 sm:grid-cols-2 sm:p-5 sm:pt-0">
+            <div className="mt-4 grid gap-3 p-4 pt-0 sm:grid-cols-2 sm:gap-4 sm:p-5 sm:pt-0">
               {shown.map((r) => (
                 <RenewalCard key={r.id} renewal={r} onOpen={() => setOpen(r)} />
               ))}
@@ -224,7 +224,7 @@ export function RenewalsView({ full = false }: { full?: boolean }) {
         </div>
 
         {full ? null : (
-        <div className="min-w-0 space-y-4">
+        <div className="min-w-0 space-y-3 sm:space-y-4">
           <QuickAction delay={160}>
             <QuickActionRow
               icon={AlertTriangle}

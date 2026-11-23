@@ -101,16 +101,25 @@ export function ApprovalsView() {
 
       <FloatCard className="mt-4 overflow-hidden" delay={120}>
         <CardHeader title="Approval Inbox" right={<SegmentedTabs tabs={tabs} value={tab} onChange={setTab} />} />
-        <div className="mt-4 overflow-x-auto px-2 pb-4">
-          <table className="stack-table w-full min-w-[760px] border-separate border-spacing-0 text-left">
+        <div className="mt-4 px-2 pb-4">
+          <table className="stack-table w-full table-fixed border-separate border-spacing-0 text-left">
+            <colgroup>
+              <col style={{ width: "24%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: "15%" }} />
+              <col style={{ width: "11%" }} />
+              <col style={{ width: "19%" }} />
+              <col style={{ width: "10%" }} />
+              <col style={{ width: "9%" }} />
+            </colgroup>
             <thead>
               <tr className="bg-pale text-[11px] text-muted-foreground">
-                <Th className="rounded-l-xl">Request</Th>
+                <Th className="rounded-l-xl whitespace-normal">Request</Th>
                 <Th>Type</Th>
                 <Th>Client</Th>
-                <Th>Amount (RWF)</Th>
+                <Th className="whitespace-normal leading-tight">Amount (RWF)</Th>
                 <Th>Status</Th>
-                <Th>Decide by</Th>
+                <Th className="whitespace-normal leading-tight">Decide by</Th>
                 <Th className="rounded-r-xl">Action</Th>
               </tr>
             </thead>
@@ -120,23 +129,22 @@ export function ApprovalsView() {
                 return (
                   <tr key={r.id} className="cursor-pointer hover:bg-pale/50" onClick={() => setOpen(r)}>
                     <Td>
-                      <div className="text-sm font-medium whitespace-nowrap">{r.title}</div>
+                      <div className="line-clamp-2 break-words text-sm font-medium" title={r.title}>{r.title}</div>
                       <div className="max-w-[240px] truncate text-xs text-muted-foreground">{r.subjectRef}</div>
-                      <div className="mt-0.5 max-w-[240px] truncate text-[9px] text-subtle" title={r.id}>Request ID: {r.id}</div>
                     </Td>
                     <Td label="Type">
-                      <Chip tone="sky">{SUBJECT_LABEL[r.subjectType]}</Chip>
+                      <Chip tone="sky" className="max-w-full whitespace-normal leading-tight">{SUBJECT_LABEL[r.subjectType]}</Chip>
                     </Td>
-                    <Td label="Client" className="max-w-[160px] truncate text-sm">{r.client ?? "No client"}</Td>
+                    <Td label="Client" className="break-words text-sm">{r.client ?? "No client"}</Td>
                     <Td label="Amount (RWF)" className="text-sm whitespace-nowrap">{r.amount !== undefined ? r.amount.toLocaleString("en-US") : "No amount"}</Td>
                     <Td label="Status">
-                      <Chip tone={statusTone(r)}>{statusLabel(r)}</Chip>
+                      <Chip tone={statusTone(r)} className="max-w-full whitespace-normal leading-tight">{statusLabel(r)}</Chip>
                     </Td>
                     <Td label="Decide by" className={cn("text-sm whitespace-nowrap", late && "font-medium text-danger")}>
                       {r.status === "PENDING" ? formatDate(r.dueAt) : "Decided"}
                     </Td>
-                    <Td>
-                      <TextLink>{canDecide(r, user.role) ? "Review & decide" : "View"}</TextLink>
+                    <Td className="whitespace-nowrap">
+                      <TextLink>{canDecide(r, user.role) ? "Review" : "View"}</TextLink>
                     </Td>
                   </tr>
                 );

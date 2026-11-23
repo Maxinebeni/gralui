@@ -55,9 +55,9 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
 
-  --shadow-card: 0 8px 24px oklch(0.221 0.0394 258.28 / 6%);
-  --shadow-float: 0 22px 48px oklch(0.221 0.0394 258.28 / 18%);
-  --shadow-pill: 0 6px 18px oklch(0.221 0.0394 258.28 / 8%);
+  --shadow-card: 0 1px 3px oklch(0.221 0.0394 258.28 / 2%);
+  --shadow-float: 0 16px 36px oklch(0.221 0.0394 258.28 / 14%);
+  --shadow-pill: 0 1px 2px oklch(0.221 0.0394 258.28 / 2%);
 }
 
 :root {
@@ -142,40 +142,36 @@
 @utility float-card {
   background-color: var(--color-card);
   border: 1px solid var(--color-border);
-  border-radius: 1.25rem;
+  border-radius: 1rem;
   box-shadow: var(--shadow-card);
 }
 
 @utility float-pill {
   background-color: var(--color-card);
   border-radius: 9999px;
+  border: 1px solid var(--color-border);
   box-shadow: var(--shadow-pill);
 }
 
-/* Subtle hover lift — the only floating effect */
+/* Keep cards in place; use a quiet border cue instead of elevation. */
 @utility lift-card {
-  transition:
-    transform 300ms ease,
-    box-shadow 300ms ease;
+  transition: border-color 160ms ease;
 
   &:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-float);
+    border-color: color-mix(in oklch, var(--color-primary) 28%, var(--color-border));
   }
 }
 
 @utility rise-in {
-  animation: rise-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: rise-in 0.22s ease-out both;
 }
 
 @keyframes rise-in {
   from {
     opacity: 0;
-    transform: translateY(12px);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
   }
 }
 
@@ -183,7 +179,6 @@
 @media (prefers-reduced-motion: reduce) {
   .rise-in { animation: none; }
   .lift-card { transition: none; }
-  .lift-card:hover { transform: none; }
 }
 
 /*

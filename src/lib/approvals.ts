@@ -58,6 +58,13 @@ export function actingRole(stepRole: string) {
   return stepRole === "Board" ? "MD" : stepRole;
 }
 
+/** Use the full role title in approval status and step descriptions. */
+export function approvalRoleName(role: string) {
+  if (role === "MD") return "Managing Director";
+  if (role === "DMD") return "Deputy Managing Director";
+  return role;
+}
+
 /** Why the approve button is not available yet, or null. */
 export function approveBlocker(r: ApprovalRequest): string | null {
   if (r.evidenceRequired && r.evidence.length === 0) return "Attach the written or signed evidence first.";
@@ -73,6 +80,6 @@ export function statusTone(r: ApprovalRequest): "warning" | "success" | "danger"
 
 export function statusLabel(r: ApprovalRequest) {
   const step = currentStep(r);
-  if (step) return `Waiting for ${step.role}`;
+  if (step) return `Waiting for ${approvalRoleName(step.role)}`;
   return { APPROVED: "Approved", REJECTED: "Rejected", RETURNED: "Returned", PENDING: "Pending" }[r.status];
 }

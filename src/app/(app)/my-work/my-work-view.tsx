@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { PageHeader, SlideOver } from "@/components/gral/shell";
 import { Td, Th } from "@/components/gral/claim-list";
 import { Field, Section, describedBy, inputClass } from "@/components/gral/client-form";
-import { CardHeader, Chip, FloatCard, NavyButton, OutlineButton, Person, SegmentedTabs, StatTile, TextLink } from "@/components/gral/ui";
+import { CardHeader, Chip, FloatCard, NavyButton, OutlineButton, SegmentedTabs, StatTile } from "@/components/gral/ui";
 import { usePaged } from "@/components/gral/pager";
 import { cn } from "@/lib/utils";
 import {
@@ -34,10 +34,11 @@ const TYPE_LABEL: Record<TaskType, string> = {
   APPROVAL: "Approval",
   KYC_DOCUMENT: "KYC",
   ONBOARDING_STEP: "Lead",
-  MANUAL: "Added by hand",
+  MANUAL: "Manual task",
 };
 
-type Tab = "Mine" | "Overdue" | "Next 5 days" | "Team" | "Done";
+type Scope = "Mine" | "Team" | "Done";
+type DueFilter = "All open" | "Overdue" | "Due today" | "Next 5 days";
 
 function isMine(t: WorkTask, user: SessionUser) {
   return t.owner ? t.owner === user.name : t.ownerRole === user.role;
@@ -57,17 +58,30 @@ function dueText(t: WorkTask) {
   return formatDate(t.dueDate);
 }
 
+function omitRecordReference(text: string | null | undefined, reference: string) {
+  if (!text) return "";
+  if (!reference) return text;
+  return text
+    .replace(reference, "")
+    .replace(/\s*[·:,-]\s*$/u, "")
+    .replace(/\s+for\s*$/iu, "")
+    .replace(/\s{2,}/gu, " ")
+    .trim();
+}
+
 export function MyWorkView() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { user } = useCurrentUser();
   const { managesTeamWork } = taskPermissions(user.role);
-  const tabs: Tab[] = managesTeamWork ? ["Mine", "Overdue", "Next 5 days", "Team", "Done"] : ["Mine", "Overdue", "Next 5 days", "Done"];
+  const scopeTabs: Scope[] = managesTeamWork ? ["Mine", "Team", "Done"] : ["Mine", "Done"];
 
   const { data: tasks = [] } = useTasks(user.role);
   const { data: assignees = [] } = useAssignees();
-  const [tab, setTab] = useState<Tab>("Mine");
+  const [scopeTab, setScopeTab] = useState<Scope>("Mine");
+  const [dueFilter, setDueFilter] = useState<DueFilter>("All open");
+  const [search, setSearch] = useState("");
   const [newOpen, setNewOpen] = useState(false);
 
   const refresh = useRefresh();
@@ -81,22 +95,23 @@ export function MyWorkView() {
   const visible = useMemo(() => tasks.filter((t) => managesTeamWork || isMine(t, user)), [tasks, managesTeamWork, user]);
   const open = visible.filter((t) => t.status === "OPEN");
   const mine = open.filter((t) => isMine(t, user));
-  const scope = tab === "Team" ? open : mine;
+  const team = open;
   const weekEnd = addWorkingDays(todayIso(), 5);
 
   const rows = useMemo(() => {
     const today = todayIso();
-    const list =
-      tab === "Done"
-        ? visible.filter((t) => t.status === "DONE")
-        : tab === "Overdue"
-          ? (managesTeamWork ? open : mine).filter((t) => t.dueDate < today)
-          : tab === "Next 5 days"
-            ? mine.filter((t) => t.dueDate >= today && t.dueDate <= weekEnd)
-            : scope;
-    return [...list].sort((a, b) => a.dueDate.localeCompare(b.dueDate));
-  }, [tab, visible, open, mine, scope, managesTeamWork, weekEnd]);
-  const { items: pageRows, pager } = usePaged(rows, { resetKey: tab });
+    const scoped = scopeTab === "Done" ? visible.filter((t) => t.status === "DONE") : scopeTab === "Team" ? team : mine;
+    const dateFiltered = scopeTab === "Done" ? scoped : scoped.filter((t) => {
+      if (dueFilter === "Overdue") return t.dueDate < today;
+      if (dueFilter === "Due today") return t.dueDate === today;
+      if (dueFilter === "Next 5 days") return t.dueDate > today && t.dueDate <= weekEnd;
+      return true;
+    });
+    const q = search.trim().toLocaleLowerCase();
+    const searched = q ? dateFiltered.filter((t) => [t.title, t.detail, t.resourceRef, t.client, t.owner, t.ownerRole, TYPE_LABEL[t.type]].some((v) => v?.toLocaleLowerCase().includes(q))) : dateFiltered;
+    return [...searched].sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  }, [scopeTab, visible, team, mine, dueFilter, weekEnd, search]);
+  const { items: pageRows, pager } = usePaged(rows, { resetKey: `${scopeTab}:${dueFilter}:${search}` });
 
   const selectedId = searchParams.get("task");
   const selected = tasks.find((t) => t.id === selectedId) ?? null;
@@ -109,6 +124,17 @@ export function MyWorkView() {
   };
 
   const today = todayIso();
+  const selectScope = (next: Scope) => {
+    setScopeTab(next);
+    setDueFilter("All open");
+  };
+  const selectDueFilter = (next: DueFilter) => {
+    setDueFilter(next);
+  };
+  const openTask = (task: WorkTask) => {
+    if (opensRecord(task)) router.push(recordHref(task.resourceType, task.resourceId));
+    else setSelected(task);
+  };
   return (
     <>
       <PageHeader
@@ -122,21 +148,34 @@ export function MyWorkView() {
       />
 
       <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
-        <StatTile icon={ListTodo} label="My Open Tasks" value={String(mine.length)} onClick={() => setTab("Mine")} active={tab === "Mine"} />
-        <StatTile icon={AlarmClock} label="Overdue" value={String(mine.filter((t) => t.dueDate < today).length)} tone="down" delay={60} onClick={() => setTab("Overdue")} active={tab === "Overdue"} />
-        <StatTile icon={CalendarDays} label="Due Today" value={String(mine.filter((t) => t.dueDate === today).length)} delay={120} />
+        <StatTile icon={ListTodo} label="My Open Tasks" value={String(mine.length)} onClick={() => { setScopeTab("Mine"); setDueFilter("All open"); }} active={scopeTab === "Mine" && dueFilter === "All open"} />
+        <StatTile icon={AlarmClock} label="Overdue" value={String(mine.filter((t) => t.dueDate < today).length)} tone="down" delay={60} onClick={() => { setScopeTab("Mine"); setDueFilter("Overdue"); }} active={scopeTab === "Mine" && dueFilter === "Overdue"} />
+        <StatTile icon={CalendarDays} label="Due Today" value={String(mine.filter((t) => t.dueDate === today).length)} delay={120} onClick={() => { setScopeTab("Mine"); setDueFilter("Due today"); }} active={scopeTab === "Mine" && dueFilter === "Due today"} />
         <StatTile
           icon={CheckCircle2}
           label={managesTeamWork ? "Team Open Tasks" : "Done"}
           value={String(managesTeamWork ? open.length : visible.filter((t) => t.status === "DONE").length)}
           delay={180}
-          onClick={() => setTab(managesTeamWork ? "Team" : "Done")}
-          active={tab === (managesTeamWork ? "Team" : "Done")}
+          onClick={() => selectScope(managesTeamWork ? "Team" : "Done")}
+          active={scopeTab === (managesTeamWork ? "Team" : "Done")}
         />
       </div>
 
       <FloatCard className="mt-4 overflow-hidden" delay={120}>
-        <CardHeader title="Task List" right={<SegmentedTabs tabs={tabs} value={tab} onChange={setTab} />} />
+        <CardHeader title="Task List" right={<SegmentedTabs tabs={scopeTabs} value={scopeTab} onChange={selectScope} />} />
+        <div className="mt-3 flex flex-col gap-3 px-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          {scopeTab !== "Done" ? (
+            <SegmentedTabs tabs={["All open", "Overdue", "Due today", "Next 5 days"] as const} value={dueFilter} onChange={selectDueFilter} />
+          ) : <span className="text-xs text-muted-foreground">Completed tasks</span>}
+          <input
+            type="search"
+            aria-label="Search tasks"
+            placeholder={scopeTab === "Team" ? "Search tasks or assignee" : "Search tasks"}
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            className="h-9 w-full rounded-full border border-input bg-card px-3.5 text-xs outline-none focus:border-sky focus:ring-2 focus:ring-sky/20 sm:max-w-[17rem]"
+          />
+        </div>
         <div className="mt-4 overflow-x-auto px-2 pb-4">
           <table className="stack-table w-full min-w-[780px] border-separate border-spacing-0 text-left">
             <thead>
@@ -154,13 +193,15 @@ export function MyWorkView() {
                 <tr
                   key={t.key}
                   className="cursor-pointer hover:bg-pale/50"
-                  onClick={() => (opensRecord(t) ? router.push(recordHref(t.resourceType, t.resourceId)) : setSelected(t))}
+                  onClick={() => openTask(t)}
                 >
                   <Td>
-                    <div className={cn("max-w-[280px] text-sm font-medium", t.status === "DONE" && "text-muted-foreground line-through")}>
-                      {t.title}
+                    <div className={cn("max-w-[280px] text-sm font-medium", t.status === "DONE" && "text-muted-foreground line-through")} title={t.title}>
+                      {omitRecordReference(t.title, t.resourceRef) || t.title}
                     </div>
-                    {t.detail ? <div className="max-w-[280px] truncate text-xs text-muted-foreground">{t.detail}</div> : null}
+                    {omitRecordReference(t.detail, t.resourceRef) ? (
+                      <div className="max-w-[280px] truncate text-xs text-muted-foreground" title={t.detail}>{omitRecordReference(t.detail, t.resourceRef)}</div>
+                    ) : null}
                   </Td>
                   <Td label="Record">
                     <div className="text-sm whitespace-nowrap">{t.resourceRef}</div>
@@ -170,7 +211,9 @@ export function MyWorkView() {
                     <Chip tone={t.source === "MANUAL" ? "neutral" : "sky"}>{TYPE_LABEL[t.type]}</Chip>
                   </Td>
                   <Td label="Assigned to">
-                    <div className="max-w-[150px] truncate">{t.owner ? <Person name={t.owner} /> : <span className="text-sm">{t.ownerRole}</span>}</div>
+                    <div className="min-w-[240px] whitespace-nowrap text-sm" title={t.owner ?? t.ownerRole ?? "Unassigned"}>
+                      {t.owner || t.ownerRole || "Unassigned"}
+                    </div>
                   </Td>
                   <Td label="Due">
                     {t.status === "DONE" ? (
@@ -181,8 +224,10 @@ export function MyWorkView() {
                   </Td>
                   <Td>
                     <div className="flex items-center gap-3 whitespace-nowrap">
-                      <TextLink>{opensRecord(t) ? "Open" : "Details"}</TextLink>
-                      {opensRecord(t) && t.status === "OPEN" && (managesTeamWork || isMine(t, user)) ? (
+                      <button type="button" onClick={(event) => { event.stopPropagation(); openTask(t); }} className="text-sm text-primary underline underline-offset-2 hover:opacity-70">
+                        Open
+                      </button>
+                      {t.status === "OPEN" && (managesTeamWork || isMine(t, user)) ? (
                         <button
                           type="button"
                           onClick={(e) => {
@@ -201,7 +246,7 @@ export function MyWorkView() {
               {rows.length === 0 ? (
                 <tr>
                   <Td className="text-sm text-muted-foreground" colSpan={6}>
-                    {tab === "Mine" ? "Nothing assigned to you right now." : "No tasks in this view."}
+                    {scopeTab === "Mine" && dueFilter === "All open" ? "Nothing assigned to you right now." : "No tasks match these filters."}
                   </Td>
                 </tr>
               ) : null}
@@ -234,7 +279,7 @@ export function MyWorkView() {
             onClose={() => setNewOpen(false)}
             onCreated={() => {
               reload();
-              setTab("Mine");
+              selectScope("Mine");
             }}
           />
         ) : null}

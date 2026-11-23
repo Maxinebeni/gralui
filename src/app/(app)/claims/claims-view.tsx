@@ -8,7 +8,6 @@ import { PageHeader } from "@/components/gral/shell";
 import { FilterMenu } from "@/components/gral/filter-menu";
 import { DATE_RANGE_OPTIONS, withinRange, type DateRange } from "@/lib/date-range";
 import {
-  CLAIM_TABS,
   ClaimPage,
   HeadGap,
   HeadRow,
@@ -28,7 +27,6 @@ import {
   CardHeader,
   ChartCard,
   Chip,
-  DistributionRow,
   FloatCard,
   Loader,
   NavyButton,
@@ -37,15 +35,12 @@ import {
   QuickAction,
   QuickActionRow,
   SegmentedTabs,
-  StageBar,
   StatTile,
 } from "@/components/gral/ui";
 import { claimsPerMonth } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import {
-  CLAIM_STEP_DEFS,
   claimBlocker,
-  claimSla,
   daysOpen,
   isClosed,
   isDisputed,
@@ -59,6 +54,7 @@ import { todayIso } from "@/lib/renewals";
 import type { Claim } from "@/lib/types";
 
 const QUEUE_ROWS = 5;
+const QUEUE_TABS = ["Open", "High Priority", "Missing Docs", "Escalation", "Disputed"] as const;
 
 /** Who has to act next on a blocked claim. */
 function actionOwner(c: Claim) {
@@ -77,7 +73,7 @@ export function ClaimsView() {
   const [range, setRange] = useState<DateRange>("all");
   const { matching, pills } = useClaimFilters(allClaims);
   const claims = useMemo(() => matching.filter((c) => withinRange(c.dateReported, range)), [matching, range]);
-  const [tab, setTab] = useState<ClaimTab>("Breached");
+  const [tab, setTab] = useState<ClaimTab>("Open");
   const [newOpen, setNewOpen] = useState(false);
   const monthly = useMemo(() => claimsPerMonth(allClaims), [allClaims]);
 
@@ -88,20 +84,16 @@ export function ClaimsView() {
     [openClaims],
   );
 
-  const breached = openClaims.filter((c) => claimSla(c) === "breached").length;
-  const approaching = openClaims.filter((c) => claimSla(c) === "approaching").length;
   const awaitingSignOff = openClaims.filter((c) => nextSigner(c) !== null).length;
   const escalations = openClaims.filter(needsEscalation).length;
   const disputes = openClaims.filter(isDisputed).length;
-  const avgDays = openClaims.length
-    ? (openClaims.reduce((s, c) => s + daysOpen(c), 0) / openClaims.length).toFixed(1)
-    : "0";
+  const avgDays = openClaims.length ? openClaims.reduce((s, c) => s + daysOpen(c), 0) / openClaims.length : null;
+  const roundedAvgDays = avgDays === null ? null : Number(avgDays.toFixed(1));
+  const avgDaysLabel = roundedAvgDays === null ? "—" : `${roundedAvgDays} ${roundedAvgDays === 1 ? "day" : "days"}`;
   const handlers = [...new Set(allClaims.map((c) => c.handler))].sort();
 
-  const stepCounts = CLAIM_STEP_DEFS.map((s) => ({
-    label: s.name,
-    count: openClaims.filter((c) => c.step === s.code).length,
-  }));
+  const activeMonths = monthly.filter((month) => month.count > 0).length;
+  const hasQuickActions = loaded && (escalations > 0 || disputes > 0);
 
   // A claim is a long process, so it opens as its own full page.
   if (openId) {
@@ -133,21 +125,22 @@ export function ClaimsView() {
         }
       />
 
-      <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+      <div className={`mt-5 grid grid-cols-2 gap-3 sm:gap-4 ${awaitingSignOff > 0 ? "xl:grid-cols-3" : "xl:grid-cols-2"}`}>
         <StatTile label="Open Claims" value={shown(openClaims.length)} onClick={() => setTab("Open")} active={tab === "Open"} />
-        <StatTile label="SLA Breached" value={shown(breached)} delay={60} onClick={() => setTab("Breached")} active={tab === "Breached"} />
-        <StatTile label="Awaiting Sign-off" value={shown(awaitingSignOff)} delay={120} onClick={() => setTab("Awaiting Sign-off")} active={tab === "Awaiting Sign-off"} />
-        <StatTile label="Avg Working Days Open" value={shown(avgDays)} delay={180} />
+        {awaitingSignOff > 0 ? (
+          <StatTile label="Awaiting Sign-off" value={shown(awaitingSignOff)} delay={60} onClick={() => setTab("Awaiting Sign-off")} active={tab === "Awaiting Sign-off"} />
+        ) : null}
+        <StatTile label="Avg Working Days Open" value={loaded ? avgDaysLabel : "…"} delay={120} />
       </div>
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
-        <div className="min-w-0 space-y-4">
+      <div className={hasQuickActions ? "mt-4 grid gap-3 sm:gap-4 xl:grid-cols-[minmax(0,1fr)_340px]" : "mt-4 grid gap-3 sm:gap-4"}>
+        <div className="min-w-0 space-y-3 sm:space-y-4">
           <FloatCard className="overflow-hidden" delay={120}>
             <CardHeader
               title={tab === "Open" ? "Open Claims" : tab === "Awaiting Sign-off" ? "Awaiting Sign-off" : "Claims Queue"}
               right={
                 <div className="flex flex-wrap items-center gap-2">
-                  <SegmentedTabs tabs={CLAIM_TABS} value={tab as (typeof CLAIM_TABS)[number]} onChange={setTab} />
+                  <SegmentedTabs tabs={QUEUE_TABS} value={tab as (typeof QUEUE_TABS)[number]} onChange={setTab} />
                   <OutlineButton disabled={rows.length === 0} onClick={() => downloadClaims(rows)}>
                     Download
                   </OutlineButton>
@@ -210,69 +203,59 @@ export function ClaimsView() {
             )}
           </FloatCard>
 
-          <ChartCard
-            delay={260}
-            title="Claims per Month"
-            legend={[
-              { label: "Amount (RWF m)", tone: "sky" },
-              { label: "Number of claims", tone: "primary" },
-            ]}
-          >
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={monthly} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
-                <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" vertical={false} />
-                <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
-                <YAxis yAxisId="left" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
-                <YAxis
-                  yAxisId="right"
-                  orientation="right"
-                  allowDecimals={false}
-                  tick={{ fontSize: 10, fill: "var(--subtle)" }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", fontSize: 11 }} />
-                <Line yAxisId="left" type="monotone" dataKey="amount" stroke="var(--sky)" strokeWidth={2} dot={false} name="Amount (RWF m)" />
-                <Line yAxisId="right" type="monotone" dataKey="count" stroke="var(--primary)" strokeWidth={2} dot={false} name="Number of claims" />
-              </LineChart>
-            </ResponsiveContainer>
-          </ChartCard>
-        </div>
-
-        <div className="min-w-0 space-y-4">
-          <QuickAction delay={160}>
-            <QuickActionRow
-              icon={AlertTriangle}
-              text={`${escalations} ${escalations === 1 ? "claim" : "claims"} with no insurer response for 15+ working days`}
-              action={<OutlineButton onClick={() => setTab("Escalation")}>Review</OutlineButton>}
-            />
-            <QuickActionRow
-              icon={Gavel}
-              tone="success"
-              tinted
-              text={`${disputes} ${disputes === 1 ? "dispute" : "disputes"} waiting for the Claims Committee`}
-              action={<NavyButton onClick={() => setTab("Disputed")}>View</NavyButton>}
-            />
-          </QuickAction>
-
-          <FloatCard className="p-5" delay={220}>
-            <h2 className="text-base font-semibold tracking-tight">SLA Status Distribution</h2>
-            <DistributionRow
-              items={[
-                { label: "Breached", value: String(breached), tone: "danger" },
-                { label: "Approaching", value: String(approaching), tone: "warning" },
-                { label: "Within SLA", value: String(openClaims.length - breached - approaching) },
+          {activeMonths >= 3 ? (
+            <ChartCard
+              delay={260}
+              title="Claims per Month"
+              legend={[
+                { label: "Amount (RWF m)", tone: "sky" },
+                { label: "Number of claims", tone: "primary" },
               ]}
-            />
-          </FloatCard>
-
-          <FloatCard className="p-5" delay={280}>
-            <h2 className="text-base font-semibold tracking-tight">Open Claims by Step</h2>
-            <div className="mt-4">
-              <StageBar stages={stepCounts} />
-            </div>
-          </FloatCard>
+            >
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={monthly} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
+                  <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" vertical={false} />
+                  <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
+                  <YAxis yAxisId="left" tick={{ fontSize: 10, fill: "var(--subtle)" }} axisLine={false} tickLine={false} />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    allowDecimals={false}
+                    tick={{ fontSize: 10, fill: "var(--subtle)" }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <Tooltip contentStyle={{ borderRadius: 12, border: "1px solid var(--border)", fontSize: 11 }} />
+                  <Line yAxisId="left" type="monotone" dataKey="amount" stroke="var(--sky)" strokeWidth={2} dot={false} name="Amount (RWF m)" />
+                  <Line yAxisId="right" type="monotone" dataKey="count" stroke="var(--primary)" strokeWidth={2} dot={false} name="Number of claims" />
+                </LineChart>
+              </ResponsiveContainer>
+            </ChartCard>
+          ) : null}
         </div>
+
+        {hasQuickActions ? (
+          <div className="min-w-0 space-y-3 sm:space-y-4">
+            <QuickAction delay={160}>
+              {escalations > 0 ? (
+                <QuickActionRow
+                  icon={AlertTriangle}
+                  text={`${escalations} ${escalations === 1 ? "claim" : "claims"} with no insurer response for 15+ working days`}
+                  action={<OutlineButton onClick={() => setTab("Escalation")}>Review</OutlineButton>}
+                />
+              ) : null}
+              {disputes > 0 ? (
+                <QuickActionRow
+                  icon={Gavel}
+                  tone="success"
+                  tinted
+                  text={`${disputes} ${disputes === 1 ? "dispute" : "disputes"} waiting for the Claims Committee`}
+                  action={<NavyButton onClick={() => setTab("Disputed")}>View</NavyButton>}
+                />
+              ) : null}
+            </QuickAction>
+          </div>
+        ) : null}
       </div>
 
       <NewClaimSlideOver

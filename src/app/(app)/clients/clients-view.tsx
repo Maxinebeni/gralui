@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, BadgeCheck, ChevronDown, Download, Plus } from "lucide-react";
-import { toast } from "sonner";
+import { ChevronDown, Download, Plus } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader } from "@/components/gral/shell";
 import {
@@ -22,12 +21,9 @@ import { ClientFormSlideOver, canManageClients } from "@/components/gral/client-
 import {
   CardHeader,
   ChartCard,
-  DistributionRow,
   FloatCard,
   NavyButton,
   OutlineButton,
-  QuickAction,
-  QuickActionRow,
   SegmentedBar,
   SegmentedTabs,
   StatTile,
@@ -56,11 +52,8 @@ export function ClientsView() {
 
   // The tiles count the chosen sector, and each one filters the table below.
   const inSector = filterClientsBy(allClients, "All", sector);
-  const kycComplete = inSector.filter((c) => c.kyc).length;
+  const kycReady = inSector.filter((c) => c.kyc).length;
   const flags = inSector.filter((c) => c.nonCompliant).length;
-  const complete = allClients.filter((c) => c.docsFiled === c.docsTotal).length;
-  const missing = allClients.filter((c) => c.docsFiled <= 2).length;
-  const partial = allClients.length - complete - missing;
 
   const typeSegments = CLIENT_TYPES.map((t) => ({
     label: t,
@@ -88,95 +81,57 @@ export function ClientsView() {
 
       <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         <StatTile label="Total Clients" value={String(inSector.length)} onClick={() => setTab("All")} active={tab === "All"} />
-        <StatTile label="KYC Complete" value={String(kycComplete)} delay={60} onClick={() => setTab("KYC Complete")} active={tab === "KYC Complete"} />
-        <StatTile label="KYC Pending" value={String(inSector.length - kycComplete)} delay={120} onClick={() => setTab("KYC Pending")} active={tab === "KYC Pending"} />
+        <StatTile label="KYC Ready" value={String(kycReady)} delay={60} onClick={() => setTab("KYC Ready")} active={tab === "KYC Ready"} />
+        <StatTile label="KYC Not Ready" value={String(inSector.length - kycReady)} delay={120} onClick={() => setTab("KYC Not Ready")} active={tab === "KYC Not Ready"} />
         <StatTile label="Non-Compliant Flags" value={String(flags)} delay={180} onClick={() => setTab("Non-Compliant")} active={tab === "Non-Compliant"} />
       </div>
 
-      <div className="mt-4 grid gap-4 xl:grid-cols-[1fr_340px]">
-        <div className="min-w-0">
-          <FloatCard className="overflow-hidden" delay={120}>
-            <CardHeader
-              title={tab === "KYC Complete" ? "KYC Complete" : "Client Records"}
-              right={
-                <div className="flex flex-wrap items-center gap-2">
-                  <ClientSearch value={query} onChange={setQuery} />
-                  <SegmentedTabs tabs={CLIENT_TABS} value={tab as (typeof CLIENT_TABS)[number]} onChange={setTab} />
-                </div>
-              }
+      <div className="mt-4">
+        <FloatCard className="overflow-hidden" delay={120}>
+          <CardHeader
+            title={tab === "KYC Ready" ? "KYC Ready" : "Client Records"}
+            right={
+              <div className="flex flex-wrap items-center gap-2">
+                <ClientSearch value={query} onChange={setQuery} />
+                <SegmentedTabs tabs={CLIENT_TABS} value={tab as (typeof CLIENT_TABS)[number]} onChange={setTab} />
+              </div>
+            }
+          />
+          <div className="mt-4">
+            <ClientsTable
+              clients={rows.slice(0, PREVIEW_ROWS)}
+              onView={setOpen}
+              emptyMessage={emptyMessage}
+              compact
             />
-            <div className="mt-4">
-              <ClientsTable
-                clients={rows.slice(0, PREVIEW_ROWS)}
-                onView={setOpen}
-                emptyMessage={emptyMessage}
-                compact
-              />
-            </div>
-            <div className="border-t border-border px-5 py-4 text-center">
-              <Link
-                href={`/clients/all${clientFilterQuery(tab, sector)}`}
-                className="text-xs font-semibold text-primary underline underline-offset-4 hover:opacity-70"
-              >
-                {rows.length > PREVIEW_ROWS ? `See all ${rows.length} in this view` : "See all clients"}
-              </Link>
-            </div>
-          </FloatCard>
+          </div>
+          <div className="border-t border-border px-5 py-4 text-center">
+            <Link
+              href={`/clients/all${clientFilterQuery(tab, sector)}`}
+              className="text-xs font-semibold text-primary underline underline-offset-4 hover:opacity-70"
+            >
+              {rows.length > PREVIEW_ROWS ? `See all ${rows.length} in this view` : "See all clients"}
+            </Link>
+          </div>
+        </FloatCard>
 
-        </div>
-
-        <div className="min-w-0">
-          <QuickAction delay={160}>
-            <QuickActionRow
-              icon={AlertTriangle}
-              text="2 trading licences expiring in 30 days"
-              action={
-                <OutlineButton onClick={() => toast.success("Notification sent to 2 clients.")}>
-                  Notify Clients
-                </OutlineButton>
-              }
-            />
-            <QuickActionRow
-              icon={BadgeCheck}
-              tone="success"
-              tinted
-              text="1 client awaiting compliance review"
-              action={
-                <NavyButton onClick={() => toast.success("Compliance review scheduled.")}>
-                  Review
-                </NavyButton>
-              }
-            />
-          </QuickAction>
-
-        </div>
       </div>
 
       <details className="group mt-4">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 py-3.5 shadow-[var(--shadow-card)] outline-none transition-colors hover:bg-secondary/50 focus-visible:ring-2 focus-visible:ring-sky sm:px-5">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 py-3.5 outline-none transition-colors hover:bg-secondary/50 focus-visible:ring-2 focus-visible:ring-sky sm:px-5">
           <span className="min-w-0">
             <span className="block text-sm font-semibold">Portfolio insights</span>
-            <span className="mt-0.5 block text-xs text-muted-foreground">Client mix, document status and insurer policies</span>
+            <span className="mt-0.5 block text-xs text-muted-foreground">Client mix and insurer policies</span>
           </span>
           <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
         </summary>
-        <div className="mt-4 grid min-w-0 gap-4 md:grid-cols-2 2xl:grid-cols-3">
+        <div className="mt-3 grid min-w-0 gap-3 sm:mt-4 sm:gap-4 md:grid-cols-2 2xl:grid-cols-3">
           <FloatCard className="p-5">
             <h2 className="text-base font-semibold tracking-tight">Clients by Type</h2>
             <div className="mt-4">
               <SegmentedBar segments={typeSegments} />
             </div>
             <p className="mt-3 text-[11px] text-muted-foreground">Portfolio mix across the book</p>
-          </FloatCard>
-          <FloatCard className="p-5">
-            <h2 className="text-base font-semibold tracking-tight">Document Completeness</h2>
-            <DistributionRow
-              items={[
-                { label: "Complete", value: String(complete), tone: "success" },
-                { label: "Partial", value: String(partial), tone: "warning" },
-                { label: "Missing", value: String(missing), tone: "danger" },
-              ]}
-            />
           </FloatCard>
           <ChartCard
             delay={0}

@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
 import { addApprovalEvidence, decideApproval, resubmitApproval, uploadDocument, getTrack } from "@/lib/api";
 import { BoardApprovalForm, isBoardStep } from "./board-approval-form";
-import { SUBJECT_LABEL, approveBlocker, canDecide, currentStep, statusLabel, statusTone } from "@/lib/approvals";
+import { SUBJECT_LABEL, approvalRoleName, approveBlocker, canDecide, currentStep, statusLabel, statusTone } from "@/lib/approvals";
 import { useCurrentUser } from "@/lib/auth-context";
 import { recordHref } from "@/lib/links";
 import { canAccessPath } from "@/lib/permissions";
@@ -146,7 +146,7 @@ export function ApprovalPanel({
           <DecisionForm request={r} isClaim={isClaim} board={board} userName={user.name} role={user.role} onChanged={onChanged} />
         ) : open && step ? (
           <p className="rounded-xl border border-border px-3 py-2.5 text-xs text-muted-foreground">
-            Waiting for the {step.role === "Board" ? "MD to record the Board's decision" : step.role}. You can follow it here.
+            Waiting for the {step.role === "Board" ? `${approvalRoleName("MD")} to record the Board's decision` : approvalRoleName(step.role)}. You can follow it here.
           </p>
         ) : null}
 
@@ -194,7 +194,7 @@ function StepRow({ step: s }: { step: ApprovalStep }) {
     <li className={cn("rounded-xl border px-3 py-2.5", s.status === "PENDING" ? "border-sky/40 bg-pale" : "border-border")}>
       <div className="flex items-center justify-between gap-3">
         <span className="flex items-center gap-2 text-xs font-medium">
-            {icon} {s.order}. {s.requiredPermission === "ONBOARDING_BOARD_EVIDENCE" ? "Board decision recorded by MD" : s.role}
+            {icon} {s.order}. {s.requiredPermission === "ONBOARDING_BOARD_EVIDENCE" ? `Board decision recorded by ${approvalRoleName("MD")}` : approvalRoleName(s.role)}
           {s.informOnly ? <span className="font-normal text-subtle">(informed)</span> : null}
         </span>
         <span className="text-[11px] text-muted-foreground">{label}</span>

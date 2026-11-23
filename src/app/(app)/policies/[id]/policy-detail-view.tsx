@@ -84,8 +84,8 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
       <PageHeader title={p.id} subtitle={`${p.classOfInsurance} · ${p.insurer}`} />
 
       {/* No summary tiles: the money figures stay in the Financials card, not in large type at the top. */}
-      <div className="mt-5 grid gap-4 xl:grid-cols-[1fr_360px]">
-        <div className="min-w-0 space-y-4">
+      <div className="mt-5 grid gap-3 sm:gap-4 xl:grid-cols-[1fr_360px]">
+        <div className="min-w-0 space-y-3 sm:space-y-4">
           <FloatCard className="p-4 sm:p-5" delay={120}>
             <h2 className="text-base font-semibold tracking-tight">Financials · current period</h2>
             <dl className="mt-4 divide-y divide-border text-xs">
@@ -182,7 +182,7 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
           </FloatCard>
         </div>
 
-        <div className="min-w-0 space-y-4">
+        <div className="min-w-0 space-y-3 sm:space-y-4">
           <FloatCard className="p-5" delay={160}>
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold tracking-tight">Status</h2>
