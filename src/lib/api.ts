@@ -5496,22 +5496,124 @@ function demoUser(email: string): SessionUser {
 }
 
 /** Real sign-in: POST /api/v1/auth/login with a fresh CSRF token. */
-export async function signIn(email: string, password: string): Promise<SessionUser> {
-  if (MOCK_AUTH) return demoUser(email);
+/**
+ * The password step's result: signed in, or (for accounts with two-step login)
+ * a five-minute challenge to finish with a code from the authenticator app.
+ */
+export type SignInResult =
+  | { kind: "signed-in"; user: SessionUser }
+  /** setupFirst: the server said the account must set up its app before signing in (ADR-036). */
+  | { kind: "code-needed"; challengeId: string; expiresAt: number; setupFirst: boolean };
+
+export async function signIn(email: string, password: string): Promise<SignInResult> {
+  if (MOCK_AUTH) return { kind: "signed-in", user: demoUser(email) };
   const res = await apiFetch("/api/v1/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
+
+  // 202: the password was right, and the account needs a second step. No session yet.
+  // The same reply means "enter your code" or "set up your app first" (the backend
+  // sends both in the same shape today), so a label is read when the server adds one.
+  if (res.status === 202) {
+    const challenge = (await res.json()) as { challengeId: string; expiresInSeconds: number; type?: string; kind?: string; enrollmentRequired?: boolean };
+    const label = `${challenge.type ?? challenge.kind ?? ""}`.toUpperCase();
+    return {
+      kind: "code-needed",
+      challengeId: challenge.challengeId,
+      expiresAt: Date.now() + challenge.expiresInSeconds * 1000,
+      setupFirst: challenge.enrollmentRequired === true || label.includes("ENROLL"),
+    };
+  }
 
   if (!res.ok) {
     if (res.status === 401) throw new Error("Incorrect email or password.");
     if (res.status === 429) {
       throw new Error("Too many sign-in attempts. Please wait a few minutes and try again.");
     }
+    if (res.status === 403 && (await readProblem(res)).code === "MFA_ENROLLMENT_REQUIRED") {
+      throw new Error("Your role needs two-step login, but it is not set up on your account yet. Ask your administrator to help you set it up.");
+    }
     throw new Error("Could not sign in right now. Please try again.");
   }
 
+  return { kind: "signed-in", user: toSessionUser((await res.json()) as MeResponse) };
+}
+
+/** Finishes a two-step sign-in with the 6-digit code from the app, or one of the recovery codes. */
+export async function verifySignInCode(challengeId: string, code: string): Promise<SessionUser> {
+  const res = await apiFetch("/api/v1/auth/login/mfa", {
+    method: "POST",
+    body: JSON.stringify({ challengeId, code: code.trim() }),
+  });
+  if (!res.ok) {
+    if (res.status === 401)
+      throw new Error("That code did not work. Codes change every 30 seconds, so use the newest one. After 5 wrong tries, sign-in is locked for 15 minutes.");
+    if (res.status === 400) throw new Error("Enter the 6-digit code from your app, or a recovery code.");
+    throw new Error("Could not check the code right now. Please try again.");
+  }
   return toSessionUser((await res.json()) as MeResponse);
+}
+
+/**
+ * Set-up during sign-in, for roles that must use two-step login and have not set
+ * it up yet. Works only with the five-minute challenge from the password step.
+ */
+export async function startSignInSetup(challengeId: string): Promise<{ secret: string; otpauthUri: string }> {
+  const res = await apiFetch("/api/v1/auth/mfa/pre-login/enrollment", { method: "POST", body: JSON.stringify({ challengeId }) });
+  if (!res.ok) {
+    if (res.status === 400 || res.status === 401 || res.status === 403 || res.status === 409)
+      throw new Error("Your account already has two-step login set up, or this sign-in has timed out. Enter the code from your app, or go back and sign in again.");
+    throw new Error("Could not start setting up two-step login. Please try again.");
+  }
+  const body = (await res.json()) as { secret: string; otpauthUri: string };
+  return { secret: body.secret, otpauthUri: body.otpauthUri };
+}
+
+/** Finishes set-up during sign-in: the first code from the app signs the person in and returns the recovery codes. */
+export async function confirmSignInSetup(challengeId: string, code: string): Promise<{ user: SessionUser; recoveryCodes: string[] }> {
+  const res = await apiFetch("/api/v1/auth/mfa/pre-login/confirm", { method: "POST", body: JSON.stringify({ challengeId, code: code.trim() }) });
+  if (!res.ok) {
+    if (res.status === 400 || res.status === 401) throw new Error("That code did not work. Use the newest code from your app and try again.");
+    if (res.status === 429) throw new Error("Too many tries. Please wait 15 minutes and sign in again.");
+    throw new Error("Could not finish setting up two-step login. Please sign in again.");
+  }
+  const body = (await res.json()) as { user: MeResponse; recoveryCodes: string[] };
+  return { user: toSessionUser(body.user), recoveryCodes: body.recoveryCodes };
+}
+
+/** Errors from setting up or turning off two-step login, in plain words. */
+async function mfaProblem(res: Response, fallback: string) {
+  const code = (await readProblem(res)).code ?? "";
+  if (code === "UNAUTHENTICATED") return "Your session has ended. Please sign in again.";
+  if (res.status === 429) return "Too many tries. Please wait 15 minutes and try again.";
+  if (res.status === 409) return "Two-step login is already set up on your account.";
+  if (res.status === 400 || res.status === 401 || res.status === 403) return "Check your password and code, then try again.";
+  return code ? `${fallback} (${code})` : fallback;
+}
+
+/** Step 1 of setting up: the secret for the authenticator app. Shown once; never stored or logged. */
+export async function startMfaEnrollment(password: string): Promise<{ secret: string; otpauthUri: string }> {
+  const res = await apiFetch("/api/v1/auth/mfa/enrollment", { method: "POST", body: JSON.stringify({ password }) });
+  if (!res.ok) throw new Error(await mfaProblem(res, "Could not start setting up two-step login."));
+  const body = (await res.json()) as { secret: string; otpauthUri: string };
+  return { secret: body.secret, otpauthUri: body.otpauthUri };
+}
+
+/** Step 2: proves the app works. Returns the ten recovery codes, which the server will never show again. */
+export async function confirmMfaEnrollment(code: string): Promise<string[]> {
+  const res = await apiFetch("/api/v1/auth/mfa/enrollment/confirm", { method: "POST", body: JSON.stringify({ code: code.trim() }) });
+  if (!res.ok) {
+    if (res.status === 400 || res.status === 401) throw new Error("That code did not work. Use the newest code from your app and try again.");
+    throw new Error(await mfaProblem(res, "Could not confirm two-step login."));
+  }
+  return ((await res.json()) as { recoveryCodes: string[] }).recoveryCodes;
+}
+
+/** Turns two-step login off. The server then signs this account out everywhere. */
+export async function disableMfa(password: string, code: string): Promise<void> {
+  const res = await apiFetch("/api/v1/auth/mfa/enrollment/disable", { method: "POST", body: JSON.stringify({ password, code: code.trim() }) });
+  if (!res.ok) throw new Error(await mfaProblem(res, "Could not turn off two-step login."));
 }
 
 /** Real sign-out: POST /api/v1/auth/logout ends the session on the backend. */
