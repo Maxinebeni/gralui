@@ -33,8 +33,17 @@ import {
 } from "./mock-clients";
 import { DEMO_ADMIN_ID, PERMISSIONS, ROLES_DATA, USERS_DATA } from "./mock-admin";
 import { DEMO_KYC_REVIEWS, DEMO_KYC_TEMPLATES, DEMO_LEADS, DEMO_TRACKS } from "./mock-leads";
-import type { ImportBatch, ImportIssue, ImportMode } from "./imports";
-import { DEMO_DRY_RUN_ISSUES, DEMO_DRY_RUN_SHEETS, DEMO_IMPORTS, newDemoImport } from "./mock-imports";
+import type { ImportBatch, ImportIssue, ImportLookups, ImportRecordType, ImportRow, ImportRowStatus } from "./imports";
+import {
+  DEMO_IMPORT_LOOKUPS,
+  DEMO_IMPORT_ROWS,
+  DEMO_IMPORTS,
+  commitDemoImport,
+  correctDemoRow,
+  demoBatchView,
+  newDemoImport,
+  validateDemoImport,
+} from "./mock-imports";
 import { mockListNotifications, mockMarkNotificationRead, mockUnreadCount } from "./mock-notifications";
 import {
   mockAddContact,
@@ -214,8 +223,10 @@ async function loadManagers(): Promise<ManagerChoice[]> {
   if (MANAGERS) return MANAGERS;
   try {
     const res = await apiFetch("/api/v1/clients/managers?size=100");
-    // Not allowed to list managers: remember that instead of asking on every client.
-    if (res.status === 403) MANAGERS = [];
+    // Not allowed to list managers (403), or this account cannot use the list at
+    // all (400/404, e.g. the Administration account): remember that instead of
+    // asking again for every client, which floods the server.
+    if (res.status === 400 || res.status === 403 || res.status === 404) MANAGERS = [];
     if (!res.ok) return [];
     MANAGERS = ((await res.json()) as Page<ManagerChoice>).items ?? [];
     return MANAGERS;
@@ -5564,59 +5575,272 @@ export async function requestPasswordReset(email: string): Promise<void> {
   if (!res.ok && res.status !== 202) throw new Error("Could not send the reset email. Please try again.");
 }
 
-/* ------------------------------ Data import (IMP-02, IMP-03) ------------------------------ */
-// These routes follow the API proposed in the backend's implementation guide;
-// IMP-02 is being built, so check them against /v3/api-docs when it lands.
+/* ------------------------------ Data import (IMP-02 to IMP-05) ------------------------------ */
+// /api/v1/admin/import-batches (backend docs/development/historical-import.md).
+// Only the built-in ADMINISTRATOR role holds the IMPORT_* permissions. Upload
+// stages the workbook; validate checks every client and policy row; PATCH fixes
+// one value with a reason; commit saves the READY rows as clients and policies.
+
+const IMPORTS_API = "/api/v1/admin/import-batches";
+
+const IMPORT_MESSAGES: Record<string, string> = {
+  INVALID_IMPORT_FILE: "Only the .xlsx workbook made by the cleaning script can be imported (up to 50 MB).",
+  FILE_TOO_LARGE: "This file is larger than the server allows (50 MB).",
+  DUPLICATE_IMPORT_SOURCE: "This exact file was uploaded before. Open that import from the list and keep working on it there.",
+  EMPTY_WORKBOOK: "This file is empty.",
+  INVALID_WORKBOOK: "This file could not be read as an import workbook. Make it again with the cleaning script.",
+  FORMULAS_NOT_ACCEPTED: "The workbook contains formulas. Make it again with the cleaning script and do not edit it in Excel.",
+  SOURCE_POLICY_ROW_COUNT_MISMATCH: "The workbook's Source Rows and Policies sheets do not match. Make it again with the cleaning script.",
+  SOURCE_ROW_NOT_REPRESENTED: "Some register rows have no policy row. Make the workbook again with the cleaning script.",
+  INVALID_SOURCE_PROVENANCE: "The workbook's record of where each row came from is broken. Make it again with the cleaning script.",
+  INVALID_SOURCE_ROW_FINGERPRINT: "The workbook's record of where each row came from is broken. Make it again with the cleaning script.",
+  INVALID_OR_DUPLICATE_SOURCE_ROW_ID: "The workbook has repeated or broken source row IDs. Make it again with the cleaning script.",
+  INVALID_POLICY_SOURCE_REFERENCE: "A policy row points at a register row that does not exist. Make the workbook again with the cleaning script.",
+  CLIENT_SOURCE_ROW_NOT_FOUND: "A client in the workbook has no policy. Make the workbook again with the cleaning script.",
+  INVALID_CLEANER_ISSUE: "The workbook's Errors or Review sheet has a broken line. Make it again with the cleaning script.",
+  CLEANER_ISSUE_SOURCE_NOT_FOUND: "The workbook's Errors or Review sheet points at a row that does not exist. Make it again with the cleaning script.",
+  MISSING_MAPPING_VERSION: "The workbook's Manifest sheet has no mapping version. Make it again with the cleaning script.",
+  MISSING_MANIFEST_SOURCES: "The workbook's Manifest sheet lists no register files. Make it again with the cleaning script.",
+  INVALID_MANIFEST_SOURCE: "The workbook's Manifest sheet is broken. Make it again with the cleaning script.",
+  MISSING_HEADERS: "A sheet in the workbook has no header row.",
+  IMPORT_BATCH_NOT_FOUND: "This import could not be found.",
+  IMPORT_BATCH_CLOSED: "This import is finished, so it cannot be changed.",
+  IMPORT_NOT_VALIDATED: "Click Check Again first. Rows were fixed since the last check.",
+  IMPORT_ROW_NOT_FOUND: "This row could not be found.",
+  IMPORT_ROW_CLOSED: "This row is already imported, so it cannot be changed.",
+  STALE_ROW_VERSION: "This row was changed since it was loaded. Reload the list and try again.",
+  SOURCE_ROW_IMMUTABLE: "Original register rows cannot be changed.",
+  INVALID_CORRECTION: "This change could not be saved. Pick a field and give a reason (up to 500 characters).",
+  INVALID_PAGINATION: "The list could not be loaded. Please try again.",
+  IMPORT_ARCHIVE_CHECKSUM_MISMATCH: "The file was damaged while saving. Please upload it again.",
+  IMPORT_STAGING_CORRUPT: "This import's saved data is damaged. Ask the backend team to check it.",
+};
 
 async function importProblem(res: Response, fallback: string) {
+  if (res.status === 401) return "Your session has ended. Please sign in again.";
+  const problem = await readProblem(res);
+  const code = problem.code ?? "";
+  if (IMPORT_MESSAGES[code]) return IMPORT_MESSAGES[code];
+  if (code.startsWith("MISSING_SHEET_")) {
+    const sheet = code.slice("MISSING_SHEET_".length).toLowerCase().replace(/_/g, " ");
+    return `The workbook has no ${sheet} sheet. Use the workbook made by the cleaning script.`;
+  }
+  if (res.status === 403) return "Only the system Administrator can import data.";
   if (res.status === 404) return "Data import is not available on this server yet.";
-  return problemMessage(res, fallback);
+  if (res.status === 413) return IMPORT_MESSAGES.FILE_TOO_LARGE!;
+  return code ? `${fallback} (${code})` : fallback;
 }
 
+type BackendImportBatch = {
+  id: string;
+  parentBatchId?: string | null;
+  sourceName: string;
+  status: string;
+  version: number;
+  mappingVersion: string;
+  sourceRows: number;
+  clients: number;
+  policies: number;
+  readyRows: number;
+  reviewRows: number;
+  errorRows: number;
+  committedRows: number;
+  uploadedAt: string;
+  validatedAt?: string | null;
+  committedAt?: string | null;
+};
+
+function toImportBatch(v: BackendImportBatch): ImportBatch {
+  return {
+    id: v.id,
+    parentBatchId: v.parentBatchId,
+    fileName: v.sourceName,
+    status: v.status,
+    version: v.version,
+    mappingVersion: v.mappingVersion,
+    sourceRows: v.sourceRows,
+    clients: v.clients,
+    policies: v.policies,
+    ready: v.readyRows,
+    review: v.reviewRows,
+    errors: v.errorRows,
+    committed: v.committedRows,
+    uploadedAt: v.uploadedAt,
+    validatedAt: v.validatedAt,
+    committedAt: v.committedAt,
+  };
+}
+
+type BackendImportRow = {
+  id: string;
+  recordType: ImportRecordType;
+  sourceFile: string;
+  sourceSheet: string;
+  sourceYear?: number | null;
+  sourceRow?: number | null;
+  status: string;
+  entityId?: string | null;
+  version: number;
+  originalValues: Record<string, unknown>;
+  normalizedValues: Record<string, unknown>;
+  issues: ImportIssue[];
+};
+
+function toImportRow(v: BackendImportRow): ImportRow {
+  return {
+    id: v.id,
+    recordType: v.recordType,
+    sourceFile: v.sourceFile,
+    sourceSheet: v.sourceSheet,
+    sourceYear: v.sourceYear,
+    sourceRow: v.sourceRow,
+    status: v.status,
+    entityId: v.entityId,
+    version: v.version,
+    original: v.originalValues ?? {},
+    values: v.normalizedValues ?? {},
+    issues: v.issues ?? [],
+  };
+}
+
+const importPath = (id: string, rest = "") => `${IMPORTS_API}/${encodeURIComponent(id)}${rest}`;
+
 export async function listImports(): Promise<ImportBatch[]> {
-  if (MOCK_AUTH) return [...DEMO_IMPORTS];
-  const res = await apiFetch("/api/v1/imports?size=100");
-  if (!res.ok) throw new Error(await importProblem(res, "Could not load the imports."));
-  return ((await res.json()) as Page<ImportBatch>).items;
+  if (MOCK_AUTH) return DEMO_IMPORTS.map(demoBatchView);
+  const all: ImportBatch[] = [];
+  for (let page = 0; ; page++) {
+    const res = await apiFetch(`${IMPORTS_API}?page=${page}&size=50`);
+    if (!res.ok) throw new Error(await importProblem(res, "Could not load the imports."));
+    const body = (await res.json()) as { items: BackendImportBatch[]; totalPages: number };
+    all.push(...body.items.map(toImportBatch));
+    if (page + 1 >= body.totalPages || body.items.length === 0) return all;
+  }
 }
 
 export async function getImportBatch(id: string): Promise<ImportBatch | null> {
-  if (MOCK_AUTH) return DEMO_IMPORTS.find((b) => b.id === id) ?? null;
-  const res = await apiFetch(`/api/v1/imports/${encodeURIComponent(id)}`);
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(await importProblem(res, "Could not load this import."));
-  return (await res.json()) as ImportBatch;
-}
-
-export async function uploadImport(file: File, mode: ImportMode, uploadedBy: string): Promise<ImportBatch> {
-  if (MOCK_AUTH) return newDemoImport(file.name, mode, uploadedBy);
-  const form = new FormData();
-  form.append("file", file);
-  const res = await apiFetch(`/api/v1/imports?mode=${mode}`, { method: "POST", body: form });
-  if (!res.ok) throw new Error(await importProblem(res, "Could not upload this file."));
-  return (await res.json()) as ImportBatch;
-}
-
-/** The dry run: checks every row and writes no business records. */
-export async function validateImport(id: string): Promise<ImportBatch> {
   if (MOCK_AUTH) {
     const batch = DEMO_IMPORTS.find((b) => b.id === id);
-    if (!batch) throw new Error("This import could not be found.");
-    Object.assign(batch, { status: "VALIDATED", validatedAt: new Date().toISOString(), sheets: DEMO_DRY_RUN_SHEETS, fileProblems: [] });
-    return { ...batch };
+    return batch ? demoBatchView(batch) : null;
   }
-  const res = await apiFetch(`/api/v1/imports/${encodeURIComponent(id)}/validate`, { method: "POST" });
-  if (!res.ok) throw new Error(await importProblem(res, "Could not check this file."));
-  return (await res.json()) as ImportBatch;
+  const res = await apiFetch(importPath(id));
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(await importProblem(res, "Could not load this import."));
+  return toImportBatch((await res.json()) as BackendImportBatch);
 }
 
-export async function listImportIssues(id: string): Promise<ImportIssue[]> {
-  if (MOCK_AUTH) return DEMO_DRY_RUN_ISSUES;
-  return collectPages(async (page) => {
-    const res = await apiFetch(`/api/v1/imports/${encodeURIComponent(id)}/issues?page=${page}&size=100`);
-    if (!res.ok) throw new Error(await importProblem(res, "Could not load the issues."));
-    return (await res.json()) as Page<ImportIssue>;
+/** Stages the workbook. A corrected file can name the import it replaces. */
+export async function uploadImport(file: File, parentBatchId?: string): Promise<ImportBatch> {
+  if (MOCK_AUTH) return newDemoImport(file.name);
+  const form = new FormData();
+  form.append("file", file);
+  const query = parentBatchId ? `?parentBatchId=${encodeURIComponent(parentBatchId)}` : "";
+  const res = await apiFetch(`${IMPORTS_API}${query}`, { method: "POST", body: form });
+  if (!res.ok) throw new Error(await importProblem(res, "Could not upload this file."));
+  return toImportBatch((await res.json()) as BackendImportBatch);
+}
+
+/** Checks every client and policy row against GRAL's rules. Writes no clients or policies. */
+export async function validateImport(id: string): Promise<ImportBatch> {
+  if (MOCK_AUTH) return validateDemoImport(id);
+  const res = await apiFetch(importPath(id, "/validate"), { method: "POST" });
+  if (!res.ok) throw new Error(await importProblem(res, "Could not check this file."));
+  return toImportBatch((await res.json()) as BackendImportBatch);
+}
+
+/** Saves the READY rows as clients and policies. Rows that fail stay in the list to fix. */
+export async function commitImport(id: string): Promise<ImportBatch> {
+  if (MOCK_AUTH) return commitDemoImport(id);
+  const res = await apiFetch(importPath(id, "/commit"), { method: "POST" });
+  if (!res.ok) throw new Error(await importProblem(res, "Could not import the ready rows."));
+  return toImportBatch((await res.json()) as BackendImportBatch);
+}
+
+export const IMPORT_ROW_PAGE = 100;
+
+/** One page of rows (the backend sends no total, so a short page is the last one). */
+export async function listImportRows(
+  id: string,
+  filter: { recordType?: ImportRecordType; status?: ImportRowStatus; page?: number } = {},
+): Promise<ImportRow[]> {
+  const page = filter.page ?? 0;
+  if (MOCK_AUTH) {
+    const rows = (DEMO_IMPORT_ROWS.get(id) ?? []).filter(
+      (r) => (!filter.recordType || r.recordType === filter.recordType) && (!filter.status || r.status === filter.status),
+    );
+    return structuredClone(rows.slice(page * IMPORT_ROW_PAGE, (page + 1) * IMPORT_ROW_PAGE));
+  }
+  const q = new URLSearchParams({ page: String(page), size: String(IMPORT_ROW_PAGE) });
+  if (filter.recordType) q.set("recordType", filter.recordType);
+  if (filter.status) q.set("status", filter.status);
+  const res = await apiFetch(`${importPath(id, "/rows")}?${q}`);
+  if (!res.ok) throw new Error(await importProblem(res, "Could not load the rows."));
+  return ((await res.json()) as BackendImportRow[]).map(toImportRow);
+}
+
+/** Every row of one kind and status, page by page. */
+export async function listAllImportRows(id: string, recordType: ImportRecordType, status: ImportRowStatus): Promise<ImportRow[]> {
+  const all: ImportRow[] = [];
+  for (let page = 0; ; page++) {
+    const rows = await listImportRows(id, { recordType, status, page });
+    all.push(...rows);
+    if (rows.length < IMPORT_ROW_PAGE) return all;
+  }
+}
+
+/** Changes one cleaned value. The original register value is kept, and the row goes back to Needs a decision until the next check. */
+export async function correctImportRow(
+  batchId: string,
+  row: Pick<ImportRow, "id" | "version">,
+  field: string,
+  value: unknown,
+  reason: string,
+): Promise<ImportRow> {
+  if (MOCK_AUTH) return correctDemoRow(batchId, row.id, row.version, field, value);
+  const res = await apiFetch(importPath(batchId, `/rows/${encodeURIComponent(row.id)}`), {
+    method: "PATCH",
+    body: JSON.stringify({ expectedVersion: row.version, field, value, reason }),
   });
+  if (!res.ok) throw new Error(await importProblem(res, "Could not save this change."));
+  return toImportRow((await res.json()) as BackendImportRow);
+}
+
+/** Active insurers (with their products), products and Accounts Executives, with their system IDs for mapping. */
+export async function getImportLookups(): Promise<ImportLookups> {
+  if (MOCK_AUTH) return DEMO_IMPORT_LOOKUPS;
+  type Body = {
+    insurers: { id: string; code: string; name: string; activeProductIds: string[] }[];
+    products: { id: string; code: string; name: string }[];
+    accountManagers: { id: string; name: string }[];
+    managerTotalPages: number;
+  };
+  let first: Body | null = null;
+  const managers: { id: string; name: string }[] = [];
+  for (let page = 0; ; page++) {
+    const res = await apiFetch(`${IMPORTS_API}/lookups?page=${page}&size=100`);
+    if (!res.ok) throw new Error(await importProblem(res, "Could not load the insurers, products and account managers."));
+    const body = (await res.json()) as Body;
+    first ??= body;
+    managers.push(...body.accountManagers);
+    if (page + 1 >= body.managerTotalPages || body.accountManagers.length === 0) break;
+  }
+  if (!first) throw new Error("Could not load the insurers, products and account managers.");
+  const byName = <T extends { name: string }>(list: T[]) => [...list].sort((a, b) => a.name.localeCompare(b.name));
+  return {
+    insurers: byName(first.insurers.map((i) => ({ id: i.id, code: i.code, name: i.name, productIds: i.activeProductIds ?? [] }))),
+    products: byName(first.products),
+    managers: byName(managers),
+  };
+}
+
+/** The original workbook exactly as uploaded. */
+export async function downloadImportSource(id: string): Promise<{ blob: Blob; fileName: string }> {
+  if (MOCK_AUTH) throw new Error("The demo keeps no uploaded files.");
+  const res = await apiFetch(importPath(id, "/source"));
+  if (!res.ok) throw new Error(await importProblem(res, "Could not download the original file."));
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const match = /filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i.exec(disposition);
+  const fileName = match ? decodeURIComponent(match[1] ?? match[2] ?? "") : "import.xlsx";
+  return { blob: await res.blob(), fileName: fileName || "import.xlsx" };
 }
 
 /* ------------------ Renewal Exit Register (REN-07) ------------------ */
