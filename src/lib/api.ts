@@ -1141,7 +1141,9 @@ export async function updatePolicy(
 /* ---------------------------------- Claims ----------------------------------- */
 
 export async function listClientClaims(clientName: string): Promise<ClientClaim[]> {
-  return CLAIMS.filter((c) => c.client === clientName).map(toClaimSummary);
+  // Live mode reads real claims only, never the demo list.
+  const claims = MOCK_AUTH ? CLAIMS : await listClaims().catch(() => [] as Claim[]);
+  return claims.filter((c) => c.client === clientName).map(toClaimSummary);
 }
 
 export async function getPoliciesByInsurer(): Promise<InsurerSummary[]> {
@@ -1604,8 +1606,9 @@ function claimApprovals(): ApprovalRequest[] {
 }
 
 export async function listApprovals(): Promise<ApprovalRequest[]> {
-  const backend = MOCK_AUTH ? [] : await listBackendApprovals();
-  return [...backend, ...APPROVALS, ...claimApprovals()].sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
+  // Demo approvals only appear in demo mode.
+  const list = MOCK_AUTH ? [...APPROVALS, ...claimApprovals()] : await listBackendApprovals();
+  return list.sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
 }
 
 export async function getApproval(id: string): Promise<ApprovalRequest | null> {
@@ -1927,15 +1930,16 @@ export function buildNotices(approvals: ApprovalRequest[], tasks: WorkTask[], us
 export async function listTasks(loadedApprovals?: ApprovalRequest[]): Promise<WorkTask[]> {
   const approvals = loadedApprovals ?? (await listApprovals());
   const pendingRenewals = new Set(approvals.filter((a) => a.subjectType === "RENEWAL" && a.status === "PENDING").map((a) => a.subjectId));
+  // Demo claims, renewals and tasks only appear in demo mode.
   const system = [
-    ...CLAIMS.map(claimTask),
-    ...RENEWAL_CASES.map((r) => renewalTask(r, pendingRenewals.has(r.id))),
+    ...(MOCK_AUTH ? CLAIMS.map(claimTask) : []),
+    ...(MOCK_AUTH ? RENEWAL_CASES.map((r) => renewalTask(r, pendingRenewals.has(r.id))) : []),
     ...approvals.map(approvalTask),
     ...(MOCK_AUTH ? onboardingTasks() : []),
   ].filter((t): t is WorkTask => t !== null);
 
   const backend = MOCK_AUTH ? [] : await listBackendTasks();
-  return [...backend, ...system, ...MANUAL_TASKS].map((t) => {
+  return [...backend, ...system, ...(MOCK_AUTH ? MANUAL_TASKS : [])].map((t) => {
     const assigned = TASK_ASSIGNMENTS.get(t.key);
     if (!assigned) return t;
     return { ...t, owner: assigned.owner, ownerRole: undefined, history: [...t.history, ...assigned.history] };
@@ -1944,12 +1948,12 @@ export async function listTasks(loadedApprovals?: ApprovalRequest[]): Promise<Wo
 
 /** Names that tasks can be assigned to. */
 export async function listAssignees(): Promise<string[]> {
+  // Backend tasks can only be given to people the backend knows.
+  if (!MOCK_AUTH) return [...new Set((await loadManagers()).map((m) => m.fullName))].sort();
   const names = new Set<string>([
     ...CLAIMS.map((c) => c.handler),
     ...RENEWAL_CASES.map((r) => r.owner),
     ...MANUAL_TASKS.flatMap((t) => (t.owner ? [t.owner] : [])),
-    // Backend tasks can only be given to people the backend knows.
-    ...(MOCK_AUTH ? [] : (await loadManagers()).map((m) => m.fullName)),
   ]);
   return [...names].sort();
 }
@@ -1990,7 +1994,11 @@ export async function completeTask(id: string, note: string, by: string): Promis
 
 export type NewTaskInput = Pick<WorkTask, "title" | "detail" | "resourceType" | "resourceId" | "resourceRef" | "client" | "owner" | "dueDate">;
 
+/** New tasks are only kept in the browser, so they are offered in demo mode only. */
+export const CAN_CREATE_TASKS = MOCK_AUTH;
+
 export async function createTask(input: NewTaskInput, by: string): Promise<WorkTask> {
+  if (!CAN_CREATE_TASKS) throw new Error("New tasks cannot be saved yet. Add a follow up on the record instead.");
   if (!input.title.trim()) throw new Error("Say what needs to be done.");
   if (!input.owner) throw new Error("Choose who should do this.");
   if (!input.dueDate) throw new Error("Choose a due date.");
@@ -4582,7 +4590,7 @@ export function toClaimSummary(c: Claim): ClientClaim {
     amount: c.amount,
     step: stepDef(c.step).n,
     stage: stageLabel(c),
-    sla: sla === "closed" ? "ontrack" : sla,
+    sla,
   };
 }
 
@@ -4758,7 +4766,21 @@ export async function getClaimReadiness(claim: Claim): Promise<ClaimReadiness | 
     `/api/v1/claims/${claim.uuid}/readiness`,
     "Could not check whether the claim is ready.",
   );
-  return view ? { ready: view.ready, missing: view.missingRequiredCodes ?? [] } : null;
+  if (!view) return null;
+  const codes = view.missingRequiredCodes ?? [];
+  // Show the checklist's own names, not the server's codes.
+  const labels = new Map<string, string>();
+  if (codes.length) {
+    const checklist = await getClaimChecklist(claim).catch(() => null);
+    for (const item of checklist?.items ?? []) labels.set(item.code, item.label);
+  }
+  return { ready: view.ready, missing: codes.map((c) => labels.get(c) ?? readableCode(c)) };
+}
+
+/** "POLICE_REPORT" becomes "Police report". */
+export function readableCode(code: string): string {
+  const words = code.replace(/[_-]+/g, " ").trim().toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 export type ClaimHistoryEvent = {

@@ -137,7 +137,7 @@ export type ClientClaim = {
   step: number;
   /** Where the claim is, e.g. "4 · Follow up" or "Closed · settled". */
   stage: string;
-  sla: "breached" | "approaching" | "ontrack";
+  sla: "breached" | "approaching" | "ontrack" | "closed";
 };
  
 export type InsurerSummary = { insurer: string; policies: number; premium: number };

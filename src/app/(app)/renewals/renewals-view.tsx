@@ -280,17 +280,22 @@ function RenewalCard({ renewal: r, onOpen }: { renewal: RenewalCase; onOpen: () 
               {r.classOfInsurance} · {r.insurer}
             </p>
           </div>
-          <div className="text-right">
-            <p className={cn("text-2xl leading-none font-semibold", days < 0 ? "text-danger" : "text-foreground")}>
-              {days < 0 ? `−${Math.abs(days)}` : days}
-            </p>
-            <p className="text-[10px] text-subtle">days to renewal</p>
-          </div>
+          {current ? (
+            <div className="text-right">
+              <p className={cn("text-2xl leading-none font-semibold", days < 0 ? "text-danger" : "text-foreground")}>
+                {days < 0 ? `−${Math.abs(days)}` : days}
+              </p>
+              <p className="text-[10px] text-subtle">days to renewal</p>
+            </div>
+          ) : (
+            // Every step is done, so a countdown would only confuse.
+            isLostRenewal(r) ? <Chip tone="neutral">Lost</Chip> : <Chip tone="success">Renewed</Chip>
+          )}
         </div>
 
         <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 text-[11px]">
           <span className="min-w-0 truncate text-muted-foreground">{formatRwf(r.premium)}</span>
-          <Chip tone={days < 0 ? "danger" : days <= 30 ? "warning" : "sky"}>{formatDate(r.expiryDate)}</Chip>
+          <Chip tone={!current ? "neutral" : days < 0 ? "danger" : days <= 30 ? "warning" : "sky"}>{formatDate(r.expiryDate)}</Chip>
         </div>
       </button>
 

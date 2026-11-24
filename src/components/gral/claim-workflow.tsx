@@ -14,6 +14,7 @@ import {
   CLAIM_STATE_LABEL,
   claimActionsFor,
   claimEventLabel,
+  hasVotedThisMeeting,
   type ClaimActionSpec,
   type ClaimFieldSpec,
 } from "@/lib/claim-workflow";
@@ -34,11 +35,28 @@ const today = () => new Date().toISOString().slice(0, 10);
 export function BackendClaimWorkflow({ claim, onChanged }: { claim: Claim; onChanged: () => void }) {
   const { user } = useCurrentUser();
   const state = claim.serverState ?? "REGISTERED";
-  const mine = claimActionsFor(user, state);
-  const others = CLAIM_ACTIONS.filter((a) => a.states.includes(state as never) && !mine.includes(a));
+  const [voted, setVoted] = useState(false);
+  const allowed = claimActionsFor(user, state);
+  const mine = voted ? allowed.filter((a) => a.code !== "COMMITTEE_VOTE_RECORDED") : allowed;
+  const others = CLAIM_ACTIONS.filter((a) => a.states.includes(state as never) && !allowed.includes(a));
   const [open, setOpen] = useState<string | null>(null);
   const [readiness, setReadiness] = useState<ClaimReadiness | null>(null);
   const preparing = state === "REGISTERED" || state === "DOCUMENTS_PENDING";
+
+  const voting = allowed.some((a) => a.code === "COMMITTEE_VOTE_RECORDED");
+  useEffect(() => {
+    setVoted(false);
+    if (!voting) return;
+    let cancelled = false;
+    getClaimHistory(claim)
+      .then((events) => {
+        if (!cancelled) setVoted(hasVotedThisMeeting(events, user.id));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [claim, voting, user.id]);
 
   useEffect(() => {
     if (!preparing) return;
@@ -66,12 +84,13 @@ export function BackendClaimWorkflow({ claim, onChanged }: { claim: Claim; onCha
         <p className={cn("mt-2 text-[11px]", readiness.ready ? "text-success" : "text-muted-foreground")}>
           {readiness.ready
             ? "All required documents are in. The pack can be marked ready."
-            : `Still missing before submission: ${readiness.missing.map((m) => m.toLowerCase().replace(/_/g, " ")).join(", ")}. Add them in the Documents tab below.`}
+            : `Still missing before submission: ${readiness.missing.join(", ")}. Add them in the Documents tab below.`}
         </p>
       ) : null}
 
       {state === "CLOSED" ? null : (
         <div className="mt-3 space-y-2">
+          {voted ? <p className="text-[11px] text-success">You have voted in this meeting. The DMD records the decision.</p> : null}
           {mine.length === 0 ? (
             <p className="text-[11px] text-subtle">
               Nothing for you to record at this stage.

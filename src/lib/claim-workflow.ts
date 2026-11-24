@@ -432,3 +432,17 @@ export function canDoClaimAction(user: SessionUser, a: ClaimActionSpec): boolean
 export function claimActionsFor(user: SessionUser, state: string): ClaimActionSpec[] {
   return CLAIM_ACTIONS.filter((a) => a.states.includes(state as ClaimServerState) && canDoClaimAction(user, a));
 }
+/**
+ * True when this user has voted since the last committee meeting was recorded.
+ * Each member votes once per meeting, so the vote form is hidden after that.
+ */
+export function hasVotedThisMeeting(events: { action: string; actorId: string; sequence: number }[], userId: string | undefined): boolean {
+  if (!userId) return false;
+  const ordered = [...events].sort((a, b) => a.sequence - b.sequence);
+  let voted = false;
+  for (const e of ordered) {
+    if (e.action === "COMMITTEE_CONVENED") voted = false;
+    else if (e.action === "COMMITTEE_VOTE_RECORDED" && e.actorId === userId) voted = true;
+  }
+  return voted;
+}

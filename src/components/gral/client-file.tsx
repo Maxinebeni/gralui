@@ -359,7 +359,7 @@ export function ClientFile({
                       {c.classOfInsurance} · {formatRwf(c.amount)}
                     </p>
                   </div>
-                  <Chip tone={c.sla === "breached" ? "danger" : c.sla === "approaching" ? "warning" : "success"}>
+                  <Chip tone={c.sla === "breached" ? "danger" : c.sla === "approaching" ? "warning" : c.sla === "closed" ? "neutral" : "success"}>
                     {c.stage}
                   </Chip>
                 </ClaimRow>
