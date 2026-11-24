@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActionForm, Label, SelectInput, TextInput } from "@/components/gral/onboarding-ui";
 import { PageHeader } from "@/components/gral/shell";
 import { FloatCard, Loader, OutlineButton } from "@/components/gral/ui";
-import { addCatalogProduct, addInsurer, getInsurerProductCatalog, linkProductToInsurer, reloadInsurerProductLinks, renameCatalogProduct, renameInsurer, unlinkProductFromInsurer, type InsurerProductCatalog } from "@/lib/api";
+import { addCatalogProduct, addCatalogProductLine, addInsurer, getInsurerProductCatalog, linkProductToInsurer, reloadInsurerProductLinks, renameCatalogProduct, renameInsurer, unlinkProductFromInsurer, type InsurerProductCatalog } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { hasPermission, usesBackendPermissions } from "@/lib/permissions";
 
@@ -33,6 +33,12 @@ export function InsurerProductsView() {
   const [productTermCode, setProductTermCode] = useState("");
   const [productLineCodes, setProductLineCodes] = useState<string[]>([]);
   const [productReason, setProductReason] = useState("");
+  const [showAddProductLine, setShowAddProductLine] = useState(false);
+  const [productLineCode, setProductLineCode] = useState("");
+  const [productLineName, setProductLineName] = useState("");
+  const [productLineReason, setProductLineReason] = useState("");
+  const [productLineError, setProductLineError] = useState<string | null>(null);
+  const [creatingProductLine, setCreatingProductLine] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryingInsurerIds, setRetryingInsurerIds] = useState<Set<string>>(() => new Set());
@@ -88,6 +94,22 @@ export function InsurerProductsView() {
     selectedInsurer?.supportedTermCodes.includes(product.termCode) && !linkedIds.includes(product.id),
   ) ?? [], [catalog, selectedInsurer, linkedIds]);
   const availableProductLines = catalog?.productLines.filter((line) => line.termCode === productTermCode) ?? [];
+
+  const createProductLine = async () => {
+    setProductLineError(null);
+    setCreatingProductLine(true);
+    try {
+      const code = productLineCode.trim();
+      await addCatalogProductLine({ code, name: productLineName, termCode: productTermCode, reason: productLineReason });
+      await load(false);
+      setProductLineCodes((current) => [...new Set([...current, code])]);
+      setProductLineCode(""); setProductLineName(""); setProductLineReason(""); setShowAddProductLine(false);
+    } catch (error) {
+      setProductLineError(error instanceof Error ? error.message : "Could not add the product line.");
+    } finally {
+      setCreatingProductLine(false);
+    }
+  };
 
   return (
     <>
@@ -208,13 +230,26 @@ export function InsurerProductsView() {
                 <SelectInput id="product-term" label="Product term" value={productTermCode} onChange={(value) => { setProductTermCode(value); setProductLineCodes([]); }} options={catalog.productTerms.map((term) => ({ value: term.code, label: term.name }))} wide />
                 <TextInput id="product-notes" label="Notes (optional)" value={productNotes} onChange={setProductNotes} multiline wide />
                 <div className="space-y-2 sm:col-span-2">
-                  <Label>Product lines</Label>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Label>Product lines</Label>
+                    {canAddProduct ? <button type="button" onClick={() => { setProductLineError(null); setShowAddProductLine((current) => !current); }} className="text-xs font-medium text-primary underline underline-offset-2">{showAddProductLine ? "Cancel new line" : "Create product line"}</button> : null}
+                  </div>
                   {availableProductLines.length ? availableProductLines.map((line) => (
                     <label key={line.code} className="flex items-center gap-2 text-xs">
                       <input type="checkbox" checked={productLineCodes.includes(line.code)} onChange={(event) => setProductLineCodes((current) => event.target.checked ? [...current, line.code] : current.filter((code) => code !== line.code))} />
                       {line.name}
                     </label>
-                  )) : <p className="text-xs text-muted-foreground">No active product lines exist for this term.</p>}
+                  )) : !showAddProductLine ? <p className="text-xs text-muted-foreground">No active product lines exist for this term.</p> : null}
+                  {showAddProductLine ? <div className="mt-2 space-y-3 rounded-xl border border-border bg-muted/30 p-3">
+                    <p className="text-xs font-medium">New line for {catalog.productTerms.find((term) => term.code === productTermCode)?.name ?? productTermCode}</p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <TextInput id="product-line-code" label="Product line code" value={productLineCode} onChange={setProductLineCode} placeholder="e.g. MOTOR" />
+                      <TextInput id="product-line-name" label="Product line name" value={productLineName} onChange={setProductLineName} />
+                      <TextInput id="product-line-reason" label="Reason for adding this line" value={productLineReason} onChange={setProductLineReason} multiline wide />
+                    </div>
+                    {productLineError ? <p role="alert" className="text-xs text-danger">{productLineError}</p> : null}
+                    <OutlineButton type="button" disabled={creatingProductLine || !productTermCode} onClick={() => void createProductLine()} className="px-3 py-1.5 text-xs">{creatingProductLine ? "Creating…" : "Create and select line"}</OutlineButton>
+                  </div> : null}
                 </div>
                 <TextInput id="product-reason" label="Reason for adding the product" value={productReason} onChange={setProductReason} multiline wide />
               </ActionForm>

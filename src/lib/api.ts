@@ -3463,6 +3463,21 @@ export async function addCatalogProduct(input: { code: string; name: string; not
   INSURER_PRODUCT_IDS.clear();
 }
 
+/** Create a product line for the selected insurance term. */
+export async function addCatalogProductLine(input: { code: string; name: string; termCode: string; reason: string }): Promise<void> {
+  if (!input.code.trim()) throw new Error("Enter a product line code.");
+  if (!input.name.trim()) throw new Error("Enter a product line name.");
+  if (!input.termCode.trim()) throw new Error("Choose an insurance term for this product line.");
+  if (!input.reason.trim()) throw new Error("Give a reason for adding this product line.");
+  const res = await apiFetch("/api/v1/policy/catalog/product-lines", {
+    method: "POST",
+    body: JSON.stringify({ ...input, code: input.code.trim(), name: input.name.trim(), reason: input.reason.trim() }),
+  });
+  if (!res.ok) throw new Error(await catalogApiProblem(res, "Could not add the product line."));
+  CATALOG = null;
+  INSURER_PRODUCT_IDS.clear();
+}
+
 /** Rename a catalog product using optimistic versioning and an audit reason. */
 export async function renameCatalogProduct(productId: string, input: { expectedVersion: number; name: string; reason: string }): Promise<void> {
   if (!input.name.trim()) throw new Error("Enter a product name.");
