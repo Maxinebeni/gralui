@@ -9,6 +9,7 @@ import { isKycBlocker, kycBlockedReasons, kycHref } from "@/lib/kyc";
 import { confirmLead, onboardingOptions, runTrackAction, type LeadDetail, type TrackDetail } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import {
+  ONBOARDING_TARGET_DAYS,
   JOURNEY_PHASES,
   JOURNEY_STEPS,
   KYC_STATUS_LABEL,
@@ -231,7 +232,7 @@ export function OnboardingCaseView({
               <Detail label="Industry" value={l.industry} />
               <Detail label="Source" value={[l.source, l.sourceReference].filter(Boolean).join(": ")} />
               <Detail label="Received" value={dateOf(l.receivedAt)} />
-              {l.status === "OPEN" ? <Detail label="Working days" value={String(leadAge(l))} /> : null}
+              {l.status === "OPEN" ? <Detail label="Working days since lead came in" value={`${leadAge(l)}${leadAge(l) > ONBOARDING_TARGET_DAYS ? ` (over the ${ONBOARDING_TARGET_DAYS}-day target)` : ""}`} /> : null}
               {l.clientName ? <Detail label="Client" value={l.clientName} /> : null}
             </dl>
           </FloatCard>

@@ -27,15 +27,15 @@ export function HealthChip({ health }: { health: Health }) {
     case "done":
       return <Chip tone="success">Done</Chip>;
     case "overdue":
-      return <Chip tone="danger">Overdue</Chip>;
+      return <Chip tone="danger">Step overdue</Chip>;
     case "due-soon":
-      return <Chip tone="warning">Due soon</Chip>;
+      return <Chip tone="warning">Step due soon</Chip>;
     case "held":
       return <Chip>On hold</Chip>;
     case "closed":
       return <Chip>Closed</Chip>;
     default:
-      return <Chip tone="sky">On track</Chip>;
+      return <Chip tone="sky">Step on track</Chip>;
   }
 }
 

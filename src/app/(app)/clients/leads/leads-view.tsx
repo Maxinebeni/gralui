@@ -254,9 +254,18 @@ function CaseCard({ value: j }: { value: Journey }) {
           </p>
           <p className="text-[11px] text-subtle">{l.ownerName ?? "No Accounts Executive yet"}</p>
         </div>
-        <div className="text-right">
-          <p className={cn("text-2xl leading-none font-semibold", age > ONBOARDING_TARGET_DAYS && "text-danger")}>{age}</p>
-          <p className="text-[10px] whitespace-nowrap text-subtle">working days</p>
+        {/* Time since the lead came in, against the whole onboarding target. The chip
+            below is about the current step's own deadline, so the two say different things. */}
+        <div className="text-right" title={`Working days since the lead came in. Onboarding target: ${ONBOARDING_TARGET_DAYS} working days.`}>
+          <p className={cn("text-2xl leading-none font-semibold", age > ONBOARDING_TARGET_DAYS && "text-warning")}>{age}</p>
+          <p className="text-[10px] leading-tight text-subtle">
+            working days
+            <br />
+            since lead came in
+          </p>
+          {age > ONBOARDING_TARGET_DAYS ? (
+            <p className="mt-0.5 text-[10px] leading-tight font-medium whitespace-nowrap text-warning">over {ONBOARDING_TARGET_DAYS}-day target</p>
+          ) : null}
         </div>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-1.5">
