@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/gral/shell";
 import { FilterMenu } from "@/components/gral/filter-menu";
 import { DATE_RANGE_OPTIONS, withinRange, type DateRange } from "@/lib/date-range";
 import {
+  ClaimNotLoaded,
   ClaimPage,
   HeadGap,
   HeadRow,
@@ -98,7 +99,7 @@ export function ClaimsView() {
   // A claim is a long process, so it opens as its own full page.
   if (openId) {
     if (open) return <ClaimPage claim={open} backHref={backHref} backLabel="Claims queue" onChanged={reload} />;
-    return loaded ? <p className="text-sm text-muted-foreground">This claim could not be found.</p> : <PageLoader label="Loading claim" />;
+    return loaded ? <ClaimNotLoaded backHref={backHref} onRetry={reload} /> : <PageLoader label="Loading claim" />;
   }
 
   return (

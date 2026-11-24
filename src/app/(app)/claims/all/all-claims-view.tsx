@@ -7,6 +7,7 @@ import { FilterMenu } from "@/components/gral/filter-menu";
 import { DATE_RANGE_OPTIONS, withinRange, type DateRange } from "@/lib/date-range";
 import {
   ClaimSearch,
+  ClaimNotLoaded,
   ClaimPage,
   ClaimsTable,
   byUrgency,
@@ -42,7 +43,7 @@ export function AllClaimsView() {
 
   if (openId) {
     if (open) return <ClaimPage claim={open} backHref={backHref} backLabel="All claims" onChanged={reload} />;
-    return loaded ? <p className="text-sm text-muted-foreground">This claim could not be found.</p> : <PageLoader label="Loading claim" />;
+    return loaded ? <ClaimNotLoaded backHref={backHref} onRetry={reload} /> : <PageLoader label="Loading claim" />;
   }
 
   return (

@@ -128,6 +128,26 @@ export function useClaimFilters(claims: Claim[]) {
   return { matching, pills };
 }
 
+/** Shown when the claim in the link is not in the list that came back. */
+export function ClaimNotLoaded({ backHref, onRetry }: { backHref: string; onRetry: () => void }) {
+  return (
+    <FloatCard className="p-5">
+      <p className="text-sm font-medium">This claim did not load.</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        The connection may be slow, or the claim is not one you can see. Try again, or go back to the list.
+      </p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button type="button" onClick={onRetry} className="rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground">
+          Try again
+        </button>
+        <Link href={backHref} className="rounded-full border border-border px-4 py-2 text-xs font-medium">
+          Back to the list
+        </Link>
+      </div>
+    </FloatCard>
+  );
+}
+
 export function useClaims() {
   const query = useClaimsQuery();
   const refresh = useRefresh();
@@ -142,7 +162,12 @@ export function useOpenClaim(claims: Claim[]) {
   const searchParams = useSearchParams();
   const openId = searchParams.get("claim");
 
-  const open = claims.find((c) => c.id === openId) ?? null;
+  // A reload that briefly misses the claim (a slow or failed call) keeps the
+  // last copy on screen, so the page does not flip to "not found".
+  const [lastOpen, setLastOpen] = useState<Claim | null>(null);
+  const found = claims.find((c) => c.id === openId) ?? null;
+  if (found && found !== lastOpen) setLastOpen(found);
+  const open = found ?? (lastOpen?.id === openId ? lastOpen : null);
   const backHref = (() => {
     const params = new URLSearchParams(searchParams.toString());
     params.delete("claim");

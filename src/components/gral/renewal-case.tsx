@@ -94,10 +94,15 @@ export function RenewalCasePanel({
             {renewal.id} · {renewal.policyId} · {renewal.classOfInsurance} · {renewal.insurer}
           </p>
           <p className="mt-2 text-xs text-muted-foreground">
-            {formatRwf(renewal.premium)} · Expires {formatDate(renewal.expiryDate)} ·{" "}
-            <span className={cn(days < 0 && "font-medium text-danger")}>
-              {days < 0 ? `expired ${Math.abs(days)} days ago` : `${days} days to go`}
-            </span>
+            {formatRwf(renewal.premium)} · Expires {formatDate(renewal.expiryDate)}
+            {currentMilestone(renewal) ? (
+              <>
+                {" · "}
+                <span className={cn(days < 0 && "font-medium text-danger")}>
+                  {days < 0 ? `expired ${Math.abs(days)} days ago` : `${days} days to go`}
+                </span>
+              </>
+            ) : null}
           </p>
           <div className="mt-4">
             <Person name={renewal.owner} />

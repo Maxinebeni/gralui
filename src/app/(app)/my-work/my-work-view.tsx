@@ -17,6 +17,7 @@ import {
   createTask,
   reassignTask,
   type NewTaskInput,
+  CAN_CREATE_TASKS,
 } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { addWorkingDays, workingDaysBetween } from "@/lib/claims";
@@ -141,9 +142,11 @@ export function MyWorkView() {
         title="My work"
         subtitle={`${mine.length} open ${mine.length === 1 ? "task" : "tasks"} for ${user.name}`}
         action={
-          <NavyButton className="px-4 py-2 text-sm" onClick={() => setNewOpen(true)}>
-            <Plus className="size-4" /> New task
-          </NavyButton>
+          CAN_CREATE_TASKS ? (
+            <NavyButton className="px-4 py-2 text-sm" onClick={() => setNewOpen(true)}>
+              <Plus className="size-4" /> New task
+            </NavyButton>
+          ) : undefined
         }
       />
 
