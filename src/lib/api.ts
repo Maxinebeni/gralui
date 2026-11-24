@@ -717,13 +717,14 @@ function sameText(a: string, b: string): boolean {
 /** What the Add Policy and Edit Policy forms send. */
 export type PolicyInput = Policy;
 
-type InsurerView = { id: string; code: string; name: string; typeCode: string; active: boolean };
+type InsurerView = { id: string; code: string; name: string; typeCode: string; active: boolean; version: number };
 type ProductView = {
   id: string;
   code: string;
   name: string;
   termCode: string;
   active: boolean;
+  version: number;
   productLineCodes?: string[];
 };
 type CategoryView = { id: string; code: string; name: string; termCode: string; active: boolean };
@@ -3365,8 +3366,8 @@ export async function insurersForProduct(productId: string): Promise<string[] | 
 }
 
 export type InsurerProductCatalog = {
-  insurers: { id: string; name: string; typeCode: string; supportedTermCodes: string[] }[];
-  products: { id: string; name: string; termCode: string }[];
+  insurers: { id: string; name: string; typeCode: string; version: number; supportedTermCodes: string[] }[];
+  products: { id: string; name: string; termCode: string; version: number }[];
   insurerTypes: { code: string; name: string; termCodes: string[] }[];
   productTerms: { code: string; name: string }[];
   productLines: { code: string; name: string; termCode: string }[];
@@ -3409,9 +3410,10 @@ export async function getInsurerProductCatalog(): Promise<InsurerProductCatalog>
       id: insurer.id,
       name: insurer.name,
       typeCode: insurer.typeCode,
+      version: insurer.version,
       supportedTermCodes: catalog.insurerTypes.find((type) => type.code === insurer.typeCode)?.termCodes ?? [],
     })),
-    products: activeProducts.map((product) => ({ id: product.id, name: product.name, termCode: product.termCode })),
+    products: activeProducts.map((product) => ({ id: product.id, name: product.name, termCode: product.termCode, version: product.version })),
     insurerTypes: catalog.insurerTypes.filter((type) => type.active).map((type) => ({ code: type.code, name: type.name, termCodes: type.termCodes ?? [] })),
     productTerms: catalog.terms.filter((term) => term.active).map((term) => ({ code: term.code, name: term.name })),
     productLines: catalog.lines.filter((line) => line.active).map((line) => ({ code: line.code, name: line.name, termCode: line.termCode })),
@@ -3439,11 +3441,37 @@ export async function addInsurer(input: { code: string; name: string; typeCode: 
   INSURER_PRODUCT_IDS.clear();
 }
 
+/** Rename a catalog insurer using optimistic versioning and an audit reason. */
+export async function renameInsurer(insurerId: string, input: { expectedVersion: number; name: string; reason: string }): Promise<void> {
+  if (!input.name.trim()) throw new Error("Enter an insurer name.");
+  if (!input.reason.trim()) throw new Error("Give a reason for renaming this insurer.");
+  const res = await apiFetch(`/api/v1/policy/catalog/insurers/${insurerId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ ...input, name: input.name.trim(), reason: input.reason.trim() }),
+  });
+  if (!res.ok) throw new Error(await catalogApiProblem(res, "Could not rename the insurer."));
+  CATALOG = null;
+  INSURER_PRODUCT_IDS.clear();
+}
+
 export async function addCatalogProduct(input: { code: string; name: string; notes?: string; termCode: string; productLineCodes: string[]; reason: string }): Promise<void> {
   if (!input.reason.trim()) throw new Error("Give a reason for adding this product.");
   if (!input.productLineCodes.length) throw new Error("Choose at least one product line.");
   const res = await apiFetch("/api/v1/policy/catalog/products", { method: "POST", body: JSON.stringify({ ...input, notes: input.notes?.trim() || undefined, reason: input.reason.trim() }) });
   if (!res.ok) throw new Error(await catalogApiProblem(res, "Could not add the product."));
+  CATALOG = null;
+  INSURER_PRODUCT_IDS.clear();
+}
+
+/** Rename a catalog product using optimistic versioning and an audit reason. */
+export async function renameCatalogProduct(productId: string, input: { expectedVersion: number; name: string; reason: string }): Promise<void> {
+  if (!input.name.trim()) throw new Error("Enter a product name.");
+  if (!input.reason.trim()) throw new Error("Give a reason for renaming this product.");
+  const res = await apiFetch(`/api/v1/policy/catalog/products/${productId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ ...input, name: input.name.trim(), reason: input.reason.trim() }),
+  });
+  if (!res.ok) throw new Error(await catalogApiProblem(res, "Could not rename the product."));
   CATALOG = null;
   INSURER_PRODUCT_IDS.clear();
 }
