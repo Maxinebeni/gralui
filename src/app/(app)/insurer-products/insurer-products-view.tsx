@@ -4,18 +4,23 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActionForm, Label, SelectInput, TextInput } from "@/components/gral/onboarding-ui";
 import { PageHeader } from "@/components/gral/shell";
 import { FloatCard, Loader, OutlineButton } from "@/components/gral/ui";
-import { addCatalogProduct, addInsurer, getInsurerProductCatalog, linkProductToInsurer, reloadInsurerProductLinks, unlinkProductFromInsurer, type InsurerProductCatalog } from "@/lib/api";
+import { addCatalogProduct, addInsurer, getInsurerProductCatalog, linkProductToInsurer, reloadInsurerProductLinks, renameCatalogProduct, renameInsurer, unlinkProductFromInsurer, type InsurerProductCatalog } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { hasPermission, usesBackendPermissions } from "@/lib/permissions";
 
 export function InsurerProductsView() {
   const [catalog, setCatalog] = useState<InsurerProductCatalog | null>(null);
+  const [section, setSection] = useState<"insurers" | "products">("insurers");
   const [selectedInsurerId, setSelectedInsurerId] = useState("");
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState("");
   const [linkReason, setLinkReason] = useState("");
   const [unlinkingProductId, setUnlinkingProductId] = useState("");
   const [unlinkReason, setUnlinkReason] = useState("");
+  const [renamingInsurerId, setRenamingInsurerId] = useState("");
+  const [renamingProductId, setRenamingProductId] = useState("");
+  const [renameName, setRenameName] = useState("");
+  const [renameReason, setRenameReason] = useState("");
   const [showAddInsurer, setShowAddInsurer] = useState(false);
   const [showAddProduct, setShowAddProduct] = useState(false);
   const [insurerCode, setInsurerCode] = useState("");
@@ -33,6 +38,8 @@ export function InsurerProductsView() {
   const [retryingInsurerIds, setRetryingInsurerIds] = useState<Set<string>>(() => new Set());
   const { user } = useCurrentUser();
   const canAddProduct = usesBackendPermissions(user) ? hasPermission(user, "PRODUCT_REFERENCE_UPDATE") : user.role === "GI Underwriting Manager";
+  const canRenameInsurer = usesBackendPermissions(user) ? hasPermission(user, "INSURER_REFERENCE_UPDATE") : user.role === "GI Underwriting Manager";
+  const canRenameProduct = usesBackendPermissions(user) ? hasPermission(user, "PRODUCT_REFERENCE_UPDATE") : user.role === "GI Underwriting Manager";
 
   const load = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -94,6 +101,11 @@ export function InsurerProductsView() {
         <FloatCard className="mt-5 p-5"><p className="text-sm text-muted-foreground"><Loader label="Loading insurer product catalog" /></p></FloatCard>
       ) : (
         <div className="mt-5 space-y-3 sm:space-y-4">
+          <div role="tablist" aria-label="Catalog management" className="inline-flex rounded-full bg-muted p-1">
+            <button type="button" role="tab" aria-selected={section === "insurers"} onClick={() => setSection("insurers")} className={`rounded-full px-4 py-2 text-sm ${section === "insurers" ? "bg-background font-medium text-primary" : "text-muted-foreground"}`}>Insurers</button>
+            <button type="button" role="tab" aria-selected={section === "products"} onClick={() => setSection("products")} className={`rounded-full px-4 py-2 text-sm ${section === "products" ? "bg-background font-medium text-primary" : "text-muted-foreground"}`}>Products</button>
+          </div>
+          {section === "insurers" ? <>
           <FloatCard className="p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -141,7 +153,12 @@ export function InsurerProductsView() {
                     const productsError = catalog.linkedProductErrors[insurer.id];
                     return (
                       <tr key={insurer.id} className={selectedInsurerId === insurer.id ? "bg-muted/30" : ""}>
-                        <td className="border-b border-border px-3 py-3 text-sm font-medium">{insurer.name}</td>
+                        <td className="border-b border-border px-3 py-3 text-sm font-medium">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span>{insurer.name}</span>
+                            {canRenameInsurer ? <OutlineButton onClick={() => { setRenamingInsurerId(insurer.id); setRenameName(insurer.name); setRenameReason(""); }} className="px-2.5 py-1 text-xs">Rename</OutlineButton> : null}
+                          </div>
+                        </td>
                         <td data-label="Type" className="border-b border-border px-3 py-3 text-sm text-muted-foreground">{insurerType?.name ?? insurer.typeCode}</td>
                         <td data-label="Products" className="border-b border-border px-3 py-3 text-sm text-muted-foreground">
                           {productsError ? (
@@ -155,7 +172,7 @@ export function InsurerProductsView() {
                         </td>
                         <td className="border-b border-border px-3 py-3">
                           <OutlineButton onClick={() => { setSelectedInsurerId(insurer.id); setUnlinkingProductId(""); setSelectedProductId(""); setIsDetailsOpen(true); }} className="px-3 py-1.5 text-xs">
-                            View products
+                            Manage products
                           </OutlineButton>
                         </td>
                       </tr>
@@ -166,22 +183,141 @@ export function InsurerProductsView() {
               </table>
             </div>
           </FloatCard>
+          </> : <FloatCard className="p-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold tracking-tight">Product catalog</h2>
+                <p className="mt-1 text-xs text-muted-foreground">Add or rename products here. Link and remove products from an insurer in the Insurers section.</p>
+              </div>
+              {canAddProduct ? <OutlineButton onClick={() => setShowAddProduct((current) => !current)} className="px-3 py-2 text-xs">{showAddProduct ? "Close form" : "Add product"}</OutlineButton> : null}
+            </div>
+            {showAddProduct && canAddProduct ? <div className="mt-4 max-w-3xl">
+              <ActionForm
+                title="Add a product to the catalog"
+                submitLabel="Create product"
+                success="Product added to catalog. Link it to insurers from the Insurers section."
+                onCancel={() => setShowAddProduct(false)}
+                onSubmit={async () => {
+                  await addCatalogProduct({ code: productCode, name: productName, notes: productNotes, termCode: productTermCode, productLineCodes, reason: productReason });
+                  setProductCode(""); setProductName(""); setProductNotes(""); setProductLineCodes([]); setProductReason(""); setShowAddProduct(false);
+                  await load(false);
+                }}
+              >
+                <TextInput id="product-code" label="Product code" value={productCode} onChange={setProductCode} placeholder="e.g. MOTOR_FLEET" />
+                <TextInput id="product-name" label="Product name" value={productName} onChange={setProductName} />
+                <SelectInput id="product-term" label="Product term" value={productTermCode} onChange={(value) => { setProductTermCode(value); setProductLineCodes([]); }} options={catalog.productTerms.map((term) => ({ value: term.code, label: term.name }))} wide />
+                <TextInput id="product-notes" label="Notes (optional)" value={productNotes} onChange={setProductNotes} multiline wide />
+                <div className="space-y-2 sm:col-span-2">
+                  <Label>Product lines</Label>
+                  {availableProductLines.length ? availableProductLines.map((line) => (
+                    <label key={line.code} className="flex items-center gap-2 text-xs">
+                      <input type="checkbox" checked={productLineCodes.includes(line.code)} onChange={(event) => setProductLineCodes((current) => event.target.checked ? [...current, line.code] : current.filter((code) => code !== line.code))} />
+                      {line.name}
+                    </label>
+                  )) : <p className="text-xs text-muted-foreground">No active product lines exist for this term.</p>}
+                </div>
+                <TextInput id="product-reason" label="Reason for adding the product" value={productReason} onChange={setProductReason} multiline wide />
+              </ActionForm>
+            </div> : null}
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[620px] border-separate border-spacing-0 text-left">
+                <thead><tr className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                  <th className="border-b border-border px-3 py-2 font-medium">Product</th>
+                  <th className="border-b border-border px-3 py-2 font-medium">Insurance term</th>
+                  <th className="border-b border-border px-3 py-2 font-medium">Offered by</th>
+                  <th className="border-b border-border px-3 py-2 font-medium">Action</th>
+                </tr></thead>
+                <tbody>
+                  {catalog.products.map((product) => {
+                    const linkedInsurers = catalog.insurers.filter((insurer) => catalog.linkedProductIds[insurer.id]?.includes(product.id));
+                    const hasUnknownLinks = catalog.insurers.some((insurer) => Boolean(catalog.linkedProductErrors[insurer.id]));
+                    return <tr key={product.id}>
+                      <td className="border-b border-border px-3 py-3 text-sm font-medium">{product.name}</td>
+                      <td className="border-b border-border px-3 py-3 text-sm text-muted-foreground">{catalog.productTerms.find((term) => term.code === product.termCode)?.name ?? product.termCode}</td>
+                      <td className="border-b border-border px-3 py-3 text-sm text-muted-foreground">{linkedInsurers.length ? linkedInsurers.map((insurer) => insurer.name).join(", ") : hasUnknownLinks ? "Some insurer links unavailable" : "Not linked"}</td>
+                      <td className="border-b border-border px-3 py-3">{canRenameProduct ? <OutlineButton onClick={() => { setRenamingProductId(product.id); setRenameName(product.name); setRenameReason(""); }} className="px-3 py-1.5 text-xs">Rename</OutlineButton> : <span className="text-xs text-muted-foreground">—</span>}</td>
+                    </tr>;
+                  })}
+                  {!catalog.products.length ? <tr><td colSpan={4} className="px-3 py-8 text-center text-sm text-muted-foreground">No active products found. Add a product to get started.</td></tr> : null}
+                </tbody>
+              </table>
+            </div>
+          </FloatCard>}
+
+          {renamingInsurerId ? (() => {
+            const insurer = catalog.insurers.find((item) => item.id === renamingInsurerId);
+            if (!insurer) return null;
+            return (
+              <div className="fixed inset-0 z-[70] flex items-end justify-center bg-foreground/40 p-0 sm:items-center sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setRenamingInsurerId(""); }}>
+                <div role="dialog" aria-modal="true" aria-labelledby="rename-insurer-title" className="max-h-[92dvh] w-full max-w-xl overflow-y-auto rounded-t-2xl bg-background p-4 shadow-2xl sm:rounded-2xl sm:p-6">
+                  <div className="mb-4 flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Insurer catalog</p>
+                      <h2 id="rename-insurer-title" className="mt-1 text-lg font-semibold">Rename insurer</h2>
+                    </div>
+                    <OutlineButton onClick={() => setRenamingInsurerId("")} className="px-3 py-1.5 text-xs">Close</OutlineButton>
+                  </div>
+                  <ActionForm
+                    submitLabel="Save insurer name"
+                    success="Insurer name updated."
+                    onCancel={() => setRenamingInsurerId("")}
+                    onSubmit={async () => {
+                      await renameInsurer(insurer.id, { expectedVersion: insurer.version, name: renameName, reason: renameReason });
+                      setRenamingInsurerId(""); setRenameName(""); setRenameReason("");
+                      await load(false);
+                    }}
+                  >
+                    <TextInput id="rename-insurer-name" label="Insurer name" value={renameName} onChange={setRenameName} wide />
+                    <TextInput id="rename-insurer-reason" label="Reason for renaming" value={renameReason} onChange={setRenameReason} multiline wide />
+                  </ActionForm>
+                </div>
+              </div>
+            );
+          })() : null}
 
           {selectedInsurer && isDetailsOpen ? (
             <div className="fixed inset-0 z-[60] flex items-end justify-center bg-foreground/40 p-0 sm:items-center sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setIsDetailsOpen(false); }}>
             <div role="dialog" aria-modal="true" aria-labelledby="insurer-details-title" className="max-h-[92dvh] w-full max-w-4xl overflow-y-auto rounded-t-2xl bg-background p-4 shadow-2xl sm:rounded-2xl sm:p-6">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Insurer details</p>
-                  <h2 id="insurer-details-title" className="mt-1 text-lg font-semibold">{selectedInsurer.name}</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">{catalog.insurerTypes.find((type) => type.code === selectedInsurer.typeCode)?.name ?? selectedInsurer.typeCode}</p>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Insurer product setup</p>
+                  <h2 id="insurer-details-title" className="mt-1 text-lg font-semibold">Manage products · {selectedInsurer.name}</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">Link compatible products to this insurer or remove products it no longer offers.</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">{selectedInsurerError ? "Products unavailable" : `${linkedProducts.length} linked ${linkedProducts.length === 1 ? "product" : "products"}`}</span>
                   <OutlineButton onClick={() => setIsDetailsOpen(false)} className="px-3 py-1.5 text-xs">Close</OutlineButton>
                 </div>
               </div>
-              <div className="mt-4 divide-y divide-border rounded-xl border border-border">
+              <div className="mt-5 rounded-xl bg-muted/40 p-4">
+                <h3 className="text-sm font-semibold">Add a product</h3>
+                <p className="mt-1 text-xs text-muted-foreground">Only products compatible with this insurer’s insurance type are listed.</p>
+                {selectedInsurerError ? (
+                  <p className="mt-3 text-xs text-muted-foreground">Retry loading this insurer’s products before changing its product links.</p>
+                ) : availableProducts.length ? <ActionForm
+                  submitLabel="Link product"
+                  success="Product linked to insurer."
+                  onSubmit={async () => {
+                    if (!selectedProductId) throw new Error("Choose a product.");
+                    await linkProductToInsurer(selectedInsurer.id, selectedProductId, linkReason);
+                    setSelectedProductId(""); setLinkReason("");
+                    await load(false);
+                  }}
+                >
+                  <SelectInput id="catalog-product" label="Compatible product" value={selectedProductId} onChange={setSelectedProductId} placeholder="Choose a product to link" options={availableProducts.map((product) => ({ value: product.id, label: product.name }))} wide />
+                  <TextInput id="catalog-reason" label="Reason for linking" value={linkReason} onChange={setLinkReason} multiline wide />
+                </ActionForm> : <div className="mt-3 rounded-lg border border-border bg-background p-3">
+                  <p className="text-sm">No compatible unlinked products are available.</p>
+                  {canAddProduct ? <button type="button" onClick={() => { setIsDetailsOpen(false); setSection("products"); setShowAddProduct(true); }} className="mt-2 text-xs font-medium text-primary underline underline-offset-2">Create a product in the catalog</button> : null}
+                </div>}
+              </div>
+
+              <section aria-label="Products linked to insurer" className="mt-5">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold">Linked products</h3>
+                  {!selectedInsurerError ? <span className="text-xs text-muted-foreground">{linkedProducts.length} linked</span> : null}
+                </div>
+              <div className="divide-y divide-border rounded-xl border border-border">
                 {selectedInsurerError ? (
                   <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-4">
                     <p role="alert" className="text-sm text-danger">{selectedInsurerError}</p>
@@ -195,10 +331,17 @@ export function InsurerProductsView() {
                       <p className="text-sm font-medium">{product.name}</p>
                       <p className="mt-0.5 text-xs text-muted-foreground">{catalog.productTerms.find((term) => term.code === product.termCode)?.name ?? product.termCode}</p>
                     </div>
-                    <OutlineButton onClick={() => { setUnlinkingProductId(product.id); setUnlinkReason(""); }} className="px-3 py-1.5 text-xs">Remove product</OutlineButton>
+                    <div className="flex flex-wrap gap-2">
+                      {canRenameProduct ? <OutlineButton onClick={() => { setRenamingProductId(product.id); setRenameName(product.name); setRenameReason(""); }} className="px-3 py-1.5 text-xs">Rename</OutlineButton> : null}
+                      <OutlineButton onClick={() => { setUnlinkingProductId(product.id); setUnlinkReason(""); }} className="px-3 py-1.5 text-xs">Remove product</OutlineButton>
+                    </div>
                   </div>
-                )) : <p className="px-4 py-6 text-sm text-muted-foreground">No products are linked to this insurer yet.</p>}
+                )) : <div className="px-4 py-6">
+                  <p className="text-sm font-medium">No products linked yet</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Use the form below to add a compatible product.</p>
+                </div>}
               </div>
+              </section>
 
               {unlinkingProductId && !selectedInsurerError ? (
                 <div className="mt-3 max-w-3xl">
@@ -218,70 +361,36 @@ export function InsurerProductsView() {
                 </div>
               ) : null}
 
-              <div className="mt-5 grid gap-3 sm:gap-4 xl:grid-cols-2">
-                <div>
-                  <h3 className="text-sm font-semibold">Add an existing product</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">Only products supported by this insurer’s insurance type are available.</p>
-                  {selectedInsurerError ? (
-                    <p className="mt-3 text-xs text-muted-foreground">Retry loading this insurer’s products before changing its product links.</p>
-                  ) : <ActionForm
-                    submitLabel="Link product"
-                    success="Product linked to insurer."
-                    onSubmit={async () => {
-                      if (!selectedProductId) throw new Error("Choose a product.");
-                      await linkProductToInsurer(selectedInsurer.id, selectedProductId, linkReason);
-                      setSelectedProductId(""); setLinkReason("");
-                      await load(false);
-                    }}
-                  >
-                    <SelectInput id="catalog-product" label="Product" value={selectedProductId} onChange={setSelectedProductId} placeholder="Select a compatible product" options={availableProducts.map((product) => ({ value: product.id, label: product.name }))} wide />
-                    {!availableProducts.length ? <p className="text-xs text-muted-foreground sm:col-span-2">No compatible unlinked products are available.</p> : null}
-                    <TextInput id="catalog-reason" label="Reason for linking" value={linkReason} onChange={setLinkReason} multiline wide />
-                  </ActionForm>}
-                </div>
-                {canAddProduct ? (
-                  <div>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <h3 className="text-sm font-semibold">Create a new product</h3>
-                        <p className="mt-1 text-xs text-muted-foreground">Create it in the catalog, then link it to this insurer.</p>
-                      </div>
-                      <OutlineButton onClick={() => setShowAddProduct((current) => !current)} className="px-3 py-1.5 text-xs">{showAddProduct ? "Hide" : "Add product"}</OutlineButton>
-                    </div>
-                    {showAddProduct ? (
-                      <div className="mt-3">
-                        <ActionForm
-                          submitLabel="Create product"
-                          success="Product added to catalog. You can now link it to this insurer."
-                          onSubmit={async () => {
-                            await addCatalogProduct({ code: productCode, name: productName, notes: productNotes, termCode: productTermCode, productLineCodes, reason: productReason });
-                            setProductCode(""); setProductName(""); setProductNotes(""); setProductLineCodes([]); setProductReason("");
-                            await load(false);
-                          }}
-                        >
-                          <TextInput id="product-code" label="Product code" value={productCode} onChange={setProductCode} placeholder="e.g. MOTOR_FLEET" />
-                          <TextInput id="product-name" label="Product name" value={productName} onChange={setProductName} />
-                          <SelectInput id="product-term" label="Product term" value={productTermCode} onChange={(value) => { setProductTermCode(value); setProductLineCodes([]); }} options={catalog.productTerms.map((term) => ({ value: term.code, label: term.name }))} wide />
-                          <TextInput id="product-notes" label="Notes (optional)" value={productNotes} onChange={setProductNotes} multiline wide />
-                          <div className="space-y-2 sm:col-span-2">
-                            <Label>Product lines</Label>
-                            {availableProductLines.length ? availableProductLines.map((line) => (
-                              <label key={line.code} className="flex items-center gap-2 text-xs">
-                                <input type="checkbox" checked={productLineCodes.includes(line.code)} onChange={(event) => setProductLineCodes((current) => event.target.checked ? [...current, line.code] : current.filter((code) => code !== line.code))} />
-                                {line.name}
-                              </label>
-                            )) : <p className="text-xs text-muted-foreground">No active product lines exist for this term.</p>}
-                          </div>
-                          <TextInput id="product-reason" label="Reason for adding the product" value={productReason} onChange={setProductReason} multiline wide />
-                        </ActionForm>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
             </div>
             </div>
           ) : null}
+          {renamingProductId ? (() => {
+            const product = catalog.products.find((item) => item.id === renamingProductId);
+            if (!product) return null;
+            return (
+              <div className="fixed inset-0 z-[70] flex items-end justify-center bg-foreground/40 p-0 sm:items-center sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setRenamingProductId(""); }}>
+                <div role="dialog" aria-modal="true" aria-labelledby="rename-product-title" className="max-h-[92dvh] w-full max-w-xl overflow-y-auto rounded-t-2xl bg-background p-4 shadow-2xl sm:rounded-2xl sm:p-6">
+                  <div className="mb-4 flex items-start justify-between gap-3">
+                    <div><p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Product catalog</p><h2 id="rename-product-title" className="mt-1 text-lg font-semibold">Rename product</h2></div>
+                    <OutlineButton onClick={() => setRenamingProductId("")} className="px-3 py-1.5 text-xs">Close</OutlineButton>
+                  </div>
+                  <ActionForm
+                    submitLabel="Save product name"
+                    success="Product name updated."
+                    onCancel={() => setRenamingProductId("")}
+                    onSubmit={async () => {
+                      await renameCatalogProduct(product.id, { expectedVersion: product.version, name: renameName, reason: renameReason });
+                      setRenamingProductId(""); setRenameName(""); setRenameReason("");
+                      await load(false);
+                    }}
+                  >
+                    <TextInput id="rename-product-name" label="Product name" value={renameName} onChange={setRenameName} wide />
+                    <TextInput id="rename-product-reason" label="Reason for renaming" value={renameReason} onChange={setRenameReason} multiline wide />
+                  </ActionForm>
+                </div>
+              </div>
+            );
+          })() : null}
         </div>
       )}
     </>
