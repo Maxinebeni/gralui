@@ -13,6 +13,7 @@ import { CardHeader, Chip, FloatCard, NavyButton, OutlineButton, SegmentedTabs, 
 import { usePaged } from "@/components/gral/pager";
 import { cn } from "@/lib/utils";
 import {
+  MOCK_AUTH,
   completeTask,
   createTask,
   reassignTask,
@@ -141,9 +142,15 @@ export function MyWorkView() {
         title="My work"
         subtitle={`${mine.length} open ${mine.length === 1 ? "task" : "tasks"} for ${user.name}`}
         action={
-          <NavyButton className="px-4 py-2 text-sm" onClick={() => setNewOpen(true)}>
-            <Plus className="size-4" /> New task
-          </NavyButton>
+          // The backend has no endpoint for manual tasks yet, so they can only be
+          // added in demo mode; elsewhere they would vanish on refresh.
+          MOCK_AUTH ? (
+            <NavyButton className="px-4 py-2 text-sm" onClick={() => setNewOpen(true)}>
+              <Plus className="size-4" /> New task
+            </NavyButton>
+          ) : (
+            <span className="text-xs text-muted-foreground">Adding your own tasks is not connected to the backend yet.</span>
+          )
         }
       />
 

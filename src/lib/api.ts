@@ -91,8 +91,9 @@ import {
 import { RWANDA_HOLIDAYS, type Holiday } from "./holidays";
 import { recordHref } from "./links";
 import { demoCanRunTrackAction } from "./permissions";
+import { oneReportAtATime, retryDelayMs, wait } from "./report-queue";
 import { INSURER_GROUPS, PRODUCT_GROUPS, type OptionGroup } from "./reference-data";
-import { RENEWAL_MILESTONES, completionBlocker, currentMilestone, formatDate, milestoneDue, todayIso } from "./renewals";
+import { RENEWAL_MILESTONES, completionBlocker, currentMilestone, milestoneDue, todayIso } from "./renewals";
 import type {
   RenewalMilestoneCode,
   AccessCategory,
@@ -227,6 +228,11 @@ let MANAGERS: ManagerChoice[] | null = null;
 
 async function loadManagers(): Promise<ManagerChoice[]> {
   if (MANAGERS) return MANAGERS;
+  // Others would get a 403 from the backend, so do not ask.
+  if (CURRENT_USER && !canListManagers()) {
+    MANAGERS = [];
+    return MANAGERS;
+  }
   try {
     const res = await apiFetch("/api/v1/clients/managers?size=100");
     // Not allowed to list managers (403), or this account cannot use the list at
@@ -241,9 +247,81 @@ async function loadManagers(): Promise<ManagerChoice[]> {
   }
 }
 
+/** Shown when a client has a manager whose name this user is not allowed to see. */
+export const MANAGER_NAME_HIDDEN = "Assigned";
+
 function managerName(id: string | undefined, managers: ManagerChoice[]): string {
   if (!id) return "Unassigned";
-  return managers.find((m) => m.id === id)?.fullName ?? "Account manager";
+  if (CURRENT_USER?.id === id) return CURRENT_USER.name;
+  return managers.find((m) => m.id === id)?.fullName ?? MANAGER_NAME_HIDDEN;
+}
+
+/* ------------------------- Active policies per client ------------------------- */
+// Counted from the backend's "active policies" list (one request, cached for a
+// minute), so the client list matches the Overview. Null when this user cannot
+// read that list: the count then comes from policies loaded in this tab.
+
+type ActivePolicyItem = { clientId?: string | null };
+type ActivePolicyPage = { items?: ActivePolicyItem[]; hasMore?: boolean; nextCursor?: string | null };
+let ACTIVE_POLICY_COUNTS: { at: number; counts: Map<string, number> | null } | null = null;
+let ACTIVE_POLICY_REQUEST: Promise<Map<string, number> | null> | null = null;
+const ACTIVE_POLICY_TTL_MS = 60_000;
+
+/** Thrown when the backend is busy (429/503 twice): try again on the next load, do not remember it. */
+class ReportBusyError extends Error {}
+
+/** One page of the list. Shares the dashboard's report queue and retries once when the backend is busy. */
+function activePolicyPage(path: string): Promise<ActivePolicyPage | null> {
+  return oneReportAtATime(async () => {
+    for (let attempt = 0; ; attempt++) {
+      const res = await apiFetch(path);
+      if (res.ok) return (await res.json()) as ActivePolicyPage;
+      if (res.status === 429 || res.status === 503) {
+        if (attempt === 0) {
+          await wait(retryDelayMs(res));
+          continue;
+        }
+        throw new ReportBusyError();
+      }
+      return null; // 403 and the like: this user cannot read the list.
+    }
+  });
+}
+
+async function loadActivePolicyCounts(): Promise<Map<string, number> | null> {
+  if (ACTIVE_POLICY_COUNTS && Date.now() - ACTIVE_POLICY_COUNTS.at < ACTIVE_POLICY_TTL_MS) return ACTIVE_POLICY_COUNTS.counts;
+  if (ACTIVE_POLICY_REQUEST) return ACTIVE_POLICY_REQUEST;
+  ACTIVE_POLICY_REQUEST = (async () => {
+    const counts = new Map<string, number>();
+    try {
+      let cursor: string | null | undefined = null;
+      for (let page = 0; page < 50; page++) {
+        const params = new URLSearchParams({ size: "100" });
+        if (cursor) params.set("cursor", cursor);
+        const body = await activePolicyPage(`/api/v1/reports/operations-dashboard/lists/ACTIVE_POLICIES?${params}`);
+        if (!body) {
+          // Not allowed: remember that for a minute instead of asking again.
+          ACTIVE_POLICY_COUNTS = { at: Date.now(), counts: null };
+          return null;
+        }
+        for (const item of body.items ?? []) {
+          if (item.clientId) counts.set(item.clientId, (counts.get(item.clientId) ?? 0) + 1);
+        }
+        if (!body.hasMore || !body.nextCursor) break;
+        cursor = body.nextCursor;
+      }
+    } catch (err) {
+      // Busy or offline: keep the last good counts (even if older than a minute)
+      // rather than showing "0 active policies", and try again next time.
+      if (!(err instanceof ReportBusyError)) console.warn("Could not load active policy counts:", err);
+      return ACTIVE_POLICY_COUNTS?.counts ?? null;
+    }
+    ACTIVE_POLICY_COUNTS = { at: Date.now(), counts };
+    return counts;
+  })().finally(() => {
+    ACTIVE_POLICY_REQUEST = null;
+  });
+  return ACTIVE_POLICY_REQUEST;
 }
 
 /** Turns a backend error into a message the user can act on. */
@@ -276,7 +354,10 @@ function toBackendPhone(phone: string): string {
 
 function toClient(v: ClientView, managers: ManagerChoice[]): Client {
   const policies = LOCAL_POLICIES.get(v.reference) ?? [];
-  const active = policies.filter((p) => p.status === "Active" || p.status === "In renewal").length;
+  const backendActive = ACTIVE_POLICY_COUNTS?.counts?.get(v.id);
+  const active =
+    backendActive ??
+    (ACTIVE_POLICY_COUNTS?.counts ? 0 : policies.filter((p) => p.status === "Active" || p.status === "In renewal").length);
   const client: Client = {
     id: v.reference,
     uuid: v.id,
@@ -298,7 +379,6 @@ function toClient(v: ClientView, managers: ManagerChoice[]): Client {
         }
       : undefined,
     manager: managerName(v.managerId, managers),
-    // Not tracked by the backend yet.
     activePolicies: active,
     kyc: false,
     policiesOk: active > 0,
@@ -358,6 +438,21 @@ function clientFromSummary(s: ClientSummary, managers: ManagerChoice[]): Client 
 
 let CLIENT_CHOICES_REQUEST: Promise<Client[]> | null = null;
 
+/** Client list pages already on their way, by URL, so two screens loading at once share one request. */
+const CLIENT_PAGE_REQUESTS = new Map<string, Promise<Page<ClientSummary>>>();
+
+function fetchClientPage(path: string): Promise<Page<ClientSummary>> {
+  const pending = CLIENT_PAGE_REQUESTS.get(path);
+  if (pending) return pending;
+  const request = (async () => {
+    const res = await apiFetch(path);
+    if (!res.ok) throw new Error(await problemMessage(res, "Could not load clients."));
+    return (await res.json()) as Page<ClientSummary>;
+  })().finally(() => CLIENT_PAGE_REQUESTS.delete(path));
+  CLIENT_PAGE_REQUESTS.set(path, request);
+  return request;
+}
+
 /**
  * Clients for pick lists and the claims list: one request, names and IDs only.
  * Much faster than listClients, which also loads every full record.
@@ -368,10 +463,8 @@ export async function listClientChoices(): Promise<Client[]> {
   if (CLIENT_CHOICES_REQUEST) return CLIENT_CHOICES_REQUEST;
   CLIENT_CHOICES_REQUEST = (async () => {
     try {
-      const res = await apiFetch("/api/v1/clients?size=100&sort=name");
-      if (!res.ok) throw new Error(await problemMessage(res, "Could not load clients."));
-      const page = (await res.json()) as Page<ClientSummary>;
-      const managers = await loadManagers();
+      const page = await fetchClientPage("/api/v1/clients?size=100&sort=name");
+      const [managers] = await Promise.all([loadManagers(), loadActivePolicyCounts()]);
       return page.items.map((s) => {
         const cached = CLIENT_CACHE.get(s.reference);
         return cached && cached.uuid === s.id ? cached : clientFromSummary(s, managers);
@@ -406,10 +499,8 @@ export async function listClients(query = ""): Promise<Client[]> {
     try {
       const params = new URLSearchParams({ size: "100", sort: "name" });
       if (key) params.set("q", key);
-      const res = await apiFetch(`/api/v1/clients?${params}`);
-      if (!res.ok) throw new Error(await problemMessage(res, "Could not load clients."));
-      const page = (await res.json()) as Page<ClientSummary>;
-      const managers = await loadManagers();
+      const page = await fetchClientPage(`/api/v1/clients?${params}`);
+      const [managers] = await Promise.all([loadManagers(), loadActivePolicyCounts()]);
 
       // The list only has summaries, so load each full record, 4 at a time.
       // Unchanged ones come from the cache. One that fails is shown from its summary.
@@ -454,7 +545,10 @@ export async function listClients(query = ""): Promise<Client[]> {
 export async function getClient(id: string): Promise<Client | null> {
   if (MOCK_AUTH) return mockGetClient(id);
   const cached = CLIENT_CACHE.get(id);
-  if (cached?.uuid) return toClient(await fetchClientView(cached.uuid), await loadManagers());
+  if (cached?.uuid) {
+    const [view, managers] = await Promise.all([fetchClientView(cached.uuid), loadManagers(), loadActivePolicyCounts()]);
+    return toClient(view, managers);
+  }
   return (await listClients(id)).find((c) => c.id === id) ?? null;
 }
 
@@ -1019,16 +1113,36 @@ export async function listClientPolicies(clientId: string): Promise<Policy[]> {
  * records, so each client's policies are loaded too, 4 clients at a time. A client
  * whose policies cannot be loaded keeps whatever is already known.
  */
+/**
+ * Every client with its policies and KYC status, for Reports. Reports only need
+ * names, policies and KYC, so this starts from the one-request client list
+ * instead of loading each full client record (2 requests per client, not 3).
+ * A single backend report endpoint would remove the per-client requests.
+ */
 export async function listClientsWithPolicies(): Promise<Client[]> {
-  const clients = await listClients("");
-  if (MOCK_AUTH) return clients;
+  if (MOCK_AUTH) return listClients("");
+  const clients = await listClientChoices();
   return mapLimited(clients, 4, async (c) => {
-    try {
-      return { ...c, policies: await listClientPolicies(c.id) };
-    } catch (err) {
-      console.warn(`Could not load the policies of ${c.id}:`, err);
-      return c;
-    }
+    const [policies, kyc] = await Promise.all([
+      listClientPolicies(c.id).catch((err) => {
+        console.warn(`Could not load the policies of ${c.id}:`, err);
+        return c.policies;
+      }),
+      c.uuid
+        ? kycSummary(c.uuid).catch((err) => {
+            console.warn(`Could not load the KYC summary of ${c.id}:`, err);
+            return null;
+          })
+        : Promise.resolve(null),
+    ]);
+    const kycGateStatus = kyc ? (kyc.gateStatus ?? "NOT_STARTED") : (c.kycGateStatus ?? "UNAVAILABLE");
+    return {
+      ...c,
+      policies,
+      kycStatus: kyc?.status ?? c.kycStatus,
+      kycGateStatus,
+      kyc: kycGateStatus === "READY",
+    };
   });
 }
 
@@ -1141,8 +1255,21 @@ export async function updatePolicy(
 
 /* ---------------------------------- Claims ----------------------------------- */
 
-export async function listClientClaims(clientName: string): Promise<ClientClaim[]> {
-  return CLAIMS.filter((c) => c.client === clientName).map(toClaimSummary);
+/** Claims on one client's file. Connected to the backend, they come from GET /clients/{id}/claims. */
+export async function listClientClaims(client: Pick<Client, "id" | "name" | "uuid">): Promise<ClientClaim[]> {
+  if (MOCK_AUTH || !client.uuid) return CLAIMS.filter((c) => c.client === client.name).map(toClaimSummary);
+  try {
+    const res = await apiFetch(`/api/v1/clients/${client.uuid}/claims?size=100`);
+    if (!res.ok) return [];
+    const views = ((await res.json()) as Page<ClaimView>).items ?? [];
+    const claims = await mapLimited(views, 4, async (v) =>
+      rememberClaim(toClaim(v, client.id, client.name, await loadPeriod(v.policyPeriodId))),
+    );
+    return claims.map(toClaimSummary);
+  } catch (err) {
+    console.warn(`Could not load claims for ${client.id}:`, err);
+    return [];
+  }
 }
 
 export async function getPoliciesByInsurer(): Promise<InsurerSummary[]> {
@@ -1992,6 +2119,7 @@ export async function completeTask(id: string, note: string, by: string): Promis
 export type NewTaskInput = Pick<WorkTask, "title" | "detail" | "resourceType" | "resourceId" | "resourceRef" | "client" | "owner" | "dueDate">;
 
 export async function createTask(input: NewTaskInput, by: string): Promise<WorkTask> {
+  if (!MOCK_AUTH) throw new Error("Adding your own tasks is not connected to the backend yet.");
   if (!input.title.trim()) throw new Error("Say what needs to be done.");
   if (!input.owner) throw new Error("Choose who should do this.");
   if (!input.dueDate) throw new Error("Choose a due date.");
@@ -2022,6 +2150,28 @@ export async function createTask(input: NewTaskInput, by: string): Promise<WorkT
 
 /** The signed-in user, kept so tasks can be matched to them. */
 let CURRENT_USER: SessionUser | null = null;
+
+/** True when the signed-in user has this backend permission code. */
+function hasPermission(code: string): boolean {
+  return CURRENT_USER?.permissions?.includes(code) ?? false;
+}
+
+function hasBackendRole(code: string): boolean {
+  return CURRENT_USER?.backendRoles?.includes(code) ?? false;
+}
+
+/**
+ * Who may list account managers (GET /clients/managers). Mirrors the backend
+ * (ClientApplicationService.managers): Commercial Directors with LEAD_READ, CRM
+ * Managers who create or assign clients, MDs who assign them, and Accounts
+ * Executives who create clients (they see themselves).
+ */
+function canListManagers(): boolean {
+  if (hasBackendRole("COMMERCIAL_DIRECTOR") && hasPermission("LEAD_READ")) return true;
+  if (hasBackendRole("CRM_MANAGER") && (hasPermission("CLIENT_CREATE") || hasPermission("CLIENT_ASSIGN"))) return true;
+  if (hasBackendRole("MD") && hasPermission("CLIENT_ASSIGN")) return true;
+  return hasBackendRole("ACCOUNTS_EXECUTIVE") && hasPermission("CLIENT_CREATE");
+}
 
 type BackendApprovalView = {
   id: string;
@@ -2358,8 +2508,10 @@ async function toBackendTask(v: BackendTaskView): Promise<WorkTask & { version: 
 /** Tasks from the backend: the whole team's for people who may assign work, otherwise the user's own. */
 async function listBackendTasks(): Promise<WorkTask[]> {
   try {
-    let res = await apiFetch("/api/v1/tasks?assignedToMe=false&size=100");
-    if (res.status === 403) res = await apiFetch("/api/v1/tasks?assignedToMe=true&size=100");
+    // The whole team's list needs TASK_ASSIGN; without it, ask for the user's own only.
+    const team = !CURRENT_USER || hasPermission("TASK_ASSIGN");
+    let res = await apiFetch(`/api/v1/tasks?assignedToMe=${team ? "false" : "true"}&size=100`);
+    if (team && res.status === 403) res = await apiFetch("/api/v1/tasks?assignedToMe=true&size=100");
     if (!res.ok) return [];
     const items = ((await res.json()) as Page<BackendTaskView>).items ?? [];
     const tasks = await Promise.all(items.map(toBackendTask));
@@ -4014,7 +4166,6 @@ export async function saveKycTemplate(
   }
   const path = `/api/v1/kyc-templates/${encodeURIComponent(code)}`;
   const body = { expectedVersion, ...input };
-  console.info("[KYC checklist request]", { method: "PUT", url: `${API_URL}${path}`, body });
   return sendOnboarding<KycTemplate>("PUT", path, body, "Could not save the KYC checklist.");
 }
 
@@ -4151,7 +4302,6 @@ export async function decideKycReview(review: KycReview, input: { decision: "APP
   }
   const path = `/api/v1/kyc-cases/${review.id}/decisions`;
   const body = { command: kycCommand(review, attempt), decision: input.decision, reason: input.reason.trim(), documentId: p?.documentId, documentVersion: p?.documentVersion };
-  console.info("[KYC decision request]", { method: "POST", url: `${API_URL}${path}`, body });
   return sendOnboarding<KycReview>("POST", path, body, "Could not record the decision.", attempt);
 }
 
@@ -4612,16 +4762,26 @@ function onboardingTasks(): WorkTask[] {
 
 type BackendCalendar = { today: string; timeZone: string; holidays: { date: string; label: string }[] };
 
+/** The holiday list changes rarely, so it is loaded once per page load and shared. */
+let HOLIDAYS_REQUEST: Promise<Holiday[]> | null = null;
+
 export async function getHolidays(): Promise<Holiday[]> {
   if (MOCK_AUTH) return RWANDA_HOLIDAYS;
-  try {
-    const res = await apiFetch("/api/v1/workflow/calendar");
-    if (!res.ok) return RWANDA_HOLIDAYS;
-    const calendar = (await res.json()) as BackendCalendar;
-    return calendar.holidays?.length ? calendar.holidays : RWANDA_HOLIDAYS;
-  } catch {
-    return RWANDA_HOLIDAYS;
-  }
+  HOLIDAYS_REQUEST ??= (async () => {
+    try {
+      const res = await apiFetch("/api/v1/workflow/calendar");
+      if (!res.ok) {
+        HOLIDAYS_REQUEST = null; // try again next time
+        return RWANDA_HOLIDAYS;
+      }
+      const calendar = (await res.json()) as BackendCalendar;
+      return calendar.holidays?.length ? calendar.holidays : RWANDA_HOLIDAYS;
+    } catch {
+      HOLIDAYS_REQUEST = null;
+      return RWANDA_HOLIDAYS;
+    }
+  })();
+  return HOLIDAYS_REQUEST;
 }
 
 /* --------------------------------- Overview ---------------------------------- */
@@ -5711,6 +5871,8 @@ export async function signOut(): Promise<void> {
   // Forget cached clients and managers so the next user starts fresh.
   CLIENT_CACHE.clear();
   MANAGERS = null;
+  ACTIVE_POLICY_COUNTS = null;
+  CURRENT_USER = null;
   if (MOCK_AUTH) return;
   const res = await apiFetch("/api/v1/auth/logout", { method: "POST" });
   // 401 means the session had already ended, which is fine.

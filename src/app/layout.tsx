@@ -1,14 +1,19 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import localFont from "next/font/local";
 import type { ReactNode } from "react";
 import { AuthProvider } from "@/lib/auth-context";
 import { QueryProvider } from "@/lib/query";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
-const inter = Inter({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+// Inter is served from this app (src/app/fonts), so builds work without
+// internet access and pages make no request to Google. Variable font, Latin
+// subset, from @fontsource-variable/inter 5.3.0 (SIL Open Font License 1.1).
+const inter = localFont({
+  src: "./fonts/inter-latin-variable.woff2",
+  weight: "100 900",
+  style: "normal",
+  display: "swap",
   variable: "--font-inter",
 });
 

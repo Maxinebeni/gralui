@@ -8,6 +8,7 @@
 // is retried once after the time the server asks for.
 
 import { apiFetch, clientTypeLabel } from "./api";
+import { oneReportAtATime, retryDelayMs, wait } from "./report-queue";
 
 /** A count the person may see, or null when their permissions hide it (not zero). */
 type Count = number | null;
@@ -84,25 +85,15 @@ export type DashboardMetric =
 export type DashboardPage = { items: DashboardItem[]; hasMore: boolean; nextCursor?: string | null };
 
 /* ------------------------- One report request at a time ------------------------- */
-
-let queue: Promise<unknown> = Promise.resolve();
-
-function oneAtATime<T>(work: () => Promise<T>): Promise<T> {
-  const next = queue.then(work, work);
-  queue = next.catch(() => undefined);
-  return next;
-}
-
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// The queue is shared with the client list's active-policy counts (api.ts).
 
 async function reportGet<T>(path: string): Promise<T> {
-  return oneAtATime(async () => {
+  return oneReportAtATime(async () => {
     for (let attempt = 0; ; attempt++) {
       const res = await apiFetch(path);
       if (res.ok) return (await res.json()) as T;
       if ((res.status === 429 || res.status === 503) && attempt === 0) {
-        const after = Number(res.headers.get("Retry-After"));
-        await wait((Number.isFinite(after) && after > 0 ? Math.min(after, 10) : 2) * 1000 + Math.random() * 500);
+        await wait(retryDelayMs(res));
         continue;
       }
       if (res.status === 401) throw new Error("Your session has ended. Please sign in again.");

@@ -53,13 +53,14 @@ export function ClientFile({
 
   useEffect(() => {
     let cancelled = false;
-    listClientClaims(client.name).then((c) => {
+    listClientClaims(client).then((c) => {
       if (!cancelled) setClaims(c);
     });
     return () => {
       cancelled = true;
     };
-  }, [client.name]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when the client changes, not on every render
+  }, [client.id, client.name, client.uuid]);
 
   useEffect(() => {
     let cancelled = false;

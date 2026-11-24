@@ -457,6 +457,15 @@ export function QuickActionRow({
   );
 }
 
+/** Shown where a screen still depends on a feature the backend does not offer yet. */
+export function NotConnected({ what }: { what: string }) {
+  return (
+    <div role="status" className="flex h-full min-h-24 items-center justify-center px-4 text-center text-xs text-muted-foreground">
+      {what} is not connected to the backend yet.
+    </div>
+  );
+}
+
 /** Shown wherever a value has not been captured yet, so a gap is never just a blank. */
 export function NotRecorded() {
   return <span className="text-subtle italic">Not recorded</span>;

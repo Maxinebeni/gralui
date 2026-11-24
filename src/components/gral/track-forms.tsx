@@ -421,10 +421,6 @@ function RfqForm({ title, track: t, options, run: execute, destination, onCancel
   useEffect(() => {
     let current = true;
     setProductInsurers(null);
-    console.log("[Send requests for quotations] Product being checked", {
-      productId: t.productId,
-      productName: t.productName,
-    });
     insurersForProduct(t.productId).then((ids) => {
       if (current) setProductInsurers(ids === null ? options.insurers : options.insurers.filter((insurer) => ids.includes(insurer.id)));
     }).catch(() => {

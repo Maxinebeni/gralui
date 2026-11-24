@@ -2,7 +2,6 @@
 
 import { Client, type IMessage } from "@stomp/stompjs";
 import { useEffect, useRef } from "react";
-import { toast } from "sonner";
 import { getNotificationSocketCsrf, type InboxNotification } from "@/lib/api";
 import { MOCK_AUTH } from "@/lib/api";
 

@@ -151,7 +151,7 @@ export function StartTrackForm({ lead, onDone, onCancel }: { lead: Lead; onDone:
       />
       <label className="flex items-center gap-2 self-end pb-2 text-xs">
         <input type="checkbox" checked={property} onChange={(e) => setProperty(e.target.checked)} />
-        Property cover (needs the client's asset list before placement)
+        Property cover (needs the client&apos;s asset list before placement)
       </label>
     </ActionForm>
   );

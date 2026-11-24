@@ -313,7 +313,7 @@ export function NewRoleForm({
             />
           </Field>
           <div className="sm:col-span-2">
-            <p className="text-xs font-medium text-muted-foreground">Type (can't be changed later)</p>
+            <p className="text-xs font-medium text-muted-foreground">Type (can&apos;t be changed later)</p>
             <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
               {(["BUSINESS", "ADMINISTRATION"] as const).map((c) => (
                 <label

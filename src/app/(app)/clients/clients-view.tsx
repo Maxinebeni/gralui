@@ -24,6 +24,7 @@ import {
   ChartCard,
   FloatCard,
   NavyButton,
+  NotConnected,
   OutlineButton,
   QuickAction,
   QuickActionRow,
@@ -31,7 +32,7 @@ import {
   SegmentedTabs,
   StatTile,
 } from "@/components/gral/ui";
-import { getPoliciesByInsurer } from "@/lib/api";
+import { MOCK_AUTH, getPoliciesByInsurer } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import type { ClientFileTab } from "@/components/gral/client-file";
 import type { Client, ClientType, InsurerSummary } from "@/lib/types";
@@ -48,7 +49,8 @@ export function ClientsView() {
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
-    getPoliciesByInsurer().then(setInsurers);
+    // The per-insurer figures are sample data, shown in demo mode only.
+    if (MOCK_AUTH) getPoliciesByInsurer().then(setInsurers);
   }, []);
 
   // The Add Client form loads the manager list from the backend by itself,
@@ -224,6 +226,9 @@ export function ClientsView() {
               { label: "Premium (RWF m)", tone: "sky" },
             ]}
           >
+            {!MOCK_AUTH ? (
+              <NotConnected what="Policies by insurer" />
+            ) : (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={insurers} margin={{ top: 4, right: 8, left: -14, bottom: 0 }}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" vertical={false} />
@@ -234,6 +239,7 @@ export function ClientsView() {
                 <Bar dataKey="premium" name="Premium (RWF m)" fill="var(--sky)" radius={[6, 6, 0, 0]} barSize={14} />
               </BarChart>
             </ResponsiveContainer>
+            )}
           </ChartCard>
         </div>
       </details>
