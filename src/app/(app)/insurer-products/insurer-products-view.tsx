@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActionForm, Label, SelectInput, TextInput } from "@/components/gral/onboarding-ui";
 import { PageHeader } from "@/components/gral/shell";
 import { FloatCard, Loader, OutlineButton } from "@/components/gral/ui";
-import { addCatalogProduct, addInsurer, getInsurerProductCatalog, linkProductToInsurer, unlinkProductFromInsurer, type InsurerProductCatalog } from "@/lib/api";
+import { addCatalogProduct, addInsurer, getInsurerProductCatalog, linkProductToInsurer, reloadInsurerProductLinks, unlinkProductFromInsurer, type InsurerProductCatalog } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { hasPermission, usesBackendPermissions } from "@/lib/permissions";
 
@@ -30,6 +30,7 @@ export function InsurerProductsView() {
   const [productReason, setProductReason] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [retryingInsurerIds, setRetryingInsurerIds] = useState<Set<string>>(() => new Set());
   const { user } = useCurrentUser();
   const canAddProduct = usesBackendPermissions(user) ? hasPermission(user, "PRODUCT_REFERENCE_UPDATE") : user.role === "GI Underwriting Manager";
 
@@ -51,7 +52,29 @@ export function InsurerProductsView() {
 
   useEffect(() => { void load(); }, [load]);
 
+  const retryInsurerProducts = async (insurerId: string, insurerName: string) => {
+    setRetryingInsurerIds((current) => new Set(current).add(insurerId));
+    try {
+      const ids = await reloadInsurerProductLinks(insurerId, insurerName);
+      setCatalog((current) => {
+        if (!current) return current;
+        const linkedProductErrors = Object.fromEntries(Object.entries(current.linkedProductErrors).filter(([id]) => id !== insurerId));
+        return { ...current, linkedProductIds: { ...current.linkedProductIds, [insurerId]: ids }, linkedProductErrors };
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : `Could not load products for ${insurerName}.`;
+      setCatalog((current) => current ? { ...current, linkedProductErrors: { ...current.linkedProductErrors, [insurerId]: message } } : current);
+    } finally {
+      setRetryingInsurerIds((current) => {
+        const next = new Set(current);
+        next.delete(insurerId);
+        return next;
+      });
+    }
+  };
+
   const selectedInsurer = catalog?.insurers.find((insurer) => insurer.id === selectedInsurerId);
+  const selectedInsurerError = selectedInsurer ? catalog?.linkedProductErrors[selectedInsurer.id] : undefined;
   const linkedIds = catalog?.linkedProductIds[selectedInsurerId] ?? [];
   const linkedProducts = catalog?.products.filter((product) => linkedIds.includes(product.id)) ?? [];
   const availableProducts = useMemo(() => catalog?.products.filter((product) =>
@@ -115,12 +138,20 @@ export function InsurerProductsView() {
                   {catalog.insurers.map((insurer) => {
                     const products = catalog.products.filter((product) => catalog.linkedProductIds[insurer.id]?.includes(product.id));
                     const insurerType = catalog.insurerTypes.find((type) => type.code === insurer.typeCode);
+                    const productsError = catalog.linkedProductErrors[insurer.id];
                     return (
                       <tr key={insurer.id} className={selectedInsurerId === insurer.id ? "bg-muted/30" : ""}>
                         <td className="border-b border-border px-3 py-3 text-sm font-medium">{insurer.name}</td>
                         <td data-label="Type" className="border-b border-border px-3 py-3 text-sm text-muted-foreground">{insurerType?.name ?? insurer.typeCode}</td>
                         <td data-label="Products" className="border-b border-border px-3 py-3 text-sm text-muted-foreground">
-                          {products.length ? products.map((product) => product.name).join(", ") : "No products linked"}
+                          {productsError ? (
+                            <div className="flex flex-wrap items-center gap-2" title={productsError}>
+                              <span role="status" className="text-danger">Products unavailable</span>
+                              <OutlineButton disabled={retryingInsurerIds.has(insurer.id)} onClick={() => void retryInsurerProducts(insurer.id, insurer.name)} className="px-2.5 py-1 text-xs">
+                                {retryingInsurerIds.has(insurer.id) ? "Retrying…" : "Retry"}
+                              </OutlineButton>
+                            </div>
+                          ) : products.length ? products.map((product) => product.name).join(", ") : "No products linked"}
                         </td>
                         <td className="border-b border-border px-3 py-3">
                           <OutlineButton onClick={() => { setSelectedInsurerId(insurer.id); setUnlinkingProductId(""); setSelectedProductId(""); setIsDetailsOpen(true); }} className="px-3 py-1.5 text-xs">
@@ -146,12 +177,19 @@ export function InsurerProductsView() {
                   <p className="mt-1 text-sm text-muted-foreground">{catalog.insurerTypes.find((type) => type.code === selectedInsurer.typeCode)?.name ?? selectedInsurer.typeCode}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">{linkedProducts.length} linked {linkedProducts.length === 1 ? "product" : "products"}</span>
+                  <span className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">{selectedInsurerError ? "Products unavailable" : `${linkedProducts.length} linked ${linkedProducts.length === 1 ? "product" : "products"}`}</span>
                   <OutlineButton onClick={() => setIsDetailsOpen(false)} className="px-3 py-1.5 text-xs">Close</OutlineButton>
                 </div>
               </div>
               <div className="mt-4 divide-y divide-border rounded-xl border border-border">
-                {linkedProducts.length ? linkedProducts.map((product) => (
+                {selectedInsurerError ? (
+                  <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-4">
+                    <p role="alert" className="text-sm text-danger">{selectedInsurerError}</p>
+                    <OutlineButton disabled={retryingInsurerIds.has(selectedInsurer.id)} onClick={() => void retryInsurerProducts(selectedInsurer.id, selectedInsurer.name)}>
+                      {retryingInsurerIds.has(selectedInsurer.id) ? "Retrying…" : "Retry"}
+                    </OutlineButton>
+                  </div>
+                ) : linkedProducts.length ? linkedProducts.map((product) => (
                   <div key={product.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                     <div>
                       <p className="text-sm font-medium">{product.name}</p>
@@ -162,7 +200,7 @@ export function InsurerProductsView() {
                 )) : <p className="px-4 py-6 text-sm text-muted-foreground">No products are linked to this insurer yet.</p>}
               </div>
 
-              {unlinkingProductId ? (
+              {unlinkingProductId && !selectedInsurerError ? (
                 <div className="mt-3 max-w-3xl">
                   <ActionForm
                     title={`Remove ${catalog.products.find((product) => product.id === unlinkingProductId)?.name ?? "product"} from ${selectedInsurer.name}`}
@@ -184,7 +222,9 @@ export function InsurerProductsView() {
                 <div>
                   <h3 className="text-sm font-semibold">Add an existing product</h3>
                   <p className="mt-1 text-xs text-muted-foreground">Only products supported by this insurer’s insurance type are available.</p>
-                  <ActionForm
+                  {selectedInsurerError ? (
+                    <p className="mt-3 text-xs text-muted-foreground">Retry loading this insurer’s products before changing its product links.</p>
+                  ) : <ActionForm
                     submitLabel="Link product"
                     success="Product linked to insurer."
                     onSubmit={async () => {
@@ -197,7 +237,7 @@ export function InsurerProductsView() {
                     <SelectInput id="catalog-product" label="Product" value={selectedProductId} onChange={setSelectedProductId} placeholder="Select a compatible product" options={availableProducts.map((product) => ({ value: product.id, label: product.name }))} wide />
                     {!availableProducts.length ? <p className="text-xs text-muted-foreground sm:col-span-2">No compatible unlinked products are available.</p> : null}
                     <TextInput id="catalog-reason" label="Reason for linking" value={linkReason} onChange={setLinkReason} multiline wide />
-                  </ActionForm>
+                  </ActionForm>}
                 </div>
                 {canAddProduct ? (
                   <div>

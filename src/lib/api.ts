@@ -3371,7 +3371,23 @@ export type InsurerProductCatalog = {
   productTerms: { code: string; name: string }[];
   productLines: { code: string; name: string; termCode: string }[];
   linkedProductIds: Record<string, string[]>;
+  linkedProductErrors: Record<string, string>;
 };
+
+async function fetchInsurerProductIds(insurerId: string, insurerName: string): Promise<string[]> {
+  const path = `/api/v1/policy/catalog/insurers/${insurerId}/products`;
+  const res = await apiFetch(path);
+  if (!res.ok) throw new Error(await catalogApiProblem(res, `Could not load products for ${insurerName}.`));
+  const products = (await res.json()) as ProductView[];
+  const ids = products.filter((product) => product.active).map((product) => product.id);
+  INSURER_PRODUCT_IDS.set(insurerId, ids);
+  return ids;
+}
+
+/** Retry the linked-product request for a single insurer. */
+export async function reloadInsurerProductLinks(insurerId: string, insurerName: string): Promise<string[]> {
+  return fetchInsurerProductIds(insurerId, insurerName);
+}
 
 /** Load active catalog entries and their current insurer-product links for management. */
 export async function getInsurerProductCatalog(): Promise<InsurerProductCatalog> {
@@ -3381,15 +3397,13 @@ export async function getInsurerProductCatalog(): Promise<InsurerProductCatalog>
   const activeInsurers = catalog.insurers.filter((insurer) => insurer.active);
   const activeProducts = catalog.products.filter((product) => product.active);
   const linkedProductIds: Record<string, string[]> = {};
-  await Promise.all(activeInsurers.map(async (insurer) => {
-    const path = `/api/v1/policy/catalog/insurers/${insurer.id}/products`;
-    const res = await apiFetch(path);
-    if (!res.ok) throw new Error(await catalogApiProblem(res, `Could not load products for ${insurer.name}.`));
-    const products = (await res.json()) as ProductView[];
-    const ids = products.filter((product) => product.active).map((product) => product.id);
-    linkedProductIds[insurer.id] = ids;
-    INSURER_PRODUCT_IDS.set(insurer.id, ids);
-  }));
+  const linkedProductErrors: Record<string, string> = {};
+  const outcomes = await Promise.allSettled(activeInsurers.map((insurer) => fetchInsurerProductIds(insurer.id, insurer.name)));
+  outcomes.forEach((outcome, index) => {
+    const insurer = activeInsurers[index];
+    if (outcome.status === "fulfilled") linkedProductIds[insurer.id] = outcome.value;
+    else linkedProductErrors[insurer.id] = outcome.reason instanceof Error ? outcome.reason.message : `Could not load products for ${insurer.name}.`;
+  });
   return {
     insurers: activeInsurers.map((insurer) => ({
       id: insurer.id,
@@ -3402,6 +3416,7 @@ export async function getInsurerProductCatalog(): Promise<InsurerProductCatalog>
     productTerms: catalog.terms.filter((term) => term.active).map((term) => ({ code: term.code, name: term.name })),
     productLines: catalog.lines.filter((line) => line.active).map((line) => ({ code: line.code, name: line.name, termCode: line.termCode })),
     linkedProductIds,
+    linkedProductErrors,
   };
 }
 
