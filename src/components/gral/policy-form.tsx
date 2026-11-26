@@ -15,7 +15,7 @@ import { AmountInput } from "./amount-input";
 import { ReviewDialog } from "./review-dialog";
 import { groupDigits, policyAmountWarnings } from "@/lib/amounts";
 import { formatRwf } from "@/lib/format";
-import { createPolicy, getPolicyCatalog, productsForInsurer, updatePolicy, type PolicyCatalog, type PolicyInput } from "@/lib/api";
+import { createPolicy, getPolicyCatalog, policyTrackCatalog, productsForInsurer, updatePolicy, type PolicyCatalog, type PolicyInput, type PolicyTrackCatalog } from "@/lib/api";
 import { INSURER_GROUPS, PRODUCT_GROUPS, type OptionGroup } from "@/lib/reference-data";
 import { EDITABLE_POLICY_STATUSES, type Client, type Policy, type PolicyStatus } from "@/lib/types";
  
@@ -174,6 +174,10 @@ export function PolicyForm({
     productGroups: PRODUCT_GROUPS,
     fromBackend: false,
   });
+  const [selectionCatalog, setSelectionCatalog] = useState<PolicyTrackCatalog | null>(null);
+  const [selectionCatalogError, setSelectionCatalogError] = useState("");
+  const [insuranceType, setInsuranceType] = useState<"LIFE" | "NON_LIFE">("NON_LIFE");
+  const [selectedInsurerId, setSelectedInsurerId] = useState("");
   // Products the chosen insurer offers. null: not known, so every product is shown.
   const [offered, setOffered] = useState<string[] | null>(null);
  
@@ -186,6 +190,17 @@ export function PolicyForm({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (editing) return;
+    let cancelled = false;
+    policyTrackCatalog().then((c) => {
+      if (!cancelled) { setSelectionCatalog(c); setSelectionCatalogError(""); }
+    }).catch((error) => {
+      if (!cancelled) setSelectionCatalogError(error instanceof Error ? error.message : "Could not load insurers and products.");
+    });
+    return () => { cancelled = true; };
+  }, [editing]);
  
   useEffect(() => {
     let cancelled = false;
@@ -202,6 +217,12 @@ export function PolicyForm({
   const insurerGroups = withCurrentValue(catalog.insurerGroups, policy?.insurer);
   const classGroups = withCurrentValue(onlyOffered(catalog.productGroups, offered), policy?.classOfInsurance);
   const noProductsForInsurer = offered !== null && offered.length === 0;
+  const selectableInsurers = selectionCatalog?.insurers.filter((insurer) => insurer.coverageTypes.includes(insuranceType)) ?? [];
+  const selectedInsurer = selectableInsurers.find((insurer) => insurer.id === selectedInsurerId);
+  const selectableProducts = selectionCatalog?.products.filter((product) =>
+    selectionCatalog.productIdsByInsurer[selectedInsurerId]?.includes(product.id) &&
+    (!product.coverageTypes.length || product.coverageTypes.includes(insuranceType)),
+  ) ?? [];
   // For new policies on GRAL's system, the backend generates the policy number.
   const numberGenerated = catalog.fromBackend && !policy;
   // On GRAL's system the server keeps the policy: its number, insurer, class and
@@ -314,36 +335,89 @@ export function PolicyForm({
               />
             </Field>
           )}
-          <Field id="insurer" label="Insurer" error={errors.insurer} wide>
-            <GroupedSelect
-              id="insurer"
-              value={values.insurer}
-              onChange={(v) => {
-                set("insurer", v);
-                set("classOfInsurance", "");
-              }}
-              placeholder="Select an insurer"
-              groups={insurerGroups}
-              error={errors.insurer}
-              disabled={locked}
-            />
-          </Field>
-          <Field id="classOfInsurance" label="Class of insurance" error={errors.classOfInsurance} wide>
-            <GroupedSelect
-              id="classOfInsurance"
-              value={values.classOfInsurance}
-              onChange={(v) => set("classOfInsurance", v)}
-              placeholder={values.insurer ? "Select a class" : "Choose the insurer first"}
-              groups={classGroups}
-              error={errors.classOfInsurance}
-              disabled={locked}
-            />
-            {noProductsForInsurer ? (
-              <p className="mt-1.5 text-xs text-warning">
-                No classes are linked to this insurer in the catalog yet. Ask an administrator to link them.
-              </p>
-            ) : null}
-          </Field>
+          {editing ? <>
+            <Field id="insurer" label="Insurer" error={errors.insurer} wide>
+              <GroupedSelect
+                id="insurer"
+                value={values.insurer}
+                onChange={(v) => {
+                  set("insurer", v);
+                  set("classOfInsurance", "");
+                }}
+                placeholder="Select an insurer"
+                groups={insurerGroups}
+                error={errors.insurer}
+                disabled={locked}
+              />
+            </Field>
+            <Field id="classOfInsurance" label="Class of insurance" error={errors.classOfInsurance} wide>
+              <GroupedSelect
+                id="classOfInsurance"
+                value={values.classOfInsurance}
+                onChange={(v) => set("classOfInsurance", v)}
+                placeholder={values.insurer ? "Select a class" : "Choose the insurer first"}
+                groups={classGroups}
+                error={errors.classOfInsurance}
+                disabled={locked}
+              />
+              {noProductsForInsurer ? (
+                <p className="mt-1.5 text-xs text-warning">
+                  No classes are linked to this insurer in the catalog yet. Ask an administrator to link them.
+                </p>
+              ) : null}
+            </Field>
+          </> : <>
+            <Field id="insuranceType" label="Insurance type" wide>
+              <select
+                id="insuranceType"
+                value={insuranceType}
+                onChange={(event) => {
+                  const nextType = event.target.value as "LIFE" | "NON_LIFE";
+                  setInsuranceType(nextType);
+                  setSelectedInsurerId("");
+                  set("insurer", "");
+                  set("classOfInsurance", "");
+                }}
+                className={inputClass()}
+              >
+                <option value="NON_LIFE">Non-life</option>
+                <option value="LIFE">Life</option>
+              </select>
+            </Field>
+            <Field id="insurer" label="Insurer" error={errors.insurer} wide>
+              <select
+                id="insurer"
+                value={selectedInsurerId}
+                onChange={(event) => {
+                  const nextId = event.target.value;
+                  const nextInsurer = selectionCatalog?.insurers.find((item) => item.id === nextId);
+                  setSelectedInsurerId(nextId);
+                  set("insurer", nextInsurer?.name ?? "");
+                  set("classOfInsurance", "");
+                }}
+                disabled={!selectionCatalog || !!selectionCatalogError || selectableInsurers.length === 0}
+                className={inputClass(errors.insurer)}
+                {...describedBy("insurer", errors.insurer)}
+              >
+                <option value="">{selectionCatalog ? "Select an insurer" : "Loading insurers…"}</option>
+                {selectableInsurers.map((insurer) => <option key={insurer.id} value={insurer.id}>{insurer.name}</option>)}
+              </select>
+              {selectionCatalogError ? <p role="alert" className="mt-1.5 text-xs text-danger">{selectionCatalogError}</p> : null}
+            </Field>
+            <Field id="classOfInsurance" label="Products" error={errors.classOfInsurance} wide>
+              <p className="mb-2 text-[11px] text-muted-foreground">Choose one product for this policy.</p>
+              {!selectedInsurerId ? <p className="rounded-xl bg-pale px-3 py-3 text-xs text-muted-foreground">Choose an insurance type and insurer to see available products.</p> : selectableProducts.length ? (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {selectableProducts.map((product) => (
+                    <label key={product.id} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-3 text-sm transition-colors ${values.classOfInsurance === product.name ? "border-primary bg-primary/5" : "border-border bg-card hover:bg-muted/40"}`}>
+                      <input type="checkbox" checked={values.classOfInsurance === product.name} onChange={(event) => set("classOfInsurance", event.target.checked ? product.name : "")} aria-label={`Select ${product.name}`} />
+                      <span className="font-medium">{product.name}</span>
+                    </label>
+                  ))}
+                </div>
+              ) : <p className="rounded-xl bg-pale px-3 py-3 text-xs text-muted-foreground">No active products are linked to {selectedInsurer?.name ?? "this insurer"} for this insurance type.</p>}
+            </Field>
+          </>}
         </Section>
  
         <Section title="Cover and premium">

@@ -11,6 +11,7 @@ import {
   assignLead,
   closeLead,
   onboardingOptions,
+  policyTrackCatalog,
   recordAssessment,
   recordLeadResponse,
   startTrack,
@@ -118,14 +119,28 @@ export function AssessmentForm({ lead, onDone }: { lead: Lead; onDone: (saved?: 
 export function ClientForm({ lead, onDone }: { lead: Lead; onDone: (saved?: Lead | PolicyTrack) => void | Promise<void> }) { return <ProspectClientForm lead={lead} onDone={onDone} />; }
 
 export function StartTrackForm({ lead, onDone, onCancel }: { lead: Lead; onDone: (saved?: Lead | PolicyTrack) => void | Promise<void>; onCancel: () => void }) {
-  const [products, setProducts] = useState<ChoiceOption[]>([]);
-  const [productsLoaded, setProductsLoaded] = useState(false);
+  const [catalog, setCatalog] = useState<Awaited<ReturnType<typeof policyTrackCatalog>> | null>(null);
+  const [catalogError, setCatalogError] = useState("");
+  const [coverageType, setCoverageType] = useState<"LIFE" | "NON_LIFE">("NON_LIFE");
+  const [insurerId, setInsurerId] = useState("");
   const [productId, setProductId] = useState("");
   const [underwritingRole, setRole] = useState("GI_UNDERWRITING_MANAGER");
   const [property, setProperty] = useState(false);
   useEffect(() => {
-    onboardingOptions().then((o) => setProducts(o.products)).finally(() => setProductsLoaded(true));
+    let cancelled = false;
+    policyTrackCatalog().then((options) => {
+      if (!cancelled) { setCatalog(options); setCatalogError(""); }
+    }).catch((error) => {
+      if (!cancelled) setCatalogError(error instanceof Error ? error.message : "Could not load insurers and products.");
+    });
+    return () => { cancelled = true; };
   }, []);
+  const insurers = catalog?.insurers.filter((insurer) => insurer.coverageTypes.includes(coverageType)) ?? [];
+  const insurer = insurers.find((item) => item.id === insurerId);
+  const products = catalog?.products.filter((product) =>
+    catalog.productIdsByInsurer[insurerId]?.includes(product.id) &&
+    (!product.coverageTypes.length || product.coverageTypes.includes(coverageType)),
+  ) ?? [];
   return (
     <ActionForm
       title="Start a policy track"
@@ -133,12 +148,30 @@ export function StartTrackForm({ lead, onDone, onCancel }: { lead: Lead; onDone:
       success="Policy track started. Step 3 checks the client's KYC."
       onCancel={onCancel}
       onSubmit={async (attempt) => {
-        if (!productId) throw new Error("Choose the product.");
+        if (!insurerId) throw new Error("Choose an insurer.");
+        if (!productId) throw new Error("Choose one product.");
         await onDone(await startTrack(lead, { productId, underwritingRole, property }, attempt));
       }}
     >
-      <SelectInput id="tr-product" label="Product" value={productId} onChange={setProductId} placeholder="Select a product" options={products.map((p) => ({ value: p.id, label: p.name }))} wide />
-      {productsLoaded && products.length === 0 ? <p className="text-xs text-muted-foreground sm:col-span-2">No active products are linked to an active insurer in the catalog.</p> : null}
+      <SelectInput id="tr-coverage-type" label="Insurance type" value={coverageType} onChange={(value) => { setCoverageType(value as "LIFE" | "NON_LIFE"); setInsurerId(""); setProductId(""); }} options={[{ value: "NON_LIFE", label: "Non-life" }, { value: "LIFE", label: "Life" }]} wide />
+      <SelectInput id="tr-insurer" label="Insurer" value={insurerId} onChange={(value) => { setInsurerId(value); setProductId(""); }} placeholder={catalog ? "Select an insurer" : "Loading insurers…"} options={insurers.map((item) => ({ value: item.id, label: item.name }))} disabled={!catalog || !!catalogError || insurers.length === 0} wide />
+      {catalogError ? <p role="alert" className="text-xs text-danger sm:col-span-2">{catalogError}</p> : null}
+      <div className="space-y-2 sm:col-span-2">
+        <div>
+          <p className="text-xs font-medium">Products</p>
+          <p className="mt-1 text-[11px] text-muted-foreground">Choose one product for this policy track.</p>
+        </div>
+        {!insurerId ? <p className="rounded-xl bg-muted/50 px-3 py-3 text-xs text-muted-foreground">Choose an insurance type and insurer to see available products.</p> : products.length ? (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {products.map((product) => (
+              <label key={product.id} className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-3 text-sm transition-colors ${productId === product.id ? "border-primary bg-primary/5" : "border-border bg-card hover:bg-muted/40"}`}>
+                <input type="checkbox" checked={productId === product.id} onChange={(event) => setProductId(event.target.checked ? product.id : "")} aria-label={`Select ${product.name}`} />
+                <span className="font-medium">{product.name}</span>
+              </label>
+            ))}
+          </div>
+        ) : <p className="rounded-xl bg-muted/50 px-3 py-3 text-xs text-muted-foreground">No active products are linked to {insurer?.name ?? "this insurer"} for this catalog.</p>}
+      </div>
       <SelectInput
         id="tr-role"
         label="Underwriting by"

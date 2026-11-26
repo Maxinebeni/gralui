@@ -106,6 +106,7 @@ export function SelectInput({
   options,
   placeholder,
   wide,
+  disabled = false,
 }: {
   id: string;
   label: string;
@@ -114,11 +115,12 @@ export function SelectInput({
   options: { value: string; label: string }[];
   placeholder?: string;
   wide?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <div className={cn(wide && "sm:col-span-2")}>
       <Label htmlFor={id}>{label}</Label>
-      <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className={inputClass()}>
+      <select id={id} value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} className={inputClass()}>
         {placeholder ? <option value="">{placeholder}</option> : null}
         {options.map((o) => (
           <option key={o.value} value={o.value}>

@@ -3810,6 +3810,12 @@ export async function updateRole(
 
 export type ChoiceOption = { id: string; name: string };
 
+export type PolicyTrackCatalog = {
+  insurers: { id: string; name: string; coverageTypes: ("LIFE" | "NON_LIFE")[] }[];
+  products: (ChoiceOption & { coverageTypes: ("LIFE" | "NON_LIFE")[] })[];
+  productIdsByInsurer: Record<string, string[]>;
+};
+
 /** A document chosen as proof, with when the thing it proves happened. */
 export type EvidenceInput = { file: File; occurredAt: string; detail?: string };
 
@@ -4029,6 +4035,48 @@ export async function onboardingOptions(): Promise<{ products: ChoiceOption[]; i
     insurers: activeInsurers.map((i) => ({ id: i.id, name: i.name })),
     accountExecutives: managers.map((m) => ({ id: m.id, name: m.fullName })),
   };
+}
+
+/** Insurer types and linked products for starting a policy track. */
+export async function policyTrackCatalog(): Promise<PolicyTrackCatalog> {
+  const coverageTypesFor = (value: string): ("LIFE" | "NON_LIFE")[] => {
+    const normalized = value.toLowerCase().replace(/non[-_\s]*life/g, "nonlife");
+    const coverage: ("LIFE" | "NON_LIFE")[] = [];
+    if (/nonlife|general|short[-_\s]*term/.test(normalized)) coverage.push("NON_LIFE");
+    if (/(^|[^a-z])life([^a-z]|$)|long[-_\s]*term/.test(normalized)) coverage.push("LIFE");
+    return coverage;
+  };
+  if (MOCK_AUTH) {
+    const products = PRODUCT_GROUPS.flatMap((group) => group.options).map((name) => ({ id: name, name, coverageTypes: [] as ("LIFE" | "NON_LIFE")[] }));
+    const insurers = INSURER_GROUPS.flatMap((group) => group.options.map((name) => ({
+      id: name,
+      name,
+      coverageTypes: [group.label.toLowerCase().includes("life") && !group.label.toLowerCase().includes("non-life") ? "LIFE" as const : "NON_LIFE" as const],
+    })));
+    return { insurers, products, productIdsByInsurer: Object.fromEntries(insurers.map((insurer) => [insurer.id, products.map((product) => product.id)])) };
+  }
+
+  const catalog = await loadCatalog();
+  if (!catalog) throw new Error("Could not load the insurer and product catalog.");
+  const activeInsurers = catalog.insurers.filter((insurer) => insurer.active);
+  await loadInsurerProductLinks(activeInsurers);
+  const products = catalog.products.filter((product) => product.active).map((product) => ({
+    id: product.id,
+    name: product.name,
+    coverageTypes: coverageTypesFor(catalog.terms.find((term) => term.code === product.termCode)?.name ?? product.termCode),
+  }));
+  const insurers = activeInsurers.map((insurer) => {
+    const type = catalog.insurerTypes.find((item) => item.code === insurer.typeCode);
+    const termNames = (type?.termCodes ?? []).map((code) => catalog.terms.find((term) => term.code === code)?.name ?? code);
+    const coverageTypes = coverageTypesFor(`${type?.name ?? ""} ${type?.code ?? insurer.typeCode} ${termNames.join(" ")}`);
+    if (!coverageTypes.length) coverageTypes.push("NON_LIFE");
+    return { id: insurer.id, name: insurer.name, coverageTypes };
+  });
+  const productIdsByInsurer = Object.fromEntries(activeInsurers.map((insurer) => [
+    insurer.id,
+    (INSURER_PRODUCT_IDS.get(insurer.id) ?? []).filter((productId) => products.some((product) => product.id === productId)),
+  ]));
+  return { insurers, products, productIdsByInsurer };
 }
 
 /** Active insurers that the backend catalog links to a product. */
