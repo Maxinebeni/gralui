@@ -518,9 +518,16 @@ export async function listClientChoices(): Promise<Client[]> {
   if (CLIENT_CHOICES_REQUEST) return CLIENT_CHOICES_REQUEST;
   CLIENT_CHOICES_REQUEST = (async () => {
     try {
-      const page = await fetchClientPage("/api/v1/clients?size=100&sort=name");
+      const params = new URLSearchParams({ acquisitionStatus: "CLIENT", size: "100", sort: "name" });
+      const firstPage = await fetchClientPage(`/api/v1/clients?${params}`);
+      const pages = [firstPage];
+      for (let pageNumber = 1; pageNumber < firstPage.totalPages; pageNumber += 1) {
+        const pageParams = new URLSearchParams(params);
+        pageParams.set("page", String(pageNumber));
+        pages.push(await fetchClientPage(`/api/v1/clients?${pageParams}`));
+      }
       const [managers] = await Promise.all([loadManagers(), loadActivePolicyCounts()]);
-      return page.items.map((s) => {
+      return pages.flatMap((page) => page.items).map((s) => {
         const cached = CLIENT_CACHE.get(s.reference);
         return cached && cached.uuid === s.id ? cached : clientFromSummary(s, managers);
       });
@@ -555,6 +562,7 @@ export async function listClients(query = "", acquisitionStatus?: "PROSPECT" | "
       const params = new URLSearchParams({ size: "100", sort: "name" });
       const search = query.trim();
       if (search) params.set("q", search);
+      if (acquisitionStatus) params.set("acquisitionStatus", acquisitionStatus);
       const firstPage = await fetchClientPage(`/api/v1/clients?${params}`);
       const summaryPages = [firstPage.items];
       if (acquisitionStatus) {
@@ -565,13 +573,13 @@ export async function listClients(query = "", acquisitionStatus?: "PROSPECT" | "
           summaryPages.push(page.items);
         }
       }
-      const summaries = summaryPages.flat().filter((summary) => !acquisitionStatus || summary.acquisitionStatus === acquisitionStatus);
+      const summaries = summaryPages.flat();
       // Full records and KYC summaries for the matched summaries in requests (newer servers),
       // instead of two per client. An older server falls back to one request per client below.
       const [managers, detailsByPage] = await Promise.all([
         loadManagers(),
         Promise.all(summaryPages.map((items, pageNumber) => {
-          if (!items.some((item) => !acquisitionStatus || item.acquisitionStatus === acquisitionStatus)) return Promise.resolve([] as ClientView[]);
+          if (!items.length) return Promise.resolve([] as ClientView[]);
           const pageParams = new URLSearchParams(params);
           if (pageNumber > 0) pageParams.set("page", String(pageNumber));
           return fetchClientDetails(pageParams);
