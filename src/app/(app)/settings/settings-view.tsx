@@ -4,7 +4,7 @@
 // Change password emails a reset link. Two-step login (an authenticator app code
 // after the password) is set up here; it cannot be turned off.
 
-import { UserRound } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { PageHeader } from "@/components/gral/shell";
 import { Chip, FloatCard } from "@/components/gral/ui";
 import { useCurrentUser } from "@/lib/auth-context";
@@ -32,37 +32,38 @@ export function SettingsView() {
     <>
       <PageHeader title="Settings" />
 
-      <div className="mt-5 grid gap-3 sm:gap-4 xl:grid-cols-2">
-        <FloatCard className="p-5 sm:p-6">
-          <div className="flex items-center gap-2">
-            <UserRound className="size-5 text-primary" />
-            <h2 className="text-base font-semibold tracking-tight">My account</h2>
-          </div>
-          <div className="mt-4 flex items-center gap-4">
+      <div className="mt-5 space-y-3 sm:space-y-4">
+        <FloatCard className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+          <div className="flex min-w-0 items-center gap-4">
             <span className="flex size-14 shrink-0 items-center justify-center rounded-full bg-primary text-lg font-semibold text-primary-foreground">
               {initials(user.name).toUpperCase()}
             </span>
             <div className="min-w-0">
-              <p className="text-base font-semibold">{user.name}</p>
+              <h2 className="text-base font-semibold">{user.name}</h2>
               <p className="truncate text-sm text-muted-foreground">{user.email}</p>
             </div>
           </div>
-          <dl className="mt-5 divide-y divide-border text-sm">
-            <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3 py-3 sm:grid-cols-[140px_minmax(0,1fr)]">
-              <dt className="text-muted-foreground">{roles.length === 1 ? "Role" : "Roles"}</dt>
-              <dd className="flex flex-wrap gap-1.5">
-                {roles.map((r) => (
-                  <Chip key={r} tone="sky">
-                    {r}
-                  </Chip>
-                ))}
-              </dd>
-            </div>
-          </dl>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="mr-1 text-sm text-muted-foreground">{roles.length === 1 ? "Role" : "Roles"}</span>
+            {roles.map((r) => (
+              <Chip key={r} tone="sky">
+                {r}
+              </Chip>
+            ))}
+          </div>
         </FloatCard>
 
-        <ChangePassword />
-        <TwoStepLogin />
+        <FloatCard className="p-5 sm:p-6">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="size-5 text-primary" />
+            <h2 className="text-base font-semibold tracking-tight">Sign-in and security</h2>
+          </div>
+          <div className="mt-1 divide-y divide-border">
+            <ChangePassword />
+            <TwoStepLogin />
+          </div>
+        </FloatCard>
+
         <EmailNotifications />
       </div>
     </>

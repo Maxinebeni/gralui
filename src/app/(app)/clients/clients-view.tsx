@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronDown, Download } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader } from "@/components/gral/shell";
 import {
@@ -13,7 +13,7 @@ import {
   ClientsTable,
   SectorFilter,
   clientFilterQuery,
-  downloadClients,
+  DownloadClientsMenu,
   filterClientsBy,
   useClientList,
   useOpenClient,
@@ -133,9 +133,7 @@ export function ClientsView() {
         extraPills={<SectorFilter value={sector} sectors={sectors} onChange={setSector} />}
         action={
           <>
-            <OutlineButton className="px-4 py-2 text-sm" disabled={allClients.length === 0} onClick={() => downloadClients(allClients)}>
-              <Download className="size-4" /> <span>Download<span className="hidden sm:inline"> all clients</span></span>
-            </OutlineButton>
+            <DownloadClientsMenu clients={allClients} sector={sector} />
           </>
         }
       />
