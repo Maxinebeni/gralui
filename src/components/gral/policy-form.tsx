@@ -194,13 +194,13 @@ export function PolicyForm({
   useEffect(() => {
     if (editing) return;
     let cancelled = false;
-    policyTrackCatalog().then((c) => {
+    policyTrackCatalog(insuranceType).then((c) => {
       if (!cancelled) { setSelectionCatalog(c); setSelectionCatalogError(""); }
     }).catch((error) => {
       if (!cancelled) setSelectionCatalogError(error instanceof Error ? error.message : "Could not load insurers and products.");
     });
     return () => { cancelled = true; };
-  }, [editing]);
+  }, [editing, insuranceType]);
  
   useEffect(() => {
     let cancelled = false;

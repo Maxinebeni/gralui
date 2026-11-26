@@ -128,13 +128,13 @@ export function StartTrackForm({ lead, onDone, onCancel }: { lead: Lead; onDone:
   const [property, setProperty] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    policyTrackCatalog().then((options) => {
+    policyTrackCatalog(coverageType).then((options) => {
       if (!cancelled) { setCatalog(options); setCatalogError(""); }
     }).catch((error) => {
       if (!cancelled) setCatalogError(error instanceof Error ? error.message : "Could not load insurers and products.");
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [coverageType]);
   const insurers = catalog?.insurers.filter((insurer) => insurer.coverageTypes.includes(coverageType)) ?? [];
   const insurer = insurers.find((item) => item.id === insurerId);
   const products = catalog?.products.filter((product) =>

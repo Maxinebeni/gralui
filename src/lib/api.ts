@@ -945,6 +945,7 @@ type ProductView = {
   code: string;
   name: string;
   termCode: string;
+  classCode?: string;
   active: boolean;
   version: number;
   productLineCodes?: string[];
@@ -4038,7 +4039,7 @@ export async function onboardingOptions(): Promise<{ products: ChoiceOption[]; i
 }
 
 /** Insurer types and linked products for starting a policy track. */
-export async function policyTrackCatalog(): Promise<PolicyTrackCatalog> {
+export async function policyTrackCatalog(classCode?: "LIFE" | "NON_LIFE"): Promise<PolicyTrackCatalog> {
   const coverageTypesFor = (value: string): ("LIFE" | "NON_LIFE")[] => {
     const normalized = value.toLowerCase().replace(/non[-_\s]*life/g, "nonlife");
     const coverage: ("LIFE" | "NON_LIFE")[] = [];
@@ -4052,23 +4053,31 @@ export async function policyTrackCatalog(): Promise<PolicyTrackCatalog> {
       id: name,
       name,
       coverageTypes: [group.label.toLowerCase().includes("life") && !group.label.toLowerCase().includes("non-life") ? "LIFE" as const : "NON_LIFE" as const],
-    })));
+    }))).filter((insurer) => !classCode || insurer.coverageTypes.includes(classCode));
     return { insurers, products, productIdsByInsurer: Object.fromEntries(insurers.map((insurer) => [insurer.id, products.map((product) => product.id)])) };
   }
 
-  const catalog = await loadCatalog();
-  if (!catalog) throw new Error("Could not load the insurer and product catalog.");
-  const activeInsurers = catalog.insurers.filter((insurer) => insurer.active);
+  const suffix = classCode ? `?classCode=${encodeURIComponent(classCode)}` : "";
+  const insurersResponse = await apiFetch(`/api/v1/policy/catalog/insurers${suffix}`);
+  if (!insurersResponse.ok) throw new Error(await catalogApiProblem(insurersResponse, "Could not load insurers."));
+  const productsResponse = await apiFetch(`/api/v1/policy/catalog/products${suffix}`);
+  if (!productsResponse.ok) throw new Error(await catalogApiProblem(productsResponse, "Could not load products."));
+  const insurersResponseBody = (await insurersResponse.json()) as InsurerView[];
+  const productsResponseBody = (await productsResponse.json()) as ProductView[];
+  const insurerTypes = await getJson<InsurerTypeView[]>("/api/v1/policy/catalog/insurer-types");
+  const terms = await getJson<ProductTermView[]>("/api/v1/policy/catalog/product-terms");
+  const activeInsurers = insurersResponseBody.filter((insurer) => insurer.active);
   await loadInsurerProductLinks(activeInsurers);
-  const products = catalog.products.filter((product) => product.active).map((product) => ({
+  const products = productsResponseBody.filter((product) => product.active).map((product) => ({
     id: product.id,
     name: product.name,
-    coverageTypes: coverageTypesFor(catalog.terms.find((term) => term.code === product.termCode)?.name ?? product.termCode),
+    coverageTypes: product.classCode ? [product.classCode === "LIFE" ? "LIFE" as const : "NON_LIFE" as const] : coverageTypesFor(terms?.find((term) => term.code === product.termCode)?.name ?? product.termCode),
   }));
   const insurers = activeInsurers.map((insurer) => {
-    const type = catalog.insurerTypes.find((item) => item.code === insurer.typeCode);
-    const termNames = (type?.termCodes ?? []).map((code) => catalog.terms.find((term) => term.code === code)?.name ?? code);
-    const coverageTypes = coverageTypesFor(`${type?.name ?? ""} ${type?.code ?? insurer.typeCode} ${termNames.join(" ")}`);
+    const type = insurerTypes?.find((item) => item.code === insurer.typeCode);
+    const coverageTypes = insurer.typeCode === "LIFE" || insurer.typeCode === "NON_LIFE"
+      ? [insurer.typeCode]
+      : coverageTypesFor(`${type?.name ?? ""} ${type?.code ?? insurer.typeCode}`);
     if (!coverageTypes.length) coverageTypes.push("NON_LIFE");
     return { id: insurer.id, name: insurer.name, coverageTypes };
   });
@@ -4091,7 +4100,7 @@ export async function insurersForProduct(productId: string): Promise<string[] | 
 
 export type InsurerProductCatalog = {
   insurers: { id: string; name: string; typeCode: string; version: number; supportedTermCodes: string[] }[];
-  products: { id: string; name: string; termCode: string; version: number }[];
+  products: { id: string; name: string; termCode: string; classCode: string; version: number }[];
   insurerTypes: { code: string; name: string; termCodes: string[] }[];
   productTerms: { code: string; name: string }[];
   productLines: { code: string; name: string; termCode: string }[];
@@ -4137,7 +4146,7 @@ export async function getInsurerProductCatalog(): Promise<InsurerProductCatalog>
       version: insurer.version,
       supportedTermCodes: catalog.insurerTypes.find((type) => type.code === insurer.typeCode)?.termCodes ?? [],
     })),
-    products: activeProducts.map((product) => ({ id: product.id, name: product.name, termCode: product.termCode, version: product.version })),
+    products: activeProducts.map((product) => ({ id: product.id, name: product.name, termCode: product.termCode, classCode: product.classCode ?? (product.termCode === "LONG_TERM" ? "LIFE" : "NON_LIFE"), version: product.version })),
     insurerTypes: catalog.insurerTypes.filter((type) => type.active).map((type) => ({ code: type.code, name: type.name, termCodes: type.termCodes ?? [] })),
     productTerms: catalog.terms.filter((term) => term.active).map((term) => ({ code: term.code, name: term.name })),
     productLines: catalog.lines.filter((line) => line.active).map((line) => ({ code: line.code, name: line.name, termCode: line.termCode })),
@@ -4146,14 +4155,31 @@ export async function getInsurerProductCatalog(): Promise<InsurerProductCatalog>
   };
 }
 
-/** Create the backend-audited insurer-product link. */
-export async function linkProductToInsurer(insurerId: string, productId: string, reason: string): Promise<void> {
-  if (!reason.trim()) throw new Error("Give a reason for linking this product to the insurer.");
-  const res = await apiFetch(`/api/v1/policy/catalog/insurers/${insurerId}/products/${productId}`, {
+/** Active, unlinked products for one insurer's class. */
+export async function productsAvailableToLink(insurerId: string, classCode: "LIFE" | "NON_LIFE", insurerName: string): Promise<{ id: string; name: string; termCode: string; classCode: "LIFE" | "NON_LIFE" }[]> {
+  const query = `?classCode=${encodeURIComponent(classCode)}`;
+  const productsResponse = await apiFetch(`/api/v1/policy/catalog/products${query}`);
+  if (!productsResponse.ok) throw new Error(await catalogApiProblem(productsResponse, `Could not load products for ${insurerName}.`));
+  const linkedResponse = await apiFetch(`/api/v1/policy/catalog/insurers/${insurerId}/products`);
+  if (!linkedResponse.ok) throw new Error(await catalogApiProblem(linkedResponse, `Could not load linked products for ${insurerName}.`));
+  const products = await productsResponse.json() as ProductView[];
+  const linked = await linkedResponse.json() as ProductView[];
+  const activeLinkedIds = linked.filter((product) => product.active).map((product) => product.id);
+  INSURER_PRODUCT_IDS.set(insurerId, activeLinkedIds);
+  return products
+    .filter((product) => product.active && (product.classCode ?? (product.termCode === "LONG_TERM" ? "LIFE" : "NON_LIFE")) === classCode && !activeLinkedIds.includes(product.id))
+    .map((product) => ({ id: product.id, name: product.name, termCode: product.termCode, classCode }));
+}
+
+/** Link one or more compatible products with the catalog's bulk endpoint. */
+export async function linkProductsToInsurer(insurerId: string, productIds: string[]): Promise<void> {
+  const uniqueProductIds = [...new Set(productIds)].filter(Boolean);
+  if (!uniqueProductIds.length) throw new Error("Select at least one product to link.");
+  const res = await apiFetch(`/api/v1/policy/catalog/insurers/${insurerId}/products`, {
     method: "POST",
-    body: JSON.stringify({ reason: reason.trim() }),
+    body: JSON.stringify({ productIds: uniqueProductIds }),
   });
-  if (!res.ok) throw new Error(await catalogApiProblem(res, "Could not link the product to the insurer."));
+  if (!res.ok) throw new Error(await catalogApiProblem(res, "Could not link the selected products to the insurer."));
   INSURER_PRODUCT_IDS.delete(insurerId);
 }
 
