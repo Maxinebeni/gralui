@@ -49,8 +49,8 @@ export function useClientList() {
   const [tab, setTab] = useState<ClientTab>(fromUrl && ALL_TABS.includes(fromUrl) ? fromUrl : "All");
   const [sector, setSector] = useState(searchParams.get("sector") ?? "");
   const [query, setQuery] = useState("");
-  const book = useClients("");
-  const search = useClients(query);
+  const book = useClients("", true, "CLIENT");
+  const search = useClients(query, true, "CLIENT");
   const allClients = book.data ?? [];
   const matches = search.data ?? [];
   // True while the table's rows are loading, so the table can say

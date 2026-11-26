@@ -12,7 +12,9 @@ import { useAuth } from "./auth-context";
 /** Cache keys, so every screen names the same data the same way. */
 export const queryKeys = {
   claims: ["claims"] as const,
-  clients: (search: string) => ["clients", search] as const,
+  clients: (search: string, acquisitionStatus?: "PROSPECT" | "CLIENT") => acquisitionStatus
+    ? ["clients", acquisitionStatus, search] as const
+    : ["clients", search] as const,
   leads: ["leads"] as const,
   renewals: ["renewals"] as const,
   imports: ["imports"] as const,

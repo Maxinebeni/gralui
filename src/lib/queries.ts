@@ -54,10 +54,10 @@ export function useClaims(enabled = true) {
 }
 
 /** The client book, or the clients matching a search. Rows stay on screen while a new search loads. */
-export function useClients(search = "", enabled = true) {
+export function useClients(search = "", enabled = true, acquisitionStatus?: "PROSPECT" | "CLIENT") {
   return useQuery({
-    queryKey: queryKeys.clients(search.trim()),
-    queryFn: () => listClients(search.trim()),
+    queryKey: queryKeys.clients(search.trim(), acquisitionStatus),
+    queryFn: () => listClients(search.trim(), acquisitionStatus),
     enabled,
     placeholderData: keepPreviousData,
   });

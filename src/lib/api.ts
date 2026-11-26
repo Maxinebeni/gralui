@@ -208,6 +208,7 @@ type ClientSummary = {
   reference: string;
   registeredName: string;
   type: BackendClientType;
+  acquisitionStatus?: "PROSPECT" | "CLIENT";
   managerId?: string;
   restricted: boolean;
   version: number;
@@ -543,25 +544,42 @@ async function fetchClientViewWithRetry(uuid: string): Promise<ClientView> {
 const CLIENT_LIST_REQUESTS = new Map<string, Promise<Client[]>>();
 
 /** Search clients on the backend (name, reference and more). */
-export async function listClients(query = ""): Promise<Client[]> {
+export async function listClients(query = "", acquisitionStatus?: "PROSPECT" | "CLIENT"): Promise<Client[]> {
   if (MOCK_AUTH) return mockListClients(query);
-  const key = query.trim();
+  const key = `${acquisitionStatus ?? "ALL"}:${query.trim()}`;
   const pending = CLIENT_LIST_REQUESTS.get(key);
   if (pending) return pending;
 
   const request = (async () => {
     try {
       const params = new URLSearchParams({ size: "100", sort: "name" });
-      if (key) params.set("q", key);
-      const page = await fetchClientPage(`/api/v1/clients?${params}`);
-      // Full records and KYC summaries for the whole page in two requests (newer servers),
+      const search = query.trim();
+      if (search) params.set("q", search);
+      const firstPage = await fetchClientPage(`/api/v1/clients?${params}`);
+      const summaryPages = [firstPage.items];
+      if (acquisitionStatus) {
+        for (let pageNumber = 1; pageNumber < firstPage.totalPages; pageNumber += 1) {
+          const pageParams = new URLSearchParams(params);
+          pageParams.set("page", String(pageNumber));
+          const page = await fetchClientPage(`/api/v1/clients?${pageParams}`);
+          summaryPages.push(page.items);
+        }
+      }
+      const summaries = summaryPages.flat().filter((summary) => !acquisitionStatus || summary.acquisitionStatus === acquisitionStatus);
+      // Full records and KYC summaries for the matched summaries in requests (newer servers),
       // instead of two per client. An older server falls back to one request per client below.
-      const [managers, details] = await Promise.all([
+      const [managers, detailsByPage] = await Promise.all([
         loadManagers(),
-        fetchClientDetails(params),
+        Promise.all(summaryPages.map((items, pageNumber) => {
+          if (!items.some((item) => !acquisitionStatus || item.acquisitionStatus === acquisitionStatus)) return Promise.resolve([] as ClientView[]);
+          const pageParams = new URLSearchParams(params);
+          if (pageNumber > 0) pageParams.set("page", String(pageNumber));
+          return fetchClientDetails(pageParams);
+        })),
         loadActivePolicyCounts(),
-        prefetchKycSummaries(page.items.map((s) => s.id)),
+        prefetchKycSummaries(summaries.map((s) => s.id)),
       ]);
+      const details = detailsByPage.flat();
       for (const v of details) {
         const cached = CLIENT_CACHE.get(v.reference);
         if (!cached || cached.uuid !== v.id || cached.version !== v.version || SUMMARY_ONLY.has(v.reference)) toClient(v, managers);
@@ -569,11 +587,11 @@ export async function listClients(query = ""): Promise<Client[]> {
       }
 
       // Users who cannot read the active-policies report: counts for the whole page in one request.
-      const ownCounts = ACTIVE_POLICY_COUNTS?.counts ? null : await activeCountsFor(page.items.map((s) => s.id));
+      const ownCounts = ACTIVE_POLICY_COUNTS?.counts ? null : await activeCountsFor(summaries.map((s) => s.id));
 
       // The list only has summaries, so load each full record, 4 at a time.
       // Unchanged ones come from the cache. One that fails is shown from its summary.
-      return await mapLimited(page.items, 4, async (s) => {
+      return await mapLimited(summaries, 4, async (s) => {
         const cached = CLIENT_CACHE.get(s.reference);
         let client: Client;
         if (cached && cached.uuid === s.id && cached.version === s.version && !SUMMARY_ONLY.has(s.reference)) {
