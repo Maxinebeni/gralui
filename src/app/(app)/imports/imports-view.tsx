@@ -9,7 +9,7 @@
 import { useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronDown, FileText, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { Td, Th } from "@/components/gral/claim-list";
@@ -41,6 +41,9 @@ import {
   fieldKind,
   fieldLabel,
   fieldsFor,
+  clientTypeCode,
+  hasSuggestionNote,
+  withoutSuggestionNote,
   fieldsToFix,
   groupIssues,
   importFileProblem,
@@ -75,6 +78,7 @@ const STATUS_OF: Record<(typeof STATUS_TABS)[number], ImportRowStatus> = {
   Ready: "READY",
   Imported: "COMMITTED",
 };
+const IMMUTABLE_IMPORT_FIELDS = new Set(["Client ID", "Policy Number"]);
 
 const n = (v: number) => v.toLocaleString("en-US");
 const rowsWord = (v: number) => (v === 1 ? "row" : "rows");
@@ -247,10 +251,6 @@ function UploadForm({ parentBatchId, onClose, onDone }: { parentBatchId?: string
         </button>
       </div>
       <div className="space-y-5 px-4 py-5 sm:px-6">
-        <p className="text-xs text-muted-foreground">
-          Upload the workbook made by the cleaning script (clean_gral.py), without editing it in Excel. The file is checked straight away. Nothing is saved as a
-          client or policy until you click Import Ready Rows.
-        </p>
         <div>
           <p className="text-xs font-medium text-muted-foreground">Cleaned workbook (.xlsx, up to 50 MB)</p>
           <input
@@ -278,7 +278,6 @@ function UploadForm({ parentBatchId, onClose, onDone }: { parentBatchId?: string
           </div>
           {fileError ? <p className="mt-2 text-xs text-danger">{fileError}</p> : null}
         </div>
-        <p className="text-[11px] text-subtle">Only synthetic data until GRAL confirms where the system is hosted.</p>
         <div className="flex flex-wrap justify-between gap-2">
           <OutlineButton className="px-4 py-2 text-sm" onClick={onClose}>
             Cancel
@@ -449,10 +448,6 @@ function BatchPage({ id, backHref, onUploadCorrected }: { id: string; backHref: 
         <StatTile label="Blocked" value={n(batch.errors)} delay={160} />
         <StatTile label="Imported" value={n(batch.committed)} delay={200} />
       </div>
-      <p className="mt-2 text-[11px] text-subtle">
-        {n(batch.sourceRows)} register rows kept exactly as GRAL typed them. Clients and policies add up to {n(batch.clients + batch.policies)}; ready, needs a
-        decision, blocked and imported add up to {n(batch.ready + batch.review + batch.errors + batch.committed)}.
-      </p>
 
       <RowList batch={batch} canResolve={canResolve && open} />
     </>
@@ -559,33 +554,37 @@ function RowCard({
   const issues = useMemo(() => mergeIssues(row.issues), [row.issues]);
 
   return (
-    <div className="rounded-xl border border-border px-4 py-3">
+    <div className="rounded-xl border border-border px-4 py-3 transition-colors hover:border-primary/30 hover:bg-muted/15">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
+        {canFix ? <button type="button" onClick={() => setFixing(true)} aria-haspopup="dialog" className="min-w-0 flex-1 cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2">
           <p className="text-sm font-medium">{rowTitle(row)}</p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">{rowSource(row)}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+          {issues.length ? (
+            <ul className="mt-2 space-y-1">
+              {issues.map((i) => (
+                <li key={`${i.severity}|${i.field}|${i.message}`} className="flex flex-wrap items-start gap-2 text-xs">
+                  <Chip tone={severityTone(i.severity)}>{SEVERITY_LABEL[i.severity] ?? i.severity}</Chip>
+                  <span>
+                    <span className="font-medium">{fieldLabel(i.field)}:</span> {i.message}
+                    {i.count > 1 ? <span className="text-muted-foreground"> (×{i.count}, one per register row)</span> : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : row.status === "REVIEW" ? (
+            <p className="mt-2 text-xs text-muted-foreground">Changed since the last validation. Click Validate to see if it is ready.</p>
+          ) : null}
+          <span className="mt-2 block text-[11px] font-medium text-primary">Click to review and fix</span>
+        </button> : <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium">{rowTitle(row)}</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">{rowSource(row)}</p>
+          {issues.length ? <ul className="mt-2 space-y-1">{issues.map((i) => <li key={`${i.severity}|${i.field}|${i.message}`} className="flex flex-wrap items-start gap-2 text-xs"><Chip tone={severityTone(i.severity)}>{SEVERITY_LABEL[i.severity] ?? i.severity}</Chip><span><span className="font-medium">{fieldLabel(i.field)}:</span> {i.message}{i.count > 1 ? <span className="text-muted-foreground"> (×{i.count}, one per register row)</span> : null}</span></li>)}</ul> : null}
+        </div>}
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
           <Chip tone={rowStatusTone(row.status)}>{ROW_STATUS_LABEL[row.status] ?? row.status}</Chip>
-          {canFix ? <OutlineButton onClick={() => setFixing((f) => !f)}>{fixing ? "Close" : "Fix"}</OutlineButton> : null}
+          {canFix ? <OutlineButton onClick={() => setFixing(true)}>Fix</OutlineButton> : null}
         </div>
       </div>
-
-      {issues.length ? (
-        <ul className="mt-2 space-y-1">
-          {issues.map((i) => (
-            <li key={`${i.severity}|${i.field}|${i.message}`} className="flex flex-wrap items-start gap-2 text-xs">
-              <Chip tone={severityTone(i.severity)}>{SEVERITY_LABEL[i.severity] ?? i.severity}</Chip>
-              <span>
-                <span className="font-medium">{fieldLabel(i.field)}:</span> {i.message}
-                {i.count > 1 ? <span className="text-muted-foreground"> (×{i.count}, one per register row)</span> : null}
-              </span>
-            </li>
-          ))}
-        </ul>
-      ) : row.status === "REVIEW" ? (
-        <p className="mt-2 text-xs text-muted-foreground">Changed since the last validation. Click Validate to see if it is ready.</p>
-      ) : null}
 
       <button
         type="button"
@@ -597,17 +596,19 @@ function RowCard({
       </button>
       {showValues ? <RowValues row={row} lookups={lookups} /> : null}
 
-      {fixing ? (
-        lookupsError ? (
-          <p className="mt-3 text-xs text-danger">{lookupsError instanceof Error ? lookupsError.message : "Could not load the lists to choose from."}</p>
-        ) : !lookups ? (
-          <p className="mt-3 text-xs text-muted-foreground">
-            <Loader label="Loading insurers, products and account managers" />
-          </p>
-        ) : (
-          <FixForm batch={batch} row={row} lookups={lookups} onDone={() => setFixing(false)} />
-        )
-      ) : null}
+      {fixing ? <div className="fixed inset-0 z-[70] flex items-end justify-center bg-foreground/40 p-0 sm:items-center sm:p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) setFixing(false); }}>
+        <div role="dialog" aria-modal="true" aria-labelledby={`fix-import-${row.id}`} className="max-h-[92dvh] w-full max-w-2xl overflow-y-auto rounded-t-2xl bg-background p-4 shadow-2xl sm:rounded-2xl sm:p-6">
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div><h2 id={`fix-import-${row.id}`} className="text-base font-semibold">Fix {rowTitle(row)}</h2><p className="mt-1 text-xs text-muted-foreground">{rowSource(row)}</p></div>
+            <OutlineButton onClick={() => setFixing(false)} className="px-3 py-1.5 text-xs">Close</OutlineButton>
+          </div>
+          {lookupsError ? (
+            <p className="mt-3 text-xs text-danger">{lookupsError instanceof Error ? lookupsError.message : "Could not load the lists to choose from."}</p>
+          ) : !lookups ? (
+            <p className="mt-3 text-xs text-muted-foreground"><Loader label="Loading insurers, products and account managers" /></p>
+          ) : <FixForm batch={batch} row={row} lookups={lookups} onDone={() => setFixing(false)} />}
+        </div>
+      </div> : null}
     </div>
   );
 }
@@ -624,7 +625,7 @@ function displayValue(field: string, value: unknown, lookups?: ImportLookups): s
 }
 
 function RowValues({ row, lookups }: { row: ImportRow; lookups?: ImportLookups }) {
-  const entries = Object.entries(row.values).filter(([k, v]) => valueText(v) && !k.startsWith("Import provenance") && k !== "Source row ID");
+  const entries = Object.entries(row.values).filter(([k, v]) => valueText(v) && !k.startsWith("Import Provenance") && k !== "Client Key SHA256" && k !== "Source Row ID");
   return (
     <dl className="mt-2 grid gap-x-4 gap-y-1 rounded-xl bg-pale/60 px-3 py-2 text-[11px] sm:grid-cols-2">
       {entries.map(([k, v]) => (
@@ -639,67 +640,137 @@ function RowValues({ row, lookups }: { row: ImportRow; lookups?: ImportLookups }
   );
 }
 
+function existingFixValue(row: ImportRow, field: string, lookups: ImportLookups) {
+  const raw = valueText(row.values[field]);
+  const kind = fieldKind(field);
+  if (kind === "duplicate") {
+    if (raw.startsWith("LINK:")) return { value: "LINK", linkTo: raw.slice("LINK:".length) };
+    return { value: ["DISTINCT", "CREATE_NEW"].includes(raw) ? raw : "", linkTo: "" };
+  }
+  if (kind === "manager") {
+    const manager = lookups.managers.find((item) => item.id === raw || item.name === raw);
+    return { value: manager?.id ?? "", linkTo: "" };
+  }
+  if (kind === "insurer") {
+    const insurer = lookups.insurers.find((item) => item.id === raw || item.name === raw || item.code === raw);
+    return { value: insurer?.id ?? "", linkTo: "" };
+  }
+  if (kind === "product") {
+    const product = lookups.products.find((item) => item.id === raw || item.name === raw || item.code === raw);
+    return { value: product?.id ?? "", linkTo: "" };
+  }
+  if (kind === "clientType") {
+    return { value: clientTypeCode(raw), linkTo: "" };
+  }
+  if (kind === "movement") {
+    return { value: IMPORT_MOVEMENTS.some((item) => item.value === raw) ? raw : "", linkTo: "" };
+  }
+  return { value: kind === "date" ? raw.slice(0, 10) : raw, linkTo: "" };
+}
+
+const draftsRemarks = (drafts: Record<string, { value: string }>) => drafts["Remarks"]?.value ?? "";
+
 function FixForm({ batch, row, lookups, onDone }: { batch: ImportBatch; row: ImportRow; lookups: ImportLookups; onDone: () => void }) {
   const refresh = useRefresh();
+  const queryClient = useQueryClient();
   const suggested = fieldsToFix(row);
   const allFields = [...suggested, ...fieldsFor(row.recordType).filter((f) => !suggested.includes(f))];
-  const [field, setField] = useState(suggested[0] ?? allFields[0]!);
-  const [value, setValue] = useState("");
-  const [linkTo, setLinkTo] = useState("");
-  const [reason, setReason] = useState("");
+  const editableFields = allFields.filter((field) => !IMMUTABLE_IMPORT_FIELDS.has(field));
+  // The cleaning script's client-type note is taken out of Remarks straight away, so
+  // saving any fix on the row removes it; the field can still be edited.
+  const autoRemarks = row.recordType === "CLIENT" && hasSuggestionNote(valueText(row.values["Remarks"]));
+  const [drafts, setDrafts] = useState<Record<string, { value: string; linkTo: string }>>(() =>
+    Object.fromEntries(
+      editableFields.map((field) => [
+        field,
+        field === "Remarks" && autoRemarks ? { value: withoutSuggestionNote(valueText(row.values[field])), linkTo: "" } : existingFixValue(row, field, lookups),
+      ]),
+    ),
+  );
+  const remarksLeftAsSuggested = autoRemarks && draftsRemarks(drafts) === withoutSuggestionNote(valueText(row.values["Remarks"]));
   const [applyAll, setApplyAll] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const kind = fieldKind(field);
-  const registerValue = matchValue(row, field);
-  const bulkable = !!registerValue && ["manager", "insurer", "product", "clientType", "movement"].includes(kind);
-  const candidates = kind === "duplicate" ? duplicateCandidates(row) : [];
-
-  // Products offered: those linked to the insurer already chosen for this row, when there is one.
-  const rowInsurer = lookups.insurers.find((i) => i.id === valueText(row.values["Insurer ID"]));
-  const products = rowInsurer ? lookups.products.filter((p) => rowInsurer.productIds.includes(p.id)) : lookups.products;
-
-  function pickField(f: string) {
-    setField(f);
-    setValue("");
-    setLinkTo("");
-    setApplyAll(false);
-    setErrors({});
-  }
-
-  function finalValue(): string {
-    if (kind === "duplicate" && value === "LINK") return `LINK:${linkTo.trim()}`;
+  const candidates = duplicateCandidates(row);
+  const draftValue = (field: string) => drafts[field]?.value ?? "";
+  const draftLinkTo = (field: string) => drafts[field]?.linkTo ?? "";
+  const updateDraft = (field: string, key: "value" | "linkTo", next: string) => {
+    setDrafts((current) => ({
+      ...current,
+      [field]: { ...current[field], [key]: next },
+      ...(field === "Insurer ID" && key === "value" ? { "Product ID": { value: "", linkTo: "" } } : {}),
+    }));
+    setErrors((current) => ({ ...current, [field]: "", form: "" }));
+  };
+  const finalValue = (field: string) => {
+    const kind = fieldKind(field);
+    const value = draftValue(field);
+    if (kind === "duplicate" && value === "LINK") return `LINK:${draftLinkTo(field).trim()}`;
     if (kind === "money") return value.replace(/,/g, "").trim();
     return value.trim();
+  };
+  const changedFields = editableFields.filter((field) => {
+    const initial = existingFixValue(row, field, lookups);
+    const before = fieldKind(field) === "money" ? initial.value.replace(/,/g, "").trim() : fieldKind(field) === "duplicate" && initial.value === "LINK" ? `LINK:${initial.linkTo}` : initial.value.trim();
+    return finalValue(field) !== before;
+  });
+  const bulkMatchField = changedFields.find((field) => {
+    const kind = fieldKind(field);
+    return !!matchValue(row, field) && ["manager", "insurer", "product", "clientType", "movement"].includes(kind);
+  });
+  const bulkable = Boolean(bulkMatchField);
+
+  function previewValue(field: string): string {
+    const kind = fieldKind(field);
+    const value = finalValue(field);
+    if (kind === "duplicate" && draftValue(field) === "LINK") {
+      const candidate = candidates.find((item) => item.id === draftLinkTo(field));
+      return candidate ? `${candidate.reference} · ${candidate.name}` : draftLinkTo(field) || "Choose an existing client";
+    }
+    if (kind === "clientType") return IMPORT_CLIENT_TYPES.find((item) => item.value === value)?.label ?? value;
+    if (kind === "movement") return IMPORT_MOVEMENTS.find((item) => item.value === value)?.label ?? value;
+    return displayValue(field, value, lookups);
   }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
     const found: Record<string, string> = {};
-    if (!value.trim() && kind !== "text") found.value = "Choose a value.";
-    if (kind === "duplicate" && value === "LINK" && !/^[0-9a-f-]{36}$/i.test(linkTo.trim())) found.value = "Choose the existing client to link to.";
-    if (kind === "money" && value.trim() && !(Number(value.replace(/,/g, "")) >= 0)) found.value = "Enter a number of zero or more.";
-    if (!reason.trim()) found.reason = "Say why, e.g. Confirmed with GRAL's register owner.";
-    if (reason.length > 500) found.reason = "Keep the reason under 500 characters.";
+    if (!changedFields.length) found.form = "Change at least one field before reviewing.";
+    for (const field of changedFields) {
+      const kind = fieldKind(field);
+      const value = draftValue(field);
+      if (!value.trim() && kind !== "text") found[field] = "Choose or enter a value.";
+      if (kind === "duplicate" && value === "LINK" && !/^[0-9a-f-]{36}$/i.test(draftLinkTo(field).trim())) found[field] = "Choose the existing client to link to.";
+      if (kind === "money" && value.trim() && !(Number(value.replace(/,/g, "")) >= 0)) found[field] = "Enter a number of zero or more.";
+    }
     setErrors(found);
     if (Object.keys(found).length) return;
+    setReviewing(true);
+  }
 
-    const v = finalValue();
+  async function confirmSave() {
     try {
-      setProgress("Saving…");
-      await correctImportRow(batch.id, row, field, v, reason.trim());
+      setProgress("Saving changes…");
+      const changes = Object.fromEntries(changedFields.map((field) => [field, finalValue(field)]));
+      await correctImportRow(batch.id, row, changes);
       let others = 0;
       let failed = 0;
-      if (applyAll && bulkable) {
+      if (applyAll && bulkMatchField) {
         setProgress("Finding the other rows…");
         const lists = await Promise.all((["ERROR", "REVIEW"] as const).map((s) => listAllImportRows(batch.id, row.recordType, s)));
-        const targets = sameCaseRows(lists.flat(), row, field).filter((r) => valueText(r.values[field]) !== v);
-        // One at a time: every change also updates the import's version on the server.
+        const targets = sameCaseRows(lists.flat(), row, bulkMatchField);
         for (const [k, target] of targets.entries()) {
-          setProgress(`Saving ${k + 1} of ${targets.length}…`);
           try {
-            await correctImportRow(batch.id, target, field, v, reason.trim());
-            others += 1;
+            setProgress(`Saving changes for ${k + 1} of ${targets.length} matching rows…`);
+            // Remarks left as suggested means "take the note out": each row keeps its own remark.
+            const targetValue = (field: string) =>
+              field === "Remarks" && remarksLeftAsSuggested ? withoutSuggestionNote(valueText(target.values[field])) : finalValue(field);
+            const targetChanges = Object.fromEntries(changedFields.filter((field) => targetValue(field) !== valueText(target.values[field])).map((field) => [field, targetValue(field)]));
+            if (Object.keys(targetChanges).length) {
+              await correctImportRow(batch.id, target, targetChanges);
+              others += 1;
+            }
           } catch {
             failed += 1;
           }
@@ -710,6 +781,7 @@ function FixForm({ batch, row, lookups, onDone }: { batch: ImportBatch; row: Imp
           ? `Saved on this row and ${n(others)} others${failed ? `. ${n(failed)} could not be saved; try those again` : ""}. Click Validate when you are done fixing.`
           : "Saved. Click Validate when you are done fixing.",
       );
+      await queryClient.invalidateQueries({ queryKey: ["imports", batch.id, "rows"] });
       refresh("imports");
       onDone();
     } catch (err) {
@@ -719,151 +791,64 @@ function FixForm({ batch, row, lookups, onDone }: { batch: ImportBatch; row: Imp
     }
   }
 
-  const cls = (k: string) => cn(inputClass(), errors[k] && "border-danger");
-
-  let control: React.ReactNode;
-  if (kind === "manager")
-    control = (
-      <select id="fix-value" value={value} onChange={(e) => setValue(e.target.value)} className={cls("value")}>
-        <option value="">Choose the Accounts Executive…</option>
-        {lookups.managers.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.name}
-          </option>
-        ))}
-      </select>
-    );
-  else if (kind === "insurer")
-    control = (
-      <select id="fix-value" value={value} onChange={(e) => setValue(e.target.value)} className={cls("value")}>
-        <option value="">Choose the insurer…</option>
-        {lookups.insurers.map((i) => (
-          <option key={i.id} value={i.id}>
-            {i.name}
-          </option>
-        ))}
-      </select>
-    );
-  else if (kind === "product")
-    control = (
-      <select id="fix-value" value={value} onChange={(e) => setValue(e.target.value)} className={cls("value")}>
-        <option value="">{rowInsurer ? `Choose a product from ${rowInsurer.name}…` : "Choose the product…"}</option>
-        {products.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-          </option>
-        ))}
-      </select>
-    );
-  else if (kind === "clientType")
-    control = (
-      <select id="fix-value" value={value} onChange={(e) => setValue(e.target.value)} className={cls("value")}>
-        <option value="">Choose the client type…</option>
-        {IMPORT_CLIENT_TYPES.map((t) => (
-          <option key={t.value} value={t.value}>
-            {t.label}
-          </option>
-        ))}
-      </select>
-    );
-  else if (kind === "movement")
-    control = (
-      <select id="fix-value" value={value} onChange={(e) => setValue(e.target.value)} className={cls("value")}>
-        <option value="">Choose the movement…</option>
-        {IMPORT_MOVEMENTS.map((m) => (
-          <option key={m.value} value={m.value}>
-            {m.label}
-          </option>
-        ))}
-      </select>
-    );
-  else if (kind === "duplicate")
-    control = (
-      <div className="space-y-2">
-        <select id="fix-value" value={value} onChange={(e) => setValue(e.target.value)} className={cls("value")}>
-          <option value="">Choose…</option>
-          <option value="DISTINCT">A different client from the similar names in this file</option>
-          <option value="CREATE_NEW">A new client, even though a similar one exists</option>
-          <option value="LINK">The same as a client already in the system</option>
-        </select>
-        {value === "LINK" ? (
-          candidates.length ? (
-            <select value={linkTo} onChange={(e) => setLinkTo(e.target.value)} className={cls("value")} aria-label="Existing client">
-              <option value="">Choose the existing client…</option>
-              {candidates.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.reference} · {c.name}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input value={linkTo} onChange={(e) => setLinkTo(e.target.value)} placeholder="The existing client's system ID" className={cls("value")} aria-label="Existing client ID" />
-          )
-        ) : null}
-      </div>
-    );
-  else if (kind === "date") control = <input id="fix-value" type="date" value={value} onChange={(e) => setValue(e.target.value)} className={cls("value")} />;
-  else control = <input id="fix-value" inputMode={kind === "money" ? "decimal" : undefined} value={value} onChange={(e) => setValue(e.target.value)} className={cls("value")} />;
-
-  const current = displayValue(field, row.values[field], lookups);
+  const cls = (field: string) => cn(inputClass(), errors[field] && "border-danger");
+  const controlFor = (field: string) => {
+    const kind = fieldKind(field);
+    const value = draftValue(field);
+    const id = `fix-${row.id}-${field.replace(/[^a-z0-9]/gi, "-")}`;
+    const selectClass = cls(field);
+    const selectedInsurerId = field === "Product ID" ? (draftValue("Insurer ID") || valueText(row.values["Insurer ID"])) : valueText(row.values["Insurer ID"]);
+    const insurerForProduct = lookups.insurers.find((item) => item.id === selectedInsurerId);
+    const products = insurerForProduct ? lookups.products.filter((item) => insurerForProduct.productIds.includes(item.id)) : lookups.products;
+    if (kind === "manager") return <select id={id} value={value} onChange={(event) => updateDraft(field, "value", event.target.value)} className={selectClass}><option value="">Choose the Accounts Executive…</option>{lookups.managers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>;
+    if (kind === "insurer") return <select id={id} value={value} onChange={(event) => updateDraft(field, "value", event.target.value)} className={selectClass}><option value="">Choose the insurer…</option>{lookups.insurers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>;
+    if (kind === "product") return insurerForProduct && products.length === 0 ? <p className="rounded-lg bg-warning-soft/60 px-2.5 py-2 text-xs text-foreground">{insurerForProduct.name} has no active products yet. Add its products on the Insurers and products page, then come back to this row.</p> : <select id={id} value={value} onChange={(event) => updateDraft(field, "value", event.target.value)} className={selectClass}><option value="">{insurerForProduct ? `Choose a product from ${insurerForProduct.name}…` : "Choose the product…"}</option>{products.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>;
+    if (kind === "clientType") return <select id={id} value={value} onChange={(event) => updateDraft(field, "value", event.target.value)} className={selectClass}><option value="">Choose the client type…</option>{IMPORT_CLIENT_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>;
+    if (kind === "movement") return <select id={id} value={value} onChange={(event) => updateDraft(field, "value", event.target.value)} className={selectClass}><option value="">Choose the movement…</option>{IMPORT_MOVEMENTS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>;
+    if (kind === "duplicate") return <div className="space-y-2"><select id={id} value={value} onChange={(event) => updateDraft(field, "value", event.target.value)} className={selectClass}><option value="">Choose…</option><option value="DISTINCT">A different client from similar names in this file</option><option value="CREATE_NEW">A new client, even though a similar one exists</option><option value="LINK">The same as a client already in the system</option></select>{value === "LINK" ? candidates.length ? <select value={draftLinkTo(field)} onChange={(event) => updateDraft(field, "linkTo", event.target.value)} className={selectClass} aria-label="Existing client"><option value="">Choose the existing client…</option>{candidates.map((item) => <option key={item.id} value={item.id}>{item.reference} · {item.name}</option>)}</select> : <input value={draftLinkTo(field)} onChange={(event) => updateDraft(field, "linkTo", event.target.value)} placeholder="The existing client's system ID" className={selectClass} aria-label="Existing client ID" /> : null}</div>;
+    return <input id={id} type={kind === "date" ? "date" : "text"} inputMode={kind === "money" ? "decimal" : undefined} value={value} onChange={(event) => updateDraft(field, "value", event.target.value)} className={selectClass} />;
+  };
 
   return (
     <form onSubmit={save} noValidate className="mt-3 grid gap-3 border-t border-border pt-3 sm:grid-cols-2">
-      <label className="block text-[11px] font-medium text-muted-foreground">
-        <span className="mb-1 block">What to change</span>
-        <select value={field} onChange={(e) => pickField(e.target.value)} className={inputClass()}>
-          {suggested.length ? (
-            <optgroup label="Needed for this row">
-              {suggested.map((f) => (
-                <option key={f} value={f}>
-                  {fieldLabel(f)}
-                </option>
-              ))}
-            </optgroup>
-          ) : null}
-          <optgroup label="Other fields">
-            {allFields
-              .filter((f) => !suggested.includes(f))
-              .map((f) => (
-                <option key={f} value={f}>
-                  {fieldLabel(f)}
-                </option>
-              ))}
-          </optgroup>
-        </select>
-        <span className="mt-1 block font-normal text-subtle">
-          Now: {current || "blank"}
-          {registerValue && matchField(field) !== field ? ` · Register says: ${registerValue}` : ""}
-        </span>
-      </label>
-      <div className="block text-[11px] font-medium text-muted-foreground">
-        <label htmlFor="fix-value" className="mb-1 block">
-          New value
-        </label>
-        {control}
-        {errors.value ? <p className="mt-1 text-danger">{errors.value}</p> : null}
+      {errors.form ? <p role="alert" className="text-xs text-danger sm:col-span-2">{errors.form}</p> : null}
+      <div className="grid gap-3 sm:col-span-2 sm:grid-cols-2">
+        {allFields.map((field) => {
+          const current = displayValue(field, row.values[field], lookups) || "Blank";
+          const original = displayValue(field, row.original[field], lookups);
+          const isChanged = changedFields.includes(field);
+          const isImmutable = IMMUTABLE_IMPORT_FIELDS.has(field);
+          return <div key={field} className={`min-w-0 space-y-2 rounded-xl border p-3 ${isChanged ? "border-primary/50 bg-primary/[0.03]" : "border-border bg-background"}`}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              {isImmutable ? <span className="text-xs font-semibold text-foreground">{fieldLabel(field)}</span> : <label htmlFor={`fix-${row.id}-${field.replace(/[^a-z0-9]/gi, "-")}`} className="text-xs font-semibold text-foreground">{fieldLabel(field)}</label>}
+              {!isImmutable ? <span className="text-[10px] text-muted-foreground">Current: {current}</span> : null}
+            </div>
+            {original && original !== valueText(row.values[field]) ? <p className="text-[10px] text-subtle">Register value: {original}</p> : null}
+            {isImmutable ? <p aria-readonly="true" className="break-words text-sm text-muted-foreground">{current}</p> : reviewing ? <p className={`break-words rounded-lg px-2.5 py-2 text-xs ${isChanged ? "bg-primary/10 font-medium text-primary" : "bg-muted/50 text-muted-foreground"}`}>
+              {isChanged ? `After save: ${previewValue(field) || "Blank"}` : "Unchanged"}
+            </p> : controlFor(field)}
+            {!reviewing && field === "Remarks" && autoRemarks ? <p className="text-[11px] text-muted-foreground">The cleaning script&apos;s client-type note is removed when you save. Check the client type is right.</p> : null}
+            {!reviewing && errors[field] ? <p role="alert" className="text-[11px] text-danger">{errors[field]}</p> : null}
+          </div>;
+        })}
       </div>
-      <label className="block text-[11px] font-medium text-muted-foreground sm:col-span-2">
-        <span className="mb-1 block">Reason for this change</span>
-        <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. P. NKUSI is this Accounts Executive (confirmed by GRAL)" className={cls("reason")} />
-        {errors.reason ? <span className="mt-1 block text-danger">{errors.reason}</span> : null}
-      </label>
-      {bulkable ? (
-        <label className="flex items-start gap-2 text-xs sm:col-span-2">
-          <input type="checkbox" checked={applyAll} onChange={(e) => setApplyAll(e.target.checked)} className="mt-0.5" />
-          <span>
-            Also use this for every other {row.recordType === "CLIENT" ? "client" : "policy"} in this file where {fieldLabel(matchField(field))} is “{registerValue}”
-            and the row is not imported yet.
-          </span>
-        </label>
-      ) : null}
+      {reviewing ? <div className="rounded-xl border border-sky/30 bg-sky-soft/40 p-3 text-xs sm:col-span-2">
+        <p className="font-semibold text-foreground">Review before saving</p>
+        <p className="mt-1 text-muted-foreground">{changedFields.length} {changedFields.length === 1 ? "field" : "fields"} changed. These are local drafts; nothing is sent until you confirm.</p>
+        {applyAll && bulkable && bulkMatchField ? <p className="mt-1 text-muted-foreground">The changes will also be applied to matching rows where {fieldLabel(matchField(bulkMatchField))} is “{matchValue(row, bulkMatchField)}”.</p> : null}
+      </div> : null}
+      {!reviewing && bulkable && bulkMatchField ? <label className="flex items-start gap-2 text-xs sm:col-span-2">
+        <input type="checkbox" checked={applyAll} onChange={(event) => setApplyAll(event.target.checked)} className="mt-0.5" />
+        <span>Apply all changed fields to other {row.recordType === "CLIENT" ? "client" : "policy"} rows where {fieldLabel(matchField(bulkMatchField))} is “{matchValue(row, bulkMatchField)}” and the row is not imported yet.</span>
+      </label> : null}
       <div className="flex flex-wrap items-center justify-between gap-2 sm:col-span-2">
-        <OutlineButton onClick={onDone} disabled={progress !== null}>
-          Cancel
-        </OutlineButton>
-        <NavyButton type="submit" disabled={progress !== null}>
-          {progress ?? "Save change"}
-        </NavyButton>
+        {reviewing ? <>
+          <OutlineButton type="button" onClick={() => setReviewing(false)} disabled={progress !== null}>Back to editing</OutlineButton>
+          <NavyButton type="button" onClick={() => void confirmSave()} disabled={progress !== null}>{progress ?? "Confirm and save"}</NavyButton>
+        </> : <>
+          <OutlineButton onClick={onDone} disabled={progress !== null}>Cancel</OutlineButton>
+          <NavyButton type="submit" disabled={progress !== null}>Review changes</NavyButton>
+        </>}
       </div>
     </form>
   );

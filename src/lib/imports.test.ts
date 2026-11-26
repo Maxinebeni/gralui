@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  CLIENT_FIELDS,
+  POLICY_FIELDS,
+  clientTypeCode,
+  hasSuggestionNote,
+  withoutSuggestionNote,
   duplicateCandidates,
+  fieldLabel,
   fieldsToFix,
   fixFieldFor,
   groupIssues,
@@ -49,19 +55,19 @@ describe("fixing rows", () => {
   it("lists blocking fields first and skips notes", () => {
     const r = row({
       issues: [
-        { severity: "WARNING", code: "VALIDATION_COMMISSION_RATE_UNKNOWN", field: "Commission rate", message: "" },
-        { severity: "REVIEW", code: "VALIDATION_MOVEMENT_RULE_UNCONFIRMED", field: "Proposed movement", message: "" },
+        { severity: "WARNING", code: "VALIDATION_COMMISSION_RATE_UNKNOWN", field: "Commission Rate", message: "" },
+        { severity: "REVIEW", code: "VALIDATION_MOVEMENT_RULE_UNCONFIRMED", field: "Proposed Movement", message: "" },
         { severity: "ERROR", code: "VALIDATION_INSURER_MAPPING_REQUIRED", field: "Insurer ID", message: "" },
       ],
     });
-    expect(fieldsToFix(r)).toEqual(["Insurer ID", "Proposed movement"]);
+    expect(fieldsToFix(r)).toEqual(["Insurer ID", "Proposed Movement"]);
   });
 
   it("matches the same insurer by what the register says, since the ID is still blank", () => {
-    const a = row({ id: "a", values: { "Proposed insurer": "Synthetic Insurance", "Insurer ID": "" } });
-    const b = row({ id: "b", values: { "Proposed insurer": "Synthetic Insurance", "Insurer ID": "" } });
-    const c = row({ id: "c", values: { "Proposed insurer": "Other Insurer" } });
-    const done = row({ id: "d", status: "COMMITTED", values: { "Proposed insurer": "Synthetic Insurance" } });
+    const a = row({ id: "a", values: { "Proposed Insurer": "Synthetic Insurance", "Insurer ID": "" } });
+    const b = row({ id: "b", values: { "Proposed Insurer": "Synthetic Insurance", "Insurer ID": "" } });
+    const c = row({ id: "c", values: { "Proposed Insurer": "Other Insurer" } });
+    const done = row({ id: "d", status: "COMMITTED", values: { "Proposed Insurer": "Synthetic Insurance" } });
     expect(matchValue(a, "Insurer ID")).toBe("Synthetic Insurance");
     expect(sameCaseRows([a, b, c, done], a, "Insurer ID").map((r) => r.id)).toEqual(["b"]);
   });
@@ -73,7 +79,7 @@ describe("fixing rows", () => {
         {
           severity: "REVIEW",
           code: "VALIDATION_EXISTING_CLIENT_MATCH",
-          field: "Duplicate review",
+          field: "Duplicate Review",
           message:
             "Possible existing client matches: CL00012 (Synthetic Client 12 Ltd, 0f8fad5b-d9cb-469f-a165-70867728950e). Set Duplicate Review to LINK:<client UUID> or CREATE_NEW after review.",
         },
@@ -83,8 +89,8 @@ describe("fixing rows", () => {
   });
 
   it("names rows by client or policy", () => {
-    expect(rowTitle(row({ recordType: "CLIENT", values: { "Client ID": "CL00001", "Client name": "Synthetic Ltd" } }))).toBe("CL00001 · Synthetic Ltd");
-    expect(rowTitle(row({ values: { "Policy number": "SYN/1", "Client ID": "CL00001" } }))).toBe("Policy SYN/1 · CL00001");
+    expect(rowTitle(row({ recordType: "CLIENT", values: { "Client ID": "CL00001", "Client Name": "Synthetic Ltd" } }))).toBe("CL00001 · Synthetic Ltd");
+    expect(rowTitle(row({ values: { "Policy Number": "SYN/1", "Client ID": "CL00001" } }))).toBe("Policy SYN/1 · CL00001");
   });
 });
 
@@ -103,7 +109,7 @@ describe("merging repeated problems", () => {
 describe("problem list", () => {
   it("groups the same problem across rows, blocking first", () => {
     const rows = [
-      row({ issues: [{ severity: "WARNING", code: "W", field: "Commission rate", message: "w" }] }),
+      row({ issues: [{ severity: "WARNING", code: "W", field: "Commission Rate", message: "w" }] }),
       row({ issues: [{ severity: "ERROR", code: "E", field: "Insurer ID", message: "e" }] }),
       row({ issues: [{ severity: "ERROR", code: "E", field: "Insurer ID", message: "e" }] }),
     ];
@@ -114,7 +120,7 @@ describe("problem list", () => {
   });
 
   it("writes one CSV line per problem", () => {
-    const csv = issuesToCsv([row({ values: { "Policy number": "SYN/1" }, issues: [{ severity: "ERROR", code: "E", field: "INSURER", message: "Pick an insurer" }] })]);
+    const csv = issuesToCsv([row({ values: { "Policy Number": "SYN/1" }, issues: [{ severity: "ERROR", code: "E", field: "INSURER", message: "Pick an insurer" }] })]);
     const lines = csv.split("\r\n");
     expect(lines).toHaveLength(2);
     expect(lines[1]).toContain("Pick an insurer");
@@ -133,7 +139,7 @@ describe("demo import", () => {
     for (const r of DEMO_IMPORT_ROWS.get(batch.id)!) {
       if (r.recordType === "CLIENT") {
         correctDemoRow(batch.id, r.id, r.version, "Account Manager", DEMO_IMPORT_LOOKUPS.managers[0]!.id);
-        if (!r.values["Client type"]) correctDemoRow(batch.id, r.id, r.version, "Client type", "CORPORATE");
+        if (!r.values["Client Type"]) correctDemoRow(batch.id, r.id, r.version, "Client Type", "CORPORATE");
       } else {
         correctDemoRow(batch.id, r.id, r.version, "Insurer ID", DEMO_IMPORT_LOOKUPS.insurers[0]!.id);
         correctDemoRow(batch.id, r.id, r.version, "Product ID", DEMO_IMPORT_LOOKUPS.products[0]!.id);
@@ -149,7 +155,46 @@ describe("demo import", () => {
   it("refuses a change made on an old copy of the row", () => {
     const batch = newDemoImport("synthetic.xlsx");
     const r = DEMO_IMPORT_ROWS.get(batch.id)![0]!;
-    correctDemoRow(batch.id, r.id, 0, "Client type", "CORPORATE");
-    expect(() => correctDemoRow(batch.id, r.id, 0, "Client type", "SME")).toThrow(/changed/);
+    correctDemoRow(batch.id, r.id, 0, "Client Type", "CORPORATE");
+    expect(() => correctDemoRow(batch.id, r.id, 0, "Client Type", "SME")).toThrow(/changed/);
+  });
+});
+
+describe("backend field names", () => {
+  // ImportWorkspaceService.MUTABLE_FIELDS: a fix naming any other key is refused (INVALID_CORRECTION).
+  const BACKEND_MUTABLE = new Set(["Client ID", "Client Name", "Client Type", "Sector", "Physical Address", "Contact Name", "Contact Job Title",
+    "Contact Email", "Contact Phone", "Account Manager", "Policy Number", "Insurer ID", "Product ID", "Source Insurer", "Proposed Insurer",
+    "Source Type of Insurance", "Proposed Type of Insurance", "Movement", "Proposed Movement", "Date of Effect", "Date of Expiry",
+    "Net Premium (RWF)", "Total Premium (RWF)", "Amount Paid (RWF)", "Commission Rate", "Currency", "Remarks", "Source Plate/UPI",
+    "Proposed Plate", "Proposed UPI", "Insurer Booking Note", "Duplicate Review"]);
+
+  it("only offers fields the backend accepts, spelled as the backend spells them", () => {
+    for (const field of [...CLIENT_FIELDS, ...POLICY_FIELDS]) expect(BACKEND_MUTABLE.has(field), field).toBe(true);
+  });
+
+  it("shows the keys in sentence case without changing them", () => {
+    expect(fieldLabel("Client Name")).toBe("Client name");
+    expect(fieldLabel("Net Premium (RWF)")).toBe("Net premium (RWF)");
+    expect(fieldLabel("Proposed UPI")).toBe("Proposed UPI");
+    expect(fieldLabel("Duplicate Review")).toBe("Duplicate decision");
+  });
+
+  it("reads the register's client type", () => {
+    expect(clientTypeCode("Corporate")).toBe("CORPORATE");
+    expect(clientTypeCode("State enterprise")).toBe("STATE_ENTERPRISE");
+    expect(clientTypeCode("Bank")).toBe("FINANCIAL_INSTITUTION");
+    expect(clientTypeCode("Unknown")).toBe("");
+  });
+});
+
+describe("client-type suggestion note", () => {
+  const note = "Client Type is a name-based suggestion; confirm before promotion";
+  it("finds and removes only the note", () => {
+    expect(hasSuggestionNote(note)).toBe(true);
+    expect(withoutSuggestionNote(note)).toBe("");
+    expect(withoutSuggestionNote(`Key account; ${note}`)).toBe("Key account");
+    expect(withoutSuggestionNote(`${note}. Pays quarterly`)).toBe("Pays quarterly");
+    expect(withoutSuggestionNote("Pays quarterly")).toBe("Pays quarterly");
+    expect(hasSuggestionNote("Pays quarterly")).toBe(false);
   });
 });

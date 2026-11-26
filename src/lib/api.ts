@@ -6939,12 +6939,12 @@ const IMPORT_MESSAGES: Record<string, string> = {
   MISSING_HEADERS: "A sheet in the workbook has no header row.",
   IMPORT_BATCH_NOT_FOUND: "This import could not be found.",
   IMPORT_BATCH_CLOSED: "This import is finished, so it cannot be changed.",
-  IMPORT_NOT_VALIDATED: "Click Check Again first. Rows were fixed since the last check.",
+  IMPORT_NOT_VALIDATED: "Click Validate first. Rows were fixed since the last check.",
   IMPORT_ROW_NOT_FOUND: "This row could not be found.",
   IMPORT_ROW_CLOSED: "This row is already imported, so it cannot be changed.",
   STALE_ROW_VERSION: "This row was changed since it was loaded. Reload the list and try again.",
   SOURCE_ROW_IMMUTABLE: "Original register rows cannot be changed.",
-  INVALID_CORRECTION: "This change could not be saved. Pick a field and give a reason (up to 500 characters).",
+  INVALID_CORRECTION: "This change could not be saved. Check the selected field and value.",
   INVALID_PAGINATION: "The list could not be loaded. Please try again.",
   IMPORT_ARCHIVE_CHECKSUM_MISMATCH: "The file was damaged while saving. Please upload it again.",
   IMPORT_STAGING_CORRUPT: "This import's saved data is damaged. Ask the backend team to check it.",
@@ -7122,18 +7122,17 @@ export async function listAllImportRows(id: string, recordType: ImportRecordType
   }
 }
 
-/** Changes one cleaned value. The original register value is kept, and the row goes back to Needs a decision until the next check. */
+/** Applies multiple cleaned values in one versioned correction. The original register row is kept. */
 export async function correctImportRow(
   batchId: string,
   row: Pick<ImportRow, "id" | "version">,
-  field: string,
-  value: unknown,
-  reason: string,
+  changes: Record<string, unknown>,
 ): Promise<ImportRow> {
-  if (MOCK_AUTH) return correctDemoRow(batchId, row.id, row.version, field, value);
+  if (!Object.keys(changes).length) throw new Error("Change at least one field before saving.");
+  if (MOCK_AUTH) return correctDemoRow(batchId, row.id, row.version, changes);
   const res = await apiFetch(importPath(batchId, `/rows/${encodeURIComponent(row.id)}`), {
     method: "PATCH",
-    body: JSON.stringify({ expectedVersion: row.version, field, value, reason }),
+    body: JSON.stringify({ expectedVersion: row.version, changes }),
   });
   if (!res.ok) throw new Error(await importProblem(res, "Could not save this change."));
   return toImportRow((await res.json()) as BackendImportRow);
