@@ -15,7 +15,7 @@ import {
   type ClientContactEntry,
   type ClientInteraction,
 } from "@/lib/api";
-import { formatDate } from "@/lib/renewals";
+import { formatDate, kigaliDate } from "@/lib/renewals";
 import type { Client, ClientContact } from "@/lib/types";
 import { Chip, Loader, NavyButton, OutlineButton, TextLink } from "./ui";
 import { Field, Section, describedBy, inputClass } from "./client-form";
@@ -268,7 +268,7 @@ export function InteractionsPanel({ client, canRecord }: { client: Client; canRe
               <div className="min-w-0">
                 <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <Chip tone="neutral">{typeLabel(i.type)}</Chip>
-                  {formatDate(i.occurredAt.slice(0, 10))}
+                  {formatDate(kigaliDate(i.occurredAt))}
                   {i.correctsId ? <span>· Corrected</span> : null}
                 </p>
                 <p className="mt-1.5 text-sm whitespace-pre-line">{i.summary}</p>
@@ -292,7 +292,7 @@ function InteractionForm({
   onSave: (input: { occurredAt: string; type: string; summary: string; followUp?: string; correctsId?: string }) => Promise<void>;
 }) {
   const today = new Date().toISOString().slice(0, 10);
-  const [date, setDate] = useState(corrects?.occurredAt.slice(0, 10) ?? today);
+  const [date, setDate] = useState(kigaliDate(corrects?.occurredAt) ?? today);
   const [type, setType] = useState(corrects?.type ?? "CALL");
   const [summary, setSummary] = useState(corrects?.summary ?? "");
   const [followUp, setFollowUp] = useState(corrects?.followUp ?? "");

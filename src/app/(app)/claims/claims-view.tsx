@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { MOCK_AUTH, listClaimHandlers } from "@/lib/api";
 import Link from "next/link";
 import { AlertTriangle, Gavel, Plus } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
@@ -90,7 +91,21 @@ export function ClaimsView() {
   const avgDays = openClaims.length ? openClaims.reduce((s, c) => s + daysOpen(c), 0) / openClaims.length : null;
   const roundedAvgDays = avgDays === null ? null : Number(avgDays.toFixed(1));
   const avgDaysLabel = roundedAvgDays === null ? "—" : `${roundedAvgDays} ${roundedAvgDays === 1 ? "day" : "days"}`;
-  const handlers = [...new Set(allClaims.map((c) => c.handler))].sort();
+  // Live: the active Claims Managers and Claims Underwriters. Demo: whoever handles a claim today.
+  const [staffHandlers, setStaffHandlers] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (MOCK_AUTH) return;
+    let cancelled = false;
+    listClaimHandlers()
+      .then((list) => {
+        if (!cancelled) setStaffHandlers(list.map((h) => h.name));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const handlers = staffHandlers?.length ? staffHandlers : [...new Set(allClaims.map((c) => c.handler))].filter((h) => h !== "Not assigned").sort();
 
   const activeMonths = monthly.filter((month) => month.count > 0).length;
   const hasQuickActions = loaded && (escalations > 0 || disputes > 0);

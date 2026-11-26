@@ -59,8 +59,8 @@ export function LoginForm() {
         err instanceof Error && err.message
           ? err.message
           : "Could not sign in right now. Please try again.";
+      // Shown once, under the password field; a toast too would repeat it.
       setError(message);
-      toast.error(message);
     } finally {
       setSubmitting(false);
     }
@@ -143,7 +143,7 @@ export function LoginForm() {
                 setEmail(e.target.value);
                 setError(null);
               }}
-              placeholder="name@gral.rw"
+              placeholder="name@globalrisk.rw"
               className="mt-1.5 w-full rounded-xl border border-input bg-card px-3.5 py-2.5 text-sm outline-none focus:border-sky focus:ring-2 focus:ring-sky/30"
             />
           </div>

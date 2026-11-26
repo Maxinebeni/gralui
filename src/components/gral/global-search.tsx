@@ -11,19 +11,19 @@ import { useRouter } from "next/navigation";
 import { Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
-import { listClaimsSummary, listClients, listManagedUsers, listRenewals } from "@/lib/api";
+import { listAllClaimsSummary, listClients, listManagedUsers, listRenewals, searchablePolicies } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { canAccessPath } from "@/lib/permissions";
 
 type Result = {
   key: string;
-  group: "Users" | "Claims" | "Clients" | "Renewals";
+  group: "Users" | "Claims" | "Clients" | "Policies" | "Renewals";
   title: string;
   detail: string;
   href: string;
 };
 
-const GROUPS: Result["group"][] = ["Users", "Claims", "Clients", "Renewals"];
+const GROUPS: Result["group"][] = ["Users", "Claims", "Clients", "Policies", "Renewals"];
 const PER_GROUP = 5;
 /** Client search goes to the backend, so wait for at least this many letters. */
 const CLIENT_MIN_CHARS = 2;
@@ -45,6 +45,8 @@ export function GlobalSearch({ open, onClose }: { open: boolean; onClose: () => 
       clients: canAccessPath(user, "/clients"),
       renewals: canAccessPath(user, "/renewals"),
       claims: canAccessPath(user, "/claims"),
+      // Policies sit in client files, so whoever can open clients can find them.
+      policies: canAccessPath(user, "/clients"),
       users: canAccessPath(user, "/admin"),
     }),
     [user],
@@ -55,6 +57,7 @@ export function GlobalSearch({ open, onClose }: { open: boolean; onClose: () => 
     canSee.users && "users by name or email",
     canSee.clients && "clients",
     canSee.claims && "claims",
+    canSee.policies && "policies",
     canSee.renewals && "renewals",
   ].filter(Boolean) as string[];
   const placeholder = searchable.length
@@ -79,11 +82,12 @@ export function GlobalSearch({ open, onClose }: { open: boolean; onClose: () => 
     }
     let cancelled = false;
     const timer = setTimeout(async () => {
-      const [users, claims, clients, renewals] = await Promise.all([
+      const [users, claims, clients, renewals, policies] = await Promise.all([
         canSee.users ? listManagedUsers().catch(() => []) : Promise.resolve([]),
-        canSee.claims ? listClaimsSummary().catch(() => []) : Promise.resolve([]),
+        canSee.claims ? listAllClaimsSummary().catch(() => []) : Promise.resolve([]),
         canSee.clients && q.length >= CLIENT_MIN_CHARS ? listClients(q).catch(() => []) : Promise.resolve([]),
         canSee.renewals ? listRenewals().catch(() => []) : Promise.resolve([]),
+        canSee.policies && q.length >= CLIENT_MIN_CHARS ? searchablePolicies().catch(() => []) : Promise.resolve([]),
       ]);
 
       const found: Result[] = [];
@@ -101,7 +105,7 @@ export function GlobalSearch({ open, onClose }: { open: boolean; onClose: () => 
           key: `claim-${c.id}`,
           group: "Claims",
           title: c.id,
-          detail: `${c.client} · ${c.classOfInsurance} · ${formatRwf(c.amount)}`,
+          detail: `${c.client} · ${c.classOfInsurance} · ${formatRwf(c.amount)}${c.closed ? " · Closed" : ""}`,
           href: `/claims?claim=${encodeURIComponent(c.id)}`,
         });
       }
@@ -112,6 +116,15 @@ export function GlobalSearch({ open, onClose }: { open: boolean; onClose: () => 
           title: c.name,
           detail: [c.id, c.type, c.sector].filter(Boolean).join(" · "),
           href: `/clients?client=${encodeURIComponent(c.id)}`,
+        });
+      }
+      for (const p of policies.filter((p) => matches(q, p.number, p.client, p.insurer, p.product)).slice(0, PER_GROUP)) {
+        found.push({
+          key: `policy-${p.number}`,
+          group: "Policies",
+          title: p.number,
+          detail: `${p.client} · ${p.product} · ${p.insurer} · ${p.status}`,
+          href: `/policies/${encodeURIComponent(p.number)}`,
         });
       }
       for (const r of renewals

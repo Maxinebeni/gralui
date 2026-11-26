@@ -5,8 +5,6 @@
 // where it came from; the premium and loss date stay as captured.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { NoAccess, PageHeader } from "@/components/gral/shell";
 import { Chip, FloatCard, Loader, NavyButton, OutlineButton, StatTile } from "@/components/gral/ui";
@@ -23,6 +21,7 @@ import { formatRwf } from "@/lib/format";
 import { hasPermission, usesBackendPermissions } from "@/lib/permissions";
 import { formatDate } from "@/lib/renewals";
 import { cn } from "@/lib/utils";
+import { BackLink } from "@/components/gral/back-link";
 
 const INPUT =
   "w-full rounded-xl border border-input bg-card px-3 py-2 text-xs outline-none focus:border-sky focus:ring-2 focus:ring-sky/30";
@@ -70,9 +69,7 @@ export function ExitRegisterView() {
 
   return (
     <>
-      <Link href="/renewals" className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary">
-        <ArrowLeft className="size-3.5" /> Renewals
-      </Link>
+      <BackLink fallbackHref="/renewals" fallbackLabel="Renewals" />
       <PageHeader
         title="Exit register"
         subtitle="Renewals lost each month, and why"

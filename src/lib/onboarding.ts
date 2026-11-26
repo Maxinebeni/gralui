@@ -204,6 +204,9 @@ const BLOCKERS: Record<string, string> = {
   RFQ_DISPATCH_REQUIRED: "The requests for quotations have not been sent yet.",
   RFQ_RESPONSES_UNACCOUNTED: "Every insurer asked must be accounted for: a quote, a decline, or no reply after the due date.",
   QUOTE_REQUIRED: "No quotes recorded yet.",
+  INSURER_LICENSE_REQUIRED:
+    "A current licence check is needed for every insurer you want to use. Record one with “Record an insurer licence check”, then try again.",
+  INSURER_LICENSE_EXPIRED: "The insurer's licence check has expired. Record a new licence check, then try again.",
   SINGLE_SOURCE_APPROVAL_REQUIRED: "Only one insurer quoted, so the MD must approve a single-source exception.",
   APPROVAL_REQUIRED: "The recommendation must be sent for internal approval.",
   APPROVAL_PENDING: "Waiting for the internal approval.",

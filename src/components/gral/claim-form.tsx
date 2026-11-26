@@ -5,6 +5,7 @@
 // working once the claims API (CLM-01) is connected.
 
 import { useEffect, useState } from "react";
+import { focusFirstError } from "@/lib/focus-error";
 import { X } from "lucide-react";
 import { toast } from "sonner";
 import { CenteredModal } from "@/components/gral/shell";
@@ -175,6 +176,7 @@ function NewClaimForm({
     }
     setErrors(found);
     if (Object.keys(found).length > 0) {
+      focusFirstError(e.currentTarget as HTMLFormElement, Object.keys(found));
       toast.error("Please fix the highlighted fields.");
       return;
     }

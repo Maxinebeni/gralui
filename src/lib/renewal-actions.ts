@@ -9,7 +9,7 @@
 // specialist assignment, loss details and recovery plans).
 
 import type { EvidenceInput, RenewalActionInput } from "./api";
-import { RENEWAL_MILESTONES } from "./renewals";
+import { RENEWAL_MILESTONES, formatDate } from "./renewals";
 import type { DocumentClassification, RenewalCase, RenewalMilestoneCode } from "./types";
 
 export type FieldKind =
@@ -530,7 +530,7 @@ export function unknownRenewalActions(c: RenewalCase): string[] {
 /* -------------------------------- Building one -------------------------------- */
 
 /** Checks the form before anything is uploaded. Returns field errors by key. */
-export function checkRenewalValues(spec: RenewalActionSpec, values: Values): Record<string, string> {
+export function checkRenewalValues(spec: RenewalActionSpec, values: Values, renewal?: RenewalCase): Record<string, string> {
   const errors: Record<string, string> = {};
   for (const f of spec.fields) {
     const v = values[f.key];
@@ -557,6 +557,15 @@ export function checkRenewalValues(spec: RenewalActionSpec, values: Values): Rec
   if (typeof start === "string" && typeof end === "string" && start && end && end <= start) {
     errors.expiryDate = "Cover must end after it starts.";
   }
+  // A renewal continues the current cover, so it starts the day after it ends.
+  if (renewal?.expiryDate && typeof start === "string" && start && !errors.effectDate && start !== nextDay(renewal.expiryDate)) {
+    errors.effectDate = `The renewed cover must start the day after the current cover ends, on ${formatDate(nextDay(renewal.expiryDate))}.`;
+  }
+  const premium = Number(String(values.premium ?? "").replace(/[,\s]/g, ""));
+  const paid = Number(String(values.amountPaid ?? "").replace(/[,\s]/g, ""));
+  const net = Number(String(values.netPremium ?? "").replace(/[,\s]/g, ""));
+  if (!errors.amountPaid && premium > 0 && paid > premium) errors.amountPaid = "The amount paid cannot be more than the total premium.";
+  if (!errors.netPremium && premium > 0 && net > premium) errors.netPremium = "The net premium cannot be more than the total premium.";
   return errors;
 }
 

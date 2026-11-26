@@ -38,7 +38,9 @@ export type ClientDoc = {
 };
  
 /** Policy statuses. Active, Lapsed and Cancelled come from the requirements document. */
-export const POLICY_STATUSES = ["Active", "In renewal", "Lapsed", "Cancelled"] as const;
+export const POLICY_STATUSES = ["Active", "In renewal", "Lapsed", "Cancelled", "Not yet in force"] as const;
+/** Statuses a person can choose when recording a policy by hand ("Not yet in force" comes from the dates). */
+export const EDITABLE_POLICY_STATUSES = ["Active", "In renewal", "Lapsed", "Cancelled"] as const;
 export type PolicyStatus = (typeof POLICY_STATUSES)[number];
  
 export type Policy = {
@@ -52,6 +54,8 @@ export type Policy = {
   version?: number;
   classOfInsurance: string;
   insurer: string;
+  /** The insurer's own policy number from the schedule, when recorded. */
+  insurerPolicyNumber?: string;
   /** Optional: the backend's first policy API does not record amounts yet. */
   sumInsured?: number;
   premium?: number;
@@ -162,7 +166,7 @@ export type RenewalMilestoneCode =
 /** One milestone that has been completed on a renewal case. */
 export type CompletedMilestone = {
   code: RenewalMilestoneCode;
-  completedAt: string; // ISO date
+  completedAt: string; // ISO date, or "" when the server did not record it
   completedBy: string;
   note: string;
   evidence?: string; // document name or reference
@@ -331,6 +335,8 @@ export type Claim = {
   step: ClaimStepCode;
   stepStartedAt: string; // ISO date the current step began
   handler: string;
+  /** Backend user id of the handler. Only set for backend claims. */
+  handlerId?: string;
   description: string;
   documents: ClaimDocument[];
   submission?: { submittedAt: string; insurerClaimNo?: string; evidence: string };
@@ -377,6 +383,8 @@ export type EvidenceRef = { name: string; documentId?: string; version?: number 
  
 export type ApprovalRequest = {
   action?: string;
+  /** The returned request this one was resubmitted in place of. */
+  replaces?: string;
   currentStepNumber?: number;
   boardEvidence?: { documentId: string; version: number }[] | null;
   id: string; // e.g. APR-2026-014
@@ -451,7 +459,8 @@ export type WorkTask = {
 /* ------------------------------- Policy detail ------------------------------- */
 // Proposed contract for policy detail (backlog POL-02 to POL-05, TC).
  
-export type PolicyMovementType = "NEW" | "RENEWAL" | "ENDORSEMENT" | "END_R" | "END_N" | "CANCELLATION";
+/** TERMS: the premium or payment figures were changed on a saved policy. */
+export type PolicyMovementType = "NEW" | "RENEWAL" | "ENDORSEMENT" | "END_R" | "END_N" | "CANCELLATION" | "TERMS";
  
 /** One cover period. A renewal adds a new period of the same policy. */
 export type PolicyPeriod = {
@@ -463,7 +472,10 @@ export type PolicyPeriod = {
   totalPremium: number | null;
   movement: PolicyMovementType;
   bookingNote?: string;
+  /** The period in force today. */
   current: boolean;
+  /** Recorded but not started yet (for example the next period after a renewal). */
+  upcoming?: boolean;
 };
  
 export type PolicyMovement = {
@@ -496,11 +508,13 @@ export type PolicyDetail = {
   clientId: string;
   client: string;
   financials: PolicyFinancials;
-  /** Newest first; the first one is the current period. */
+  /** Newest first. The one marked current is in force today (after a renewal the newest may not have started). */
   periods: PolicyPeriod[];
   /** Newest first. */
   movements: PolicyMovement[];
   claims: ClientClaim[];
+  /** True when this person may not read claims, so the claims list is not shown. */
+  claimsHidden?: boolean;
   renewalCaseId?: string;
 };
  
@@ -801,7 +815,9 @@ export type PermissionDefinition = {
 export type ClaimStep = { n: number; name: string; sla: string };
 export type ClaimMonth = { month: string; amount: number; count: number };
 /** One thing someone did, for Recent Activity. `at` is an ISO date or date-time. */
-export type ActivityItem = { at: string; who: string; what: string; module: "Claims" | "Renewals"; href: string };
+export type ActivityModule = "Claims" | "Renewals" | "Approvals" | "Clients" | "Leads";
+/** One thing that happened. who is empty when the record does not say who did it. */
+export type ActivityItem = { at: string; who: string; what: string; module: ActivityModule; href: string };
 
 export type SessionUser = {
   /** Backend user ID (UUID). */

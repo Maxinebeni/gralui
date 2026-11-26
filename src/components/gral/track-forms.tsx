@@ -628,6 +628,12 @@ function RecommendForm({ title, track: t, insurerName, run: execute, destination
         <AmountInput id="rc-comm" value={commission} onChange={setCommission} className={inputClass()} />
       </div>
       <TextInput id="rc-basis" label="How it was worked out" value={basis} onChange={setBasis} />
+      {suggested > 0 && amount > 0 && Math.abs(amount - suggested) > Math.max(1, suggested * 0.01) ? (
+        <p role="status" className="rounded-lg bg-warning-soft px-3 py-2 text-xs text-foreground sm:col-span-2">
+          This differs from the quote&apos;s net premium × commission rate ({formatRwf(suggested)}). The approval tier uses the figure you enter, so
+          check it and explain the difference under &ldquo;How it was worked out&rdquo;.
+        </p>
+      ) : null}
       {tier ? <p className="text-xs text-muted-foreground sm:col-span-2">{TIER_LABEL[tier]}{amount > 0 ? ` (${amountInWords(amount).toLowerCase()} francs)` : ""}.</p> : null}
       <TextInput id="rc-cmp" label="Comparison" value={comparison} onChange={setComparison} multiline wide placeholder="Premium, deductibles, limits, exclusions and claims support of each quote" />
       <TextInput id="rc-why" label="Why this quote" value={rationale} onChange={setRationale} multiline wide />

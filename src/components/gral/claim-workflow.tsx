@@ -5,9 +5,10 @@
 // from here (lib/claim-workflow.ts), and the server's history of the claim.
 
 import { useEffect, useRef, useState } from "react";
+import { focusFirstError } from "@/lib/focus-error";
 import { ChevronDown, FileText, Paperclip } from "lucide-react";
 import { toast } from "sonner";
-import { getClaimHistory, getClaimReadiness, runClaimAction, type ClaimHistoryEvent, type ClaimReadiness } from "@/lib/api";
+import { getClaimHistory, getClaimReadiness, openEvidenceDocument, runClaimAction, type ClaimHistoryEvent, type ClaimReadiness } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import {
   CLAIM_ACTIONS,
@@ -19,7 +20,7 @@ import {
 } from "@/lib/claim-workflow";
 import { CommandAttempt } from "@/lib/command-attempt";
 import { formatRwf } from "@/lib/format";
-import { formatDate } from "@/lib/renewals";
+import { formatDate, kigaliDate } from "@/lib/renewals";
 import type { Claim } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { FilePickButton } from "./documents";
@@ -30,15 +31,52 @@ const INPUT =
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+/** Steps recorded once per claim. */
+const ONE_TIME_STEPS = ["INSURER_ACKNOWLEDGED", "SETTLEMENT_ACKNOWLEDGED"];
+
+/** Fired on window when a claim's documents checklist changes; detail is the claim UUID. */
+export const CLAIM_CHECKLIST_CHANGED = "gral:claim-checklist-changed";
+
 /** Where the claim is, what is missing, and the steps this user can record now. */
 export function BackendClaimWorkflow({ claim, onChanged }: { claim: Claim; onChanged: () => void }) {
   const { user } = useCurrentUser();
   const state = claim.serverState ?? "REGISTERED";
-  const mine = claimActionsFor(user, state);
-  const others = CLAIM_ACTIONS.filter((a) => a.states.includes(state as never) && !mine.includes(a));
+  // The server's record of the claim: the settlement and payment amounts, and steps already done.
+  const [history, setHistory] = useState<ClaimHistoryEvent[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    getClaimHistory(claim)
+      .then((list) => {
+        if (!cancelled) setHistory(list);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [claim]);
+  const done = new Set(history.map((e) => e.action));
+  // Recorded once; the server still allows them again, which only adds a duplicate line.
+  const once = (a: ClaimActionSpec) => !(ONE_TIME_STEPS.includes(a.code) && done.has(a.code));
+  const mine = claimActionsFor(user, state).filter(once);
+  const others = CLAIM_ACTIONS.filter((a) => a.states.includes(state as never) && !mine.includes(a) && once(a));
+  const latest = (action: string) => history.filter((e) => e.action === action).sort((a, b) => b.sequence - a.sequence)[0];
+  const advised = latest("SETTLEMENT_ADVISED");
+  const paid = latest("SETTLEMENT_RECORDED");
+  const closed = latest("CLOSED");
+  const submitted = latest("INSURER_SUBMITTED");
   const [open, setOpen] = useState<string | null>(null);
   const [readiness, setReadiness] = useState<ClaimReadiness | null>(null);
+  const [checklistChanges, setChecklistChanges] = useState(0);
   const preparing = state === "REGISTERED" || state === "DOCUMENTS_PENDING";
+
+  // Reload the readiness when a document is attached in the Documents tab.
+  useEffect(() => {
+    const onChange = (e: Event) => {
+      if ((e as CustomEvent<string | undefined>).detail === claim.uuid) setChecklistChanges((n) => n + 1);
+    };
+    window.addEventListener(CLAIM_CHECKLIST_CHANGED, onChange);
+    return () => window.removeEventListener(CLAIM_CHECKLIST_CHANGED, onChange);
+  }, [claim.uuid]);
 
   useEffect(() => {
     if (!preparing) return;
@@ -53,7 +91,7 @@ export function BackendClaimWorkflow({ claim, onChanged }: { claim: Claim; onCha
     return () => {
       cancelled = true;
     };
-  }, [claim, preparing]);
+  }, [claim, preparing, checklistChanges]);
 
   return (
     <div className={cn("rounded-2xl px-4 py-4", state === "CLOSED" ? "bg-success-soft/50" : "bg-sky-soft/60")}>
@@ -61,6 +99,22 @@ export function BackendClaimWorkflow({ claim, onChanged }: { claim: Claim; onCha
         <p className="text-sm font-semibold">{CLAIM_STATE_LABEL[state] ?? state}</p>
         <span className="text-[11px] text-muted-foreground">Updated {formatDate(claim.stepStartedAt)}</span>
       </div>
+
+      {state === "CLOSED" && closed ? (
+        <p className="mt-2 text-[11px] text-foreground">
+          {[
+            closed.outcome ? `Outcome: ${closed.outcome.toLowerCase().replace(/_/g, " ")}` : null,
+            advised?.amount != null ? `insurer offered ${formatRwf(Number(advised.amount))}` : null,
+            paid?.amount != null ? `${formatRwf(Number(paid.amount))} paid on ${formatDate(kigaliDate(paid.occurredAt))}` : null,
+            submitted?.externalReference ? `insurer's claim ref ${submitted.externalReference}` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+          {closed.summary ? <span className="block text-muted-foreground">{closed.summary}</span> : null}
+        </p>
+      ) : submitted?.externalReference && !preparing ? (
+        <p className="mt-1 text-[11px] text-muted-foreground">Insurer&apos;s claim reference: {submitted.externalReference}</p>
+      ) : null}
 
       {preparing && readiness ? (
         <p className={cn("mt-2 text-[11px]", readiness.ready ? "text-success" : "text-muted-foreground")}>
@@ -74,7 +128,7 @@ export function BackendClaimWorkflow({ claim, onChanged }: { claim: Claim; onCha
         <div className="mt-3 space-y-2">
           {mine.length === 0 ? (
             <p className="text-[11px] text-subtle">
-              Nothing for you to record at this stage.
+              Nothing for you to record at this stage. Another role records the next step.
               {others.length ? ` Others can: ${others.map((a) => a.label.toLowerCase()).join("; ")}.` : ""}
             </p>
           ) : (
@@ -93,6 +147,7 @@ export function BackendClaimWorkflow({ claim, onChanged }: { claim: Claim; onCha
                   <ClaimActionForm
                     claim={claim}
                     spec={a}
+                    advisedAmount={advised?.amount != null ? Number(advised.amount) : undefined}
                     onCancel={() => setOpen(null)}
                     onDone={() => {
                       setOpen(null);
@@ -111,20 +166,47 @@ export function BackendClaimWorkflow({ claim, onChanged }: { claim: Claim; onCha
 
 type Values = Partial<Record<ClaimFieldSpec["key"], string | File | null>>;
 
+/** A warning, not a block: a settlement can legitimately differ from the first estimate. */
+function AmountCheck({ claim, code, text, advised }: { claim: Claim; code?: string; text: string; advised?: number }) {
+  const amount = Number(text.replace(/,/g, ""));
+  if (!text.trim() || !(amount > 0)) return null;
+  let warning: string | null = null;
+  if (code === "SETTLEMENT_ADVISED" && claim.amount > 0 && amount > claim.amount) {
+    warning = `This is more than the estimated loss (${formatRwf(claim.amount)}). Check the insurer's letter before saving.`;
+  } else if (code === "SETTLEMENT_RECORDED" && (advised ?? claim.settlement?.amount ?? 0) > 0 && amount > (advised ?? claim.settlement!.amount)) {
+    warning = `This is more than the settlement the insurer offered (${formatRwf(advised ?? claim.settlement!.amount)}). Check the proof of payment before saving.`;
+  }
+  return warning ? (
+    <p role="status" className="mt-1 rounded-md bg-warning-soft px-2 py-1 text-[11px] text-foreground">
+      {warning}
+    </p>
+  ) : null;
+}
+
 function ClaimActionForm({
   claim,
   spec,
+  advisedAmount,
   onCancel,
   onDone,
 }: {
   claim: Claim;
   spec: ClaimActionSpec;
+  /** The settlement the insurer offered, from the claim's history. */
+  advisedAmount?: number;
   onCancel: () => void;
   onDone: () => void;
 }) {
   const [values, setValues] = useState<Values>({ occurredAt: today() });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  // A document attached since the last try may have fixed the problem: drop the old message.
+  useEffect(() => {
+    const clear = () => setFormError(null);
+    window.addEventListener(CLAIM_CHECKLIST_CHANGED, clear);
+    return () => window.removeEventListener(CLAIM_CHECKLIST_CHANGED, clear);
+  }, []);
   const attempt = useRef(new CommandAttempt());
   const fields: ClaimFieldSpec[] = spec.evidence
     ? [...spec.fields, { key: "file", label: spec.evidence.label, kind: "file", required: spec.evidence.required }]
@@ -146,6 +228,7 @@ function ClaimActionForm({
     }
     setErrors(found);
     if (Object.keys(found).length) {
+      focusFirstError(e.currentTarget as HTMLFormElement, Object.keys(found));
       toast.error("Please fix the highlighted fields.");
       return;
     }
@@ -166,10 +249,14 @@ function ClaimActionForm({
         attempt.current,
       );
       attempt.current.clear();
+      setFormError(null);
       toast.success(`${spec.label}: saved.`);
       onDone();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not save. Please try again.");
+      const message = err instanceof Error ? err.message : "Could not save. Please try again.";
+      // Kept on the form as well: a toast disappears after a few seconds.
+      setFormError(message);
+      toast.error(message);
       if (!attempt.current.uncertain) attempt.current.clear();
     } finally {
       setSaving(false);
@@ -221,10 +308,16 @@ function ClaimActionForm({
             </label>
             {input}
             {f.hint ? <p className="mt-1 text-[11px] text-subtle">{f.hint}</p> : null}
+            {f.kind === "money" ? <AmountCheck claim={claim} code={spec.code} text={text} advised={advisedAmount} /> : null}
             {errors[f.key] ? <p className="mt-1 text-[11px] text-danger">{errors[f.key]}</p> : null}
           </div>
         );
       })}
+      {formError ? (
+        <p role="alert" className="text-[11px] text-danger">
+          {formError}
+        </p>
+      ) : null}
       <div className="flex flex-wrap justify-between gap-2">
         <OutlineButton onClick={onCancel}>Cancel</OutlineButton>
         <NavyButton type="submit" disabled={saving}>
@@ -266,7 +359,7 @@ export function ClaimHistoryList({ claim, only }: { claim: Claim; only?: string[
         <li key={e.id} className="rounded-xl border border-border px-3 py-2.5 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="font-medium">{claimEventLabel(e.action)}</span>
-            <span className="text-[11px] text-muted-foreground">{formatDate(e.occurredAt.slice(0, 10))}</span>
+            <span className="text-[11px] text-muted-foreground">{formatDate(kigaliDate(e.occurredAt))}</span>
           </div>
           {e.summary ? <p className="mt-1 text-muted-foreground">{e.summary}</p> : null}
           <p className="mt-1 text-[11px] text-subtle">
@@ -275,10 +368,28 @@ export function ClaimHistoryList({ claim, only }: { claim: Claim; only?: string[
               e.externalReference ? `Ref ${e.externalReference}` : null,
               e.amount !== null && e.amount !== undefined ? formatRwf(Number(e.amount)) : null,
               e.nextDueDate ? `Next due ${formatDate(e.nextDueDate)}` : null,
-              e.evidenceDocumentId ? "Document attached" : null,
             ]
               .filter(Boolean)
               .join(" · ")}
+            {e.evidenceDocumentId && claim.uuid ? (
+              <>
+                {" · "}
+                <button
+                  type="button"
+                  className="text-primary underline underline-offset-2 hover:opacity-70"
+                  onClick={() =>
+                    openEvidenceDocument(
+                      { type: "CLAIM", id: claim.uuid! },
+                      e.evidenceDocumentId!,
+                      e.evidenceDocumentVersion ?? 1,
+                      CLAIM_ACTIONS.find((a) => a.code === e.action)?.evidence?.purpose ?? "CLAIM_EVIDENCE",
+                    ).catch((err) => toast.error(err instanceof Error ? err.message : "Could not open the file."))
+                  }
+                >
+                  Open document
+                </button>
+              </>
+            ) : null}
           </p>
         </li>
       ))}

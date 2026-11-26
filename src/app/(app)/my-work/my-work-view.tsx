@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useAssignees, useClaims, useRefresh, useRenewals, useTasks } from "@/lib/queries";
+import { teamTasksProblem } from "@/lib/api";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AlarmClock, CalendarDays, CheckCircle2, ListTodo, Plus, X } from "lucide-react";
@@ -13,7 +14,6 @@ import { CardHeader, Chip, FloatCard, NavyButton, OutlineButton, SegmentedTabs, 
 import { usePaged } from "@/components/gral/pager";
 import { cn } from "@/lib/utils";
 import {
-  MOCK_AUTH,
   completeTask,
   createTask,
   reassignTask,
@@ -35,7 +35,7 @@ const TYPE_LABEL: Record<TaskType, string> = {
   APPROVAL: "Approval",
   KYC_DOCUMENT: "KYC",
   ONBOARDING_STEP: "Lead",
-  MANUAL: "Manual task",
+  MANUAL: "Follow-up",
 };
 
 type Scope = "Mine" | "Team" | "Done";
@@ -79,6 +79,8 @@ export function MyWorkView() {
   const scopeTabs: Scope[] = managesTeamWork ? ["Mine", "Team", "Done"] : ["Mine", "Done"];
 
   const { data: tasks = [] } = useTasks(user.role);
+  // Read after the list loads: set when the team list failed and only the user's own tasks came back.
+  const tasksProblem = tasks ? teamTasksProblem() : null;
   const { data: assignees = [] } = useAssignees();
   const [scopeTab, setScopeTab] = useState<Scope>("Mine");
   const [dueFilter, setDueFilter] = useState<DueFilter>("All open");
@@ -142,17 +144,18 @@ export function MyWorkView() {
         title="My work"
         subtitle={`${mine.length} open ${mine.length === 1 ? "task" : "tasks"} for ${user.name}`}
         action={
-          // The backend has no endpoint for manual tasks yet, so they can only be
-          // added in demo mode; elsewhere they would vanish on refresh.
-          MOCK_AUTH ? (
-            <NavyButton className="px-4 py-2 text-sm" onClick={() => setNewOpen(true)}>
-              <Plus className="size-4" /> New task
-            </NavyButton>
-          ) : (
-            <span className="text-xs text-muted-foreground">Adding your own tasks is not connected to the backend yet.</span>
-          )
+          // Follow-up tasks are stored on the backend (on a claim or renewal) and in memory in the demo.
+          <NavyButton className="px-4 py-2 text-sm" onClick={() => setNewOpen(true)}>
+            <Plus className="size-4" /> New task
+          </NavyButton>
         }
       />
+
+      {tasksProblem ? (
+        <p role="alert" className="mt-4 rounded-xl bg-warning-soft px-3 py-2.5 text-xs text-foreground">
+          {tasksProblem}
+        </p>
+      ) : null}
 
       <div className="mt-5 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         <StatTile icon={ListTodo} label="My open tasks" value={String(mine.length)} onClick={() => { setScopeTab("Mine"); setDueFilter("All open"); }} active={scopeTab === "Mine" && dueFilter === "All open"} />
@@ -425,7 +428,7 @@ function TaskPanel({
                   <div>
                     <p className="text-xs">{e.text}</p>
                     <p className="text-[11px] text-subtle">
-                      {formatDate(e.at)} · {e.by}
+                      {formatDate(e.at)}{e.by ? ` · ${e.by}` : ""}
                     </p>
                   </div>
                 </li>
@@ -455,7 +458,8 @@ function NewTaskForm({
   const { data: renewals = [] } = useRenewals();
   const records: RecordOption[] = useMemo(
     () => [
-      ...claims.map((c) => ({
+      // Closed claims and finished renewals take no new work.
+      ...claims.filter((c) => !c.closure).map((c) => ({
         value: `CLAIM:${c.id}`,
         label: `${c.id} · ${c.client}`,
         input: { resourceType: "CLAIM" as const, resourceId: c.id, resourceRef: c.id, client: c.client },

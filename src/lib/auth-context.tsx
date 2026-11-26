@@ -106,8 +106,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       checking = true;
       try {
         const current = await getCurrentUser();
+        // Keep the same object when nothing changed, so the screens do not redraw or reload every check.
         if (!current) expire();
-        else setUser(current);
+        else setUser((prev) => (prev && JSON.stringify(prev) === JSON.stringify(current) ? prev : current));
       } catch {
         // A temporary network failure does not prove the backend session ended.
       } finally {

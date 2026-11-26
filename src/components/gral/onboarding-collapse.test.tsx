@@ -13,7 +13,7 @@ const mock = vi.hoisted(() => ({
 vi.mock("@/lib/api", () => ({ ...mock, MOCK_AUTH: false, DEMO_REVIEWER: "Risk and Compliance Manager" }));
 vi.mock("@/lib/auth-context", () => ({ useCurrentUser: () => ({ user: state.user }) }));
 vi.mock("@/lib/queries", () => ({ useRefresh: () => state.refresh }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }), usePathname: () => "/" }));
 vi.mock("./documents", () => ({ FilePickButton: ({ onFile, children }: { onFile: (file: File) => void; children: React.ReactNode }) => <button type="button" onClick={() => onFile(new File(["proof"], "proof.pdf", { type: "application/pdf" }))}>{children}</button> }));
 vi.mock("./document-preview", () => ({ DocumentPreviewButton: () => <button type="button">Preview document</button> }));
 

@@ -5,6 +5,7 @@
 // done from the lead. The Technical Department is told by the system.
 
 import { CommandAttempt } from "@/lib/command-attempt";
+import { focusFirstError } from "@/lib/focus-error";
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { toast } from "sonner";
@@ -78,7 +79,10 @@ export function LeadForm({ onClose, onCreated }: { onClose: () => void; onCreate
     if (!v.receivedAt || v.receivedAt > todayIso()) found.receivedAt = "Enter the date the enquiry came in (not in the future).";
     if (v.ownerId && !v.assignmentReason.trim()) found.assignmentReason = "Give a reason for assigning this Accounts Executive.";
     setErrors(found);
-    if (Object.keys(found).length) return toast.error("Please fix the highlighted fields.");
+    if (Object.keys(found).length) {
+      focusFirstError(e.currentTarget as HTMLFormElement, Object.keys(found), { contactName: "leadContact", receivedAt: "leadReceived" });
+      return toast.error("Please fix the highlighted fields.");
+    }
     setSaving(true);
     try {
       const created = await registerLead({

@@ -3,32 +3,34 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { PageHeader } from "@/components/gral/shell";
-import { CardHeader, Chip, FloatCard, Loader, Person, SegmentedTabs } from "@/components/gral/ui";
+import { CardHeader, Chip, FloatCard, Loader, SegmentedTabs } from "@/components/gral/ui";
 import { usePaged } from "@/components/gral/pager";
-import { activityFrom } from "@/lib/api";
-import { useClaims, useRenewals } from "@/lib/queries";
+import { useRecentActivity } from "@/lib/queries";
 import { useCurrentUser } from "@/lib/auth-context";
 import { timeAgo } from "@/lib/format";
-import { canAccessPath } from "@/lib/permissions";
-import type { ActivityItem } from "@/lib/types";
+import { ActivityWho } from "@/components/gral/activity-who";
 
 export function ActivityView() {
   const { user } = useCurrentUser();
-  const claims = canAccessPath(user, "/claims");
-  const renewals = canAccessPath(user, "/renewals");
-  const tabs = ["All", ...(claims ? ["Claims"] : []), ...(renewals ? ["Renewals"] : [])] as const;
-
-  const claimsQuery = useClaims(claims);
-  const renewalsQuery = useRenewals(renewals);
-  const loaded = (!claims || !claimsQuery.isPending) && (!renewals || !renewalsQuery.isPending);
-  const items: ActivityItem[] | null = useMemo(
-    () => (loaded ? activityFrom(claims ? (claimsQuery.data ?? []) : [], renewals ? (renewalsQuery.data ?? []) : []) : null),
-    [loaded, claims, renewals, claimsQuery.data, renewalsQuery.data],
-  );
+  const { items, sources } = useRecentActivity(user);
+  const tabs = ["All", ...sources] as const;
   const [tab, setTab] = useState<string>("All");
 
   const rows = useMemo(() => (items ?? []).filter((a) => tab === "All" || a.module === tab), [items, tab]);
   const { items: pageRows, pager } = usePaged(rows, { resetKey: tab });
+
+  if (sources.length === 0) {
+    return (
+      <>
+        <PageHeader title="Activity" />
+        <FloatCard className="mt-5 p-5">
+          <p className="text-sm text-muted-foreground">
+            Your role does not work with claims, renewals, approvals, clients or leads, so there is no activity to show here.
+          </p>
+        </FloatCard>
+      </>
+    );
+  }
 
   return (
     <>
@@ -45,7 +47,7 @@ export function ActivityView() {
                 href={a.href}
                 className="grid gap-2 py-4 hover:opacity-80 sm:grid-cols-[220px_minmax(0,1fr)_auto] sm:items-center sm:gap-6"
               >
-                <Person name={a.who} />
+                <ActivityWho item={a} />
                 <span className="min-w-0 text-sm text-foreground">{a.what}</span>
                 <span className="flex items-center gap-3">
                   <Chip tone="sky">{a.module}</Chip>
@@ -54,7 +56,11 @@ export function ActivityView() {
               </Link>
             </li>
           ))}
-          {items === null ? <li className="py-4 text-xs text-muted-foreground"><Loader label="Loading" /></li> : null}
+          {items === null ? (
+            <li className="py-4 text-xs text-muted-foreground">
+              <Loader label="Loading" />
+            </li>
+          ) : null}
           {items !== null && rows.length === 0 ? <li className="py-4 text-xs text-muted-foreground">Nothing recorded yet.</li> : null}
         </ul>
         {pager}

@@ -15,19 +15,19 @@ import {
   FloatCard,
   Loader,
   NavyButton,
-  Person,
   SegmentedTabs,
   StageBar,
   StatTile,
 } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
 import { formatRwf, timeAgo } from "@/lib/format";
-import { MOCK_AUTH, activityFrom, toClaimSummary } from "@/lib/api";
+import { MOCK_AUTH, toClaimSummary } from "@/lib/api";
 import { claimStateLabel, getDashboardList, type DashboardItem, type DashboardMetric, type OperationsDashboard } from "@/lib/operations-dashboard";
-import { useClaims, useClients, useOperationsDashboard, useRenewals } from "@/lib/queries";
+import { useClaims, useClients, useOperationsDashboard, useRecentActivity, useRenewals } from "@/lib/queries";
+import { ActivityWho } from "@/components/gral/activity-who";
 import { isClosed } from "@/lib/claims";
 import { useCurrentUser } from "@/lib/auth-context";
-import { canAccessPath } from "@/lib/permissions";
+import { canAccessPath, hasPermission, usesBackendPermissions } from "@/lib/permissions";
 import { currentMilestone, daysBetween, daysOverdue, daysToExpiry, formatDate, renewalHealth, todayIso } from "@/lib/renewals";
 import {
   claimStatus,
@@ -176,7 +176,9 @@ export function OverviewView() {
 
   // Real backend: tiles and cards from TC's dashboard (one request). Demo, or a
   // dashboard that cannot be read: worked out from the lists, as before.
-  const dashboardQuery = useOperationsDashboard(!MOCK_AUTH && (canClaims || canRenewals || canClients));
+  // The dashboard needs REPORT_READ; without it the figures come from the lists instead.
+  const canDashboard = !usesBackendPermissions(user) || hasPermission(user, "REPORT_READ");
+  const dashboardQuery = useOperationsDashboard(!MOCK_AUTH && canDashboard && (canClaims || canRenewals || canClients));
   const live = dashboardQuery.data;
 
   const views = VIEWS.filter((v) => (v === "Renewals" ? canRenewals : v === "Clients" ? canClients : canClaims));
@@ -199,7 +201,10 @@ export function OverviewView() {
     }
     return list;
   }, [openClaims, renewals, clients, canClients, role]);
-  const activity: ActivityItem[] = useMemo(() => activityFrom(allClaims, renewals).slice(0, 5), [allClaims, renewals]);
+  const recent = useRecentActivity(user);
+  const activity: ActivityItem[] = useMemo(() => (recent.items ?? []).slice(0, 5), [recent.items]);
+  // Left out for roles with no records to follow, and once loaded with nothing to show.
+  const showActivity = recent.sources.length > 0 && (recent.items === null || recent.items.length > 0);
   const visibleAttention = view === "Clients"
     ? attention.filter((item) => item.module === "Clients")
     : view === "Claims"
@@ -235,9 +240,14 @@ export function OverviewView() {
           </NavyButton>
         </FloatCard>
       ) : null}
+      {!view && showActivity ? (
+        <div className="mt-3">
+          <RecentActivityCard activity={activity} loading={recent.items === null} />
+        </div>
+      ) : null}
 
       {view ? (
-        <Row>
+        <Row single={!showActivity}>
           {visibleAttention.length === 0 ? (
             <div className="h-fit rounded-2xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
               You&apos;re all caught up.
@@ -272,23 +282,7 @@ export function OverviewView() {
             </div>
           </FloatCard>
           )}
-          <FloatCard className="p-4 sm:p-5" delay={340}>
-            <h2 className="text-base font-semibold tracking-tight">Recent activity</h2>
-            {activity.length === 0 ? <p className="mt-4 text-xs text-muted-foreground">Nothing recorded yet.</p> : null}
-            <div className="mt-4 space-y-4">
-              {activity.map((a, i) => (
-                <Link key={`${a.at}-${i}`} href={a.href} className="block min-w-0 hover:opacity-80">
-                  <Person name={a.who} />
-                  <p className="mt-1.5 text-xs text-muted-foreground">
-                    {a.what} · {timeAgo(a.at)}
-                  </p>
-                </Link>
-              ))}
-            </div>
-            <Link href="/activity" className="mt-4 inline-block text-xs font-semibold text-primary underline underline-offset-4 hover:opacity-70">
-              View all
-            </Link>
-          </FloatCard>
+          {showActivity ? <RecentActivityCard activity={activity} loading={recent.items === null} /> : null}
         </Row>
       ) : null}
 
@@ -393,8 +387,31 @@ function Tiles({ items }: { items: { label: string; value: number | string; href
 }
 
 /** Every row below the tiles: a wide card on the left and a side card on the right. */
-function Row({ children }: { children: ReactNode }) {
-  return <div className="mt-3 grid gap-3 sm:gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">{children}</div>;
+function Row({ children, single = false }: { children: ReactNode; single?: boolean }) {
+  return <div className={cn("mt-3 grid gap-3 sm:gap-4", !single && "xl:grid-cols-[minmax(0,1fr)_380px]")}>{children}</div>;
+}
+
+/** The latest five things that happened on records this person can open. */
+function RecentActivityCard({ activity, loading }: { activity: ActivityItem[]; loading: boolean }) {
+  return (
+    <FloatCard className="p-4 sm:p-5" delay={340}>
+      <h2 className="text-base font-semibold tracking-tight">Recent activity</h2>
+      {loading ? <p className="mt-4 text-xs text-muted-foreground">Loading…</p> : null}
+      <div className="mt-4 space-y-4">
+        {activity.map((a, i) => (
+          <Link key={`${a.at}-${i}`} href={a.href} className="block min-w-0 hover:opacity-80">
+            <ActivityWho item={a} />
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              {a.what} · {timeAgo(a.at)}
+            </p>
+          </Link>
+        ))}
+      </div>
+      <Link href="/activity" className="mt-4 inline-block text-xs font-semibold text-primary underline underline-offset-4 hover:opacity-70">
+        View all
+      </Link>
+    </FloatCard>
+  );
 }
 
 function SectionCard({
@@ -617,7 +634,7 @@ function ClientsView({ clients }: { clients: Client[] }) {
   const router = useRouter();
   const top = topClientsByPremium(clients, 15, today);
   const categories = clientsByCategory(clients);
-  const completeFiles = clients.filter((c) => c.docsFiled === c.docsTotal && !c.nonCompliant).length;
+  const completeFiles = clients.filter((c) => fileComplete(c)).length;
   const nonCompliant = clients.filter((c) => c.nonCompliant).length;
 
   const drills: Record<string, Drill> = {
@@ -974,7 +991,7 @@ function LiveClientsView({ d, clients }: { d: OperationsDashboard; clients: Clie
     .map(([label, count]) => ({ label, count }))
     .sort((a, b) => b.count - a.count);
   // Document completeness is not in the dashboard, so it still comes from the client list.
-  const completeFiles = clients.filter((x) => x.docsFiled === x.docsTotal && !x.nonCompliant).length;
+  const completeFiles = clients.filter((x) => fileComplete(x)).length;
   const nonCompliant = clients.filter((x) => x.nonCompliant).length;
   return (
     <>
@@ -1104,4 +1121,10 @@ function LiveSettledChart({ d }: { d: OperationsDashboard }) {
       </ChartCard>
     </div>
   );
+}
+
+/** A backend client's documents live in its KYC review, so its file is complete once KYC is approved. */
+function fileComplete(c: Client) {
+  if (c.nonCompliant) return false;
+  return c.uuid ? c.kyc : c.docsFiled === c.docsTotal;
 }

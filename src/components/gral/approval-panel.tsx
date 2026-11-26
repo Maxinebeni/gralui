@@ -67,11 +67,11 @@ export function ApprovalPanel({
       <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-6 sm:py-5">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-lg font-semibold tracking-tight">{r.title}</span>
+            <span className="min-w-0 text-lg font-semibold tracking-tight break-words">{r.title}</span>
             <Chip tone={statusTone(r) === "warning" ? "warning" : statusTone(r)}>{statusLabel(r)}</Chip>
           </div>
-          <p className="mt-1 text-[10px] text-subtle">Request ID: {r.id}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-1 text-[10px] break-all text-subtle">Request ID: {r.id}</p>
+          <p className="mt-1 text-xs break-words text-muted-foreground">
             {SUBJECT_LABEL[r.subjectType]} ·{" "}
             {canAccessPath(user, recordHref(r.subjectType, r.subjectId).split("?")[0]!) ? (
               <Link href={recordHref(r.subjectType, r.subjectId)} className="text-primary underline underline-offset-2">
@@ -99,7 +99,15 @@ export function ApprovalPanel({
       </div>
 
       <div className="space-y-5 px-4 py-5 sm:px-6">
-        <p className="rounded-xl bg-secondary px-3 py-2.5 text-xs">{r.summary}</p>
+        <p className="rounded-xl bg-secondary px-3 py-2.5 text-xs break-words">{r.summary}</p>
+        {r.replaces ? (
+          <p className="text-xs text-muted-foreground">
+            Resubmitted after an earlier request was returned.{" "}
+            <Link href={`/approvals?request=${encodeURIComponent(r.replaces)}`} className="text-primary underline underline-offset-2">
+              See the earlier request
+            </Link>
+          </p>
+        ) : null}
 
         <section>
           <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Approval steps</h3>
@@ -120,7 +128,7 @@ export function ApprovalPanel({
               Evidence{r.evidenceRequired ? " (required)" : ""}
             </h3>
             {open && !isClaim && !board ? (
-              <FilePickButton onFile={attach} destination={`Evidence for ${r.id} · ${r.title}`}>
+              <FilePickButton onFile={attach} destination={`Approval evidence · ${r.subjectRef}`}>
                 <Paperclip className="size-3.5" /> Attach
               </FilePickButton>
             ) : null}
@@ -161,7 +169,7 @@ export function ApprovalPanel({
                 <div>
                   <p className="text-xs">{e.text}</p>
                   <p className="text-[11px] text-subtle">
-                    {formatDate(e.at)} · {e.by}
+                    {formatDate(e.at)}{e.by ? ` · ${e.by}` : ""}
                   </p>
                 </div>
               </li>
@@ -239,9 +247,17 @@ function DecisionForm({
     }
     setSaving(true);
     try {
-      await decideApproval(r.id, { decision, comment, expectedVersion: r.version }, { name: userName, role });
+      const after = await decideApproval(r.id, { decision, comment, expectedVersion: r.version }, { name: userName, role });
+      // With more steps to go, say whose turn it is rather than "approved".
+      const next = after?.status === "PENDING" ? after.steps.find((s) => s.status === "PENDING") : undefined;
       toast.success(
-        decision === "APPROVE" ? `${r.id} approved.` : decision === "RETURN" ? `${r.id} returned to ${r.requestedBy}.` : `${r.id} rejected.`,
+        decision === "APPROVE"
+          ? next
+            ? `${r.subjectRef}: your step is approved. Now with the ${approvalRoleName(next.role)}.`
+            : `${r.subjectRef}: approved. All steps are done.`
+          : decision === "RETURN"
+            ? `${r.subjectRef}: returned to ${r.requestedBy}.`
+            : `${r.subjectRef}: rejected.`,
       );
       onChanged();
     } catch (err) {
@@ -303,7 +319,7 @@ function ResubmitForm({ request: r, userName, onChanged }: { request: ApprovalRe
         onClick={async () => {
           try {
             await resubmitApproval(r.id, note, userName);
-            toast.success(`${r.id} sent again.`);
+            toast.success(`${r.subjectRef}: sent again.`);
             onChanged();
           } catch (err) {
             toast.error(err instanceof Error ? err.message : "Could not send it again.");

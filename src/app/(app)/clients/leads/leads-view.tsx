@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, Plus, Search } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { PageHeader, SlideOver } from "@/components/gral/shell";
 import { FilterMenu } from "@/components/gral/filter-menu";
 import { usePaged } from "@/components/gral/pager";
@@ -25,6 +25,7 @@ import {
 } from "@/lib/onboarding";
 import { onboardingPermissions } from "@/lib/permissions";
 import type { Lead, PolicyTrack } from "@/lib/types";
+import { BackLink } from "@/components/gral/back-link";
 
 const TABS = ["In progress", "KYC", "Quotes and approval", "Overdue", "Onboarded"] as const;
 type Tab = (typeof TABS)[number];
@@ -123,9 +124,7 @@ export function LeadsView({ full = false }: { full?: boolean }) {
   return (
     <>
       {full ? (
-        <Link href="/clients/leads" className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary">
-          <ArrowLeft className="size-3.5" /> Leads
-        </Link>
+        <BackLink fallbackHref="/clients/leads" fallbackLabel="Leads" />
       ) : null}
       <PageHeader
         title={full ? "All leads" : "Leads"}

@@ -1,6 +1,21 @@
 "use client";
 
-import { Toaster as Sonner } from "sonner";
+import { Toaster as Sonner, toast } from "sonner";
+
+/**
+ * "Someone else changed this…" errors all ask the person to reload, so every
+ * such toast gets a Reload button, wherever it is raised.
+ */
+const CONFLICT = /someone else changed/i;
+const showError = toast.error;
+let patched = false;
+if (!patched) {
+  patched = true;
+  toast.error = ((message, data) =>
+    typeof message === "string" && CONFLICT.test(message) && !data?.action
+      ? showError(message, { ...data, duration: 10_000, action: { label: "Reload", onClick: () => window.location.reload() } })
+      : showError(message, data)) as typeof toast.error;
+}
 
 type ToasterProps = React.ComponentProps<typeof Sonner>;
 

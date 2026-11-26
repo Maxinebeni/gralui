@@ -142,7 +142,11 @@ export function daysOpen(c: Claim) {
 
 /** Label for where the claim is, e.g. "4 · Follow up" or "Disputed". */
 export function stageLabel(c: Claim) {
-  if (isClosed(c)) return c.closure!.outcome === "SETTLED" ? "Closed · settled" : "Closed · rejected";
+  if (isClosed(c)) {
+    // A live claim's list record does not say how it closed; the claim page shows the outcome.
+    const outcome = c.closure!.outcome;
+    return outcome === "SETTLED" || c.settlement ? "Closed · settled" : outcome === "REJECTION_ACCEPTED" ? "Closed · rejected" : "Closed";
+  }
   if (isDisputed(c)) return "Disputed · Claims Committee";
   const s = stepDef(c.step);
   return `${s.n} · ${s.name}`;
@@ -174,6 +178,8 @@ export function claimBlocker(c: Claim): string | null {
   if (isDisputed(c)) return "Claims Committee decision";
   switch (c.step) {
     case "DOCUMENTS": {
+      // Live claims keep their checklist on the server (shown on the claim), not in this list.
+      if (c.uuid) return "Documents pack not marked ready";
       const missing = missingDocuments(c);
       return missing.length ? `Missing ${missing.map((d) => d.name.toLowerCase()).join(", ")}` : null;
     }
@@ -182,6 +188,7 @@ export function claimBlocker(c: Claim): string | null {
       if ((workingDaysLeft(c) ?? 0) < 0) return "Follow-up overdue";
       return null;
     case "SETTLEMENT": {
+      if (c.uuid) return c.serverState === "SETTLEMENT_ADVISED" ? "Settlement to be paid" : null;
       const signer = nextSigner(c);
       if (signer) return `${signer} sign-off`;
       return c.settlement?.paidToClientAt ? null : "Payment to client";

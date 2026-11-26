@@ -26,7 +26,7 @@ export function ProspectClientForm({ lead, onDone }: { lead: Lead; onDone: (save
       await onDone(await linkLeadClient(lead, client, attempt));
     }}><SelectInput id="pr-existing" label="Client" value={clientId} onChange={setClientId} placeholder="Select a client" options={clients.map((c) => ({ value: c.id, label: `${c.name} (${c.id})` }))} wide /></ActionForm> : <>
       <ActionForm submitLabel={review ? "Open the prospect client" : "Review matching clients"} success={review ? "Prospect client opened." : "Duplicate review ready."} onSubmit={async (attempt) => {
-        const input: ProspectInput = { ...draft, registeredName: draft.registeredName.trim(), sector: draft.sector.trim(), address: draft.address.trim(), contactName: draft.contactName.trim(), jobTitle: draft.jobTitle.trim(), email: draft.email.trim(), phone: draft.phone.replace(/[\s()-]/g, "") };
+        const input: ProspectInput = { ...draft, registeredName: draft.registeredName.trim(), sector: draft.sector.trim(), address: draft.address.trim(), contactName: draft.contactName.trim(), jobTitle: draft.jobTitle.trim(), email: draft.email.trim(), phone: rwandaPhone(draft.phone) };
         if ([input.registeredName, input.sector, input.address, input.contactName, input.jobTitle, input.email, input.phone].some((v) => !v)) throw new Error("Fill in every required client field.");
         if (!/^\+250\d{9}$/.test(input.phone)) throw new Error("Use a Rwanda phone number, for example +250788123456.");
         if (!review) { setReview(await checkProspectDuplicates(input)); return; }
@@ -48,4 +48,13 @@ export function ProspectClientForm({ lead, onDone }: { lead: Lead; onDone: (save
       {review?.candidates.map((candidate) => <FloatCard key={candidate.id} className="space-y-3 p-4"><p className="text-sm font-medium">{candidate.name} · {candidate.reference}</p><p className="text-xs text-muted-foreground">Matches: {candidate.matches.join(", ")}</p><ActionForm submitLabel="Link this existing client" success="Existing client linked." disabled={candidate.managerId !== lead.ownerId} disabledReason={candidate.managerId !== lead.ownerId ? "The client must have the same Accounts Executive as this lead. Ask CRM to review the assignment." : undefined} onSubmit={async (attempt) => { await onDone(await linkProspectCandidate(lead, candidate.id, candidate.name, attempt)); }} /></FloatCard>)}
     </>}
   </div>;
+}
+
+/** Accepts 0788 123 456, 788123456 or +250 788 123 456 (as typed on the lead) and returns +250788123456. */
+function rwandaPhone(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length === 12 && digits.startsWith("250")) return `+${digits}`;
+  if (digits.length === 10 && digits.startsWith("0")) return `+250${digits.slice(1)}`;
+  if (digits.length === 9) return `+250${digits}`;
+  return raw.replace(/[\s()-]/g, "");
 }

@@ -40,7 +40,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <AuthProvider>
           <QueryProvider>
             {children}
-            <Toaster position="bottom-right" />
+            <Toaster position="bottom-right" visibleToasts={3} closeButton />
           </QueryProvider>
         </AuthProvider>
       </body>

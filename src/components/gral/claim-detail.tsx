@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, FileText, Flag, Upload, X } from "lucide-react";
+import { Check, FileText, Flag, Pencil, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
@@ -14,6 +14,7 @@ import {
   decideDispute,
   fileClaimDocument,
   getClaimChecklist,
+  listClaimHandlers,
   logClaimFollowUp,
   markClaimChecklistNotApplicable,
   markClaimReadyToSubmit,
@@ -23,12 +24,13 @@ import {
   setClaimFraudFlag,
   signClaimSettlement,
   submitClaimToInsurer,
+  updateClaimHandling,
   uploadDocument,
   type ClaimChecklist,
   type ClaimChecklistItem,
 } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
-import { claimPermissions } from "@/lib/permissions";
+import { claimPermissions, hasPermission, usesBackendPermissions } from "@/lib/permissions";
 import {
   CLAIM_STEP_DEFS,
   claimBlocker,
@@ -41,11 +43,11 @@ import {
   nextSigner,
   stepDef,
 } from "@/lib/claims";
-import { formatDate } from "@/lib/renewals";
-import type { Claim, ClaimFollowUp } from "@/lib/types";
+import { formatDate, kigaliDate } from "@/lib/renewals";
+import type { Claim, ClaimFollowUp, ClaimPriority } from "@/lib/types";
 import { AmountInput } from "./amount-input";
 import { ClaimSlaChip } from "./claim-list";
-import { BackendClaimWorkflow, ClaimHistoryList } from "./claim-workflow";
+import { BackendClaimWorkflow, CLAIM_CHECKLIST_CHANGED, ClaimHistoryList } from "./claim-workflow";
 import { DocumentPanel, FilePickButton } from "./documents";
 import { ReviewDialog } from "./review-dialog";
 import { Chip, Dot, Loader, NavyButton, OutlineButton, Person, PriorityPill, SegmentedTabs } from "./ui";
@@ -71,6 +73,10 @@ export function ClaimDetailPanel({
   const [tab, setTab] = useState<Tab>("Documents");
   const { user } = useCurrentUser();
   const perms = claimPermissions(user.role);
+  const [editingHandling, setEditingHandling] = useState(false);
+  // Same permission as registering a claim; the server refuses closed claims.
+  const canChangeHandling =
+    !isClosed(claim) && (usesBackendPermissions(user) ? hasPermission(user, "CLAIM_REGISTER") : perms.canUpdateClaims);
 
   async function run(action: () => Promise<Claim>, success: string) {
     try {
@@ -104,12 +110,38 @@ export function ClaimDetailPanel({
           </p>
           <p className="mt-1.5 text-xs text-muted-foreground">
             Loss {formatDate(claim.dateOfLoss)} · Reported {formatDate(claim.dateReported)}
-            {claim.policyId ? ` · ${claim.policyId}` : " · Policy not linked"}
+            {claim.policyId
+              ? ` · ${claim.policyId}`
+              : claim.policyPeriodId
+                ? " · Policy number not recorded"
+                : " · No policy linked to this claim"}
             {claim.submission?.insurerClaimNo ? ` · Insurer ref ${claim.submission.insurerClaimNo}` : ""}
           </p>
-          <div className="mt-3">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
             <Person name={claim.handler} />
+            {canChangeHandling && !editingHandling ? (
+              <button
+                type="button"
+                onClick={() => setEditingHandling(true)}
+                className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium text-sky hover:bg-secondary"
+              >
+                <Pencil className="size-3" /> Change priority or handler
+              </button>
+            ) : null}
           </div>
+          {editingHandling ? (
+            <HandlingEditor
+              claim={claim}
+              onCancel={() => setEditingHandling(false)}
+              onSave={async (priority, handlerId) => {
+                const ok = await run(
+                  () => updateClaimHandling(claim.id, { priority, handlerId }, user.name),
+                  "Priority and handler saved",
+                );
+                if (ok) setEditingHandling(false);
+              }}
+            />
+          ) : null}
         </div>
         {onClose ? (
           <button
@@ -204,12 +236,24 @@ export function ClaimDetailPanel({
 function Stepper({ claim }: { claim: Claim }) {
   const currentN = stepDef(claim.step).n;
   const closed = isClosed(claim) || claim.serverState === "CLOSED";
+  // A rejected or disputed claim sits with the Claims Committee during step 4.
+  const dispute =
+    !closed &&
+    (isDisputed(claim) ||
+      ["DISPUTED_REJECTED", "CLAIMS_COMMITTEE_REVIEW", "APPEAL_IN_PROGRESS", "FINAL_DECISION"].includes(claim.serverState ?? ""));
+  const disputeLabel =
+    claim.serverState === "APPEAL_IN_PROGRESS"
+      ? "Appeal to insurer"
+      : claim.serverState === "FINAL_DECISION"
+        ? "Final decision"
+        : "Claims Committee";
   return (
     <div className="mt-4 overflow-x-auto pb-2">
       <div className="flex min-w-[520px] items-start gap-1">
         {CLAIM_STEP_DEFS.map((s) => {
           const done = s.n < currentN || closed;
           const current = s.n === currentN && !closed;
+          const disputeStep = dispute && s.code === "FOLLOW_UP";
           const late = current && claimBlocker(claim) !== null && (isDisputed(claim) || needsEscalation(claim));
           return (
             <div key={s.code} className="flex-1">
@@ -218,8 +262,8 @@ function Stepper({ claim }: { claim: Claim }) {
                   className={cn(
                     "flex size-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold",
                     done && "bg-primary text-primary-foreground",
-                    current && !late && "bg-card text-primary ring-2 ring-sky",
-                    current && late && "bg-card text-warning ring-2 ring-warning",
+                    current && !late && !disputeStep && "bg-card text-primary ring-2 ring-sky",
+                    current && (late || disputeStep) && "bg-card text-warning ring-2 ring-warning",
                     !done && !current && "bg-secondary text-subtle",
                   )}
                 >
@@ -235,9 +279,9 @@ function Stepper({ claim }: { claim: Claim }) {
                   current ? "font-semibold text-foreground" : "text-muted-foreground",
                 )}
               >
-                {s.name}
+                {disputeStep ? disputeLabel : s.name}
               </p>
-              <p className="text-[10px] text-subtle">{s.slaLabel}</p>
+              <p className="text-[10px] text-subtle">{disputeStep ? "decides within 5 working days" : s.slaLabel}</p>
             </div>
           );
         })}
@@ -264,10 +308,21 @@ function CurrentStep({
   if (isClosed(claim)) {
     const c = claim.closure!;
     return (
-      <Box tone="success" title={c.outcome === "SETTLED" ? "Claim closed · settled" : "Claim closed · rejection accepted"}>
+      <Box
+        tone="success"
+        title={
+          c.outcome === "SETTLED" || claim.settlement
+            ? "Claim closed · settled"
+            : c.outcome === "CLOSED"
+              ? "Claim closed"
+              : "Claim closed · rejection accepted"
+        }
+      >
         <p className="text-muted-foreground">
-          Closed {formatDate(c.closedAt)} by {c.by}
+          Closed {formatDate(c.closedAt)}
+          {c.by ? ` by ${c.by}` : ""}
           {claim.settlement ? ` · settled at ${formatRwf(claim.settlement.amount)}` : ""}
+          {claim.settlement?.paidToClientAt ? ` · paid to the client ${formatDate(claim.settlement.paidToClientAt)}` : ""}
         </p>
         <Evidence name={c.evidence} />
       </Box>
@@ -635,6 +690,8 @@ function DocumentsTab({ claim, canUpdate, userName, run }: { claim: Claim; canUp
             onChanged={(next) => {
               setChecklist(next);
               setRefresh((n) => n + 1);
+              // The workflow banner above reads the server's readiness: ask it to reload.
+              window.dispatchEvent(new CustomEvent(CLAIM_CHECKLIST_CHANGED, { detail: claim.uuid }));
             }}
           />
         )}
@@ -783,7 +840,7 @@ function BackendChecklist({
             {item.status === "RECEIVED" ? (
               <Chip tone="success">
                 {item.documentId ? "Received" : "Recorded"}
-                {item.updatedAt ? ` ${formatDate(item.updatedAt.slice(0, 10))}` : ""}
+                {item.updatedAt ? ` ${formatDate(kigaliDate(item.updatedAt))}` : ""}
               </Chip>
             ) : item.status === "NOT_APPLICABLE" ? (
               <Chip>Not applicable</Chip>
@@ -802,6 +859,12 @@ function BackendChecklist({
               <Chip tone="danger">Missing</Chip>
             )}
           </div>
+          {item.status === "MISSING" && item.serverStatus?.toUpperCase() === "RECORDED" ? (
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Noted from the claim record on {item.updatedAt ? formatDate(kigaliDate(item.updatedAt)) : "registration"}. Attach the
+              incident report so the claim can be marked ready.
+            </p>
+          ) : null}
           {item.notApplicableReason ? (
             <p className="mt-1 text-[11px] text-muted-foreground">Reason: {item.notApplicableReason}</p>
           ) : null}
@@ -899,7 +962,7 @@ function EventList({ events, empty }: { events: Claim["history"]; empty: string 
           <div>
             <p className="text-xs text-foreground">{e.text}</p>
             <p className="text-[11px] text-subtle">
-              {formatDate(e.at)} · {e.by}
+              {formatDate(e.at)}{e.by ? ` · ${e.by}` : ""}
             </p>
           </div>
         </li>
@@ -971,5 +1034,96 @@ function EvidenceAction({
         {saving ? "Saving…" : label}
       </NavyButton>
     </div>
+  );
+}
+/** Inline form under the claim header to change its priority and handler. */
+function HandlingEditor({
+  claim,
+  onCancel,
+  onSave,
+}: {
+  claim: Claim;
+  onCancel: () => void;
+  onSave: (priority: ClaimPriority, handlerId?: string) => Promise<void>;
+}) {
+  const [priority, setPriority] = useState<ClaimPriority>(claim.priority);
+  const [handlers, setHandlers] = useState<{ id: string; name: string }[] | null>(null);
+  const [handlerId, setHandlerId] = useState(claim.handlerId ?? "");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    listClaimHandlers()
+      .then((list) => {
+        if (!live) return;
+        // Keep the current handler in the list even if their role has changed since.
+        const current = claim.handlerId && !list.some((h) => h.id === claim.handlerId)
+          ? [{ id: claim.handlerId, name: claim.handler }]
+          : [];
+        setHandlers([...current, ...list]);
+        if (!claim.handlerId && list[0]) setHandlerId(list[0].id);
+      })
+      .catch(() => live && setHandlers([]));
+    return () => {
+      live = false;
+    };
+  }, [claim.handlerId, claim.handler]);
+
+  const unchanged = priority === claim.priority && (handlerId || undefined) === claim.handlerId;
+  const backend = !!claim.uuid;
+
+  return (
+    <form
+      className="mt-3 flex flex-wrap items-end gap-3 rounded-2xl bg-secondary/60 p-3"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (unchanged || saving) return;
+        setSaving(true);
+        try {
+          await onSave(priority, handlerId || undefined);
+        } finally {
+          setSaving(false);
+        }
+      }}
+    >
+      <label className="text-xs text-muted-foreground">
+        Priority
+        <select
+          className={cn(INPUT, "mt-1 block w-32")}
+          value={priority}
+          onChange={(e) => setPriority(e.target.value as ClaimPriority)}
+        >
+          <option value="P1">P1 · Urgent</option>
+          <option value="P2">P2 · Normal</option>
+          <option value="P3">P3 · Low</option>
+        </select>
+      </label>
+      {backend ? (
+        <label className="min-w-48 flex-1 text-xs text-muted-foreground">
+          Handler
+          <select
+            className={cn(INPUT, "mt-1 block")}
+            value={handlerId}
+            disabled={!handlers}
+            onChange={(e) => setHandlerId(e.target.value)}
+          >
+            {!handlers ? <option value={handlerId}>Loading…</option> : null}
+            {handlers?.map((h) => (
+              <option key={h.id} value={h.id}>
+                {h.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      <div className="flex gap-2">
+        <OutlineButton type="button" onClick={onCancel} disabled={saving}>
+          Cancel
+        </OutlineButton>
+        <NavyButton type="submit" disabled={unchanged || saving || (backend && !handlerId)}>
+          {saving ? "Saving…" : "Save"}
+        </NavyButton>
+      </div>
+    </form>
   );
 }

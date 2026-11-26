@@ -5,8 +5,7 @@
 
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { ClaimDetailPanel } from "@/components/gral/claim-detail";
 import { usePaged } from "@/components/gral/pager";
 import { ALL_OPTION, ClearFilters, FilterMenu, optionsFrom } from "@/components/gral/filter-menu";
@@ -28,6 +27,7 @@ import {
   workingDaysLeft,
 } from "@/lib/claims";
 import type { Claim } from "@/lib/types";
+import { BackLink } from "./back-link";
 
 export const CLAIM_TABS = [
   "Breached",
@@ -181,10 +181,8 @@ export function ClaimPage({
 }) {
   return (
     <>
-      <Link href={backHref} scroll={false} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="size-4" /> {backLabel}
-      </Link>
-      <FloatCard className="mt-4 overflow-hidden">
+      <BackLink fallbackHref={backHref} fallbackLabel={backLabel} recordParam="claim" />
+      <FloatCard className="overflow-hidden">
         <ClaimDetailPanel key={claim.id} claim={claim} onChanged={onChanged} />
       </FloatCard>
     </>
