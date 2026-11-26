@@ -4075,7 +4075,7 @@ export async function policyTrackCatalog(classCode?: "LIFE" | "NON_LIFE"): Promi
   }));
   const insurers = activeInsurers.map((insurer) => {
     const type = insurerTypes?.find((item) => item.code === insurer.typeCode);
-    const coverageTypes = insurer.typeCode === "LIFE" || insurer.typeCode === "NON_LIFE"
+    const coverageTypes: ("LIFE" | "NON_LIFE")[] = insurer.typeCode === "LIFE" || insurer.typeCode === "NON_LIFE"
       ? [insurer.typeCode]
       : coverageTypesFor(`${type?.name ?? ""} ${type?.code ?? insurer.typeCode}`);
     if (!coverageTypes.length) coverageTypes.push("NON_LIFE");
