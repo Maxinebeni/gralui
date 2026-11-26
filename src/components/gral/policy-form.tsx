@@ -7,15 +7,17 @@
 // an insurer is chosen, the class list shows only the products it offers.
  
 import { useEffect, useState } from "react";
+import { focusFirstError } from "@/lib/focus-error";
 import { toast } from "sonner";
 import { NavyButton, OutlineButton } from "./ui";
 import { Field, Section, describedBy, inputClass } from "./client-form";
 import { AmountInput } from "./amount-input";
 import { ReviewDialog } from "./review-dialog";
 import { groupDigits, policyAmountWarnings } from "@/lib/amounts";
+import { formatRwf } from "@/lib/format";
 import { createPolicy, getPolicyCatalog, productsForInsurer, updatePolicy, type PolicyCatalog, type PolicyInput } from "@/lib/api";
 import { INSURER_GROUPS, PRODUCT_GROUPS, type OptionGroup } from "@/lib/reference-data";
-import { POLICY_STATUSES, type Client, type Policy, type PolicyStatus } from "@/lib/types";
+import { EDITABLE_POLICY_STATUSES, type Client, type Policy, type PolicyStatus } from "@/lib/types";
  
 type FormValues = {
   id: string;
@@ -29,6 +31,8 @@ type FormValues = {
   start: string;
   renewal: string;
   status: PolicyStatus | "";
+  /** Why a saved policy's figures are changing (kept with the change on GRAL's system). */
+  reason: string;
 };
  
 type Errors = Partial<Record<keyof FormValues, string>>;
@@ -45,6 +49,7 @@ const EMPTY: FormValues = {
   start: "",
   renewal: "",
   status: "Active",
+  reason: "",
 };
  
 /** "12 Mar 2026" style text to the yyyy-mm-dd a date box needs. Empty if it cannot be read. */
@@ -80,6 +85,7 @@ function fromPolicy(p: Policy): FormValues {
     start: toInputDate(p.start),
     renewal: toInputDate(p.renewal),
     status: p.status,
+    reason: "",
   };
 }
  
@@ -93,6 +99,8 @@ function validate(
   v: FormValues,
   allowed: { classes: string[]; insurers: string[] },
   numberGenerated = false,
+  /** On GRAL's system: sum insured and status are not stored, and edits need a reason. */
+  server: { saved: boolean; editing: boolean } = { saved: false, editing: false },
 ): Errors {
   const e: Errors = {};
   if (!numberGenerated && !v.id.trim()) e.id = "Enter the policy number issued by the insurer.";
@@ -105,9 +113,9 @@ function validate(
  
   const sum = toAmount(v.sumInsured);
   const premium = toAmount(v.premium);
-  if (!Number.isFinite(sum) || sum <= 0) e.sumInsured = "Enter the sum insured in RWF, numbers only.";
+  if (!server.saved && (!Number.isFinite(sum) || sum <= 0)) e.sumInsured = "Enter the sum insured in RWF, numbers only.";
   if (!Number.isFinite(premium) || premium <= 0) e.premium = "Enter the total premium in RWF, numbers only.";
-  if (!e.sumInsured && !e.premium && premium > sum) {
+  if (!server.saved && !e.sumInsured && !e.premium && premium > sum) {
     e.premium = "The premium cannot be more than the sum insured.";
   }
  
@@ -117,13 +125,16 @@ function validate(
   if (!Number.isFinite(net) || net <= 0) e.netPremium = "Enter the net premium in RWF, numbers only.";
   else if (!e.premium && net > premium) e.netPremium = "The net premium cannot be more than the total premium.";
   if (!Number.isFinite(paid) || paid < 0) e.amountPaid = "Enter the amount paid so far in RWF (0 if nothing yet).";
+  else if (!e.premium && Number.isFinite(premium) && premium > 0 && paid > premium) e.amountPaid = "The amount paid cannot be more than the total premium.";
   if (!Number.isFinite(rate) || rate < 0 || rate > 100) e.commissionRate = "Enter the commission rate as a percentage, e.g. 15.";
  
   if (!v.start) e.start = "Choose the start date.";
   if (!v.renewal) e.renewal = "Choose the renewal date.";
   if (v.start && v.renewal && v.renewal <= v.start) e.renewal = "The renewal date must be after the start date.";
  
-  if (!v.status) e.status = "Choose the status.";
+  if (!server.saved && !v.status) e.status = "Choose the status.";
+  if (server.saved && server.editing && v.reason.trim().length < 5)
+    e.reason = "Say why the figures are changing, e.g. \"Insurer endorsement 02: two vehicles added\".";
   return e;
 }
  
@@ -193,6 +204,11 @@ export function PolicyForm({
   const noProductsForInsurer = offered !== null && offered.length === 0;
   // For new policies on GRAL's system, the backend generates the policy number.
   const numberGenerated = catalog.fromBackend && !policy;
+  // On GRAL's system the server keeps the policy: its number, insurer, class and
+  // dates are fixed once saved, and it does not store sum insured or status
+  // (status follows the cover dates).
+  const onServer = catalog.fromBackend || !!policy?.uuid;
+  const locked = editing && onServer;
   // Set once the form is valid: the figures to check before saving.
   const [review, setReview] = useState<{ input: PolicyInput; warnings: string[] } | null>(null);
   const allowed = {
@@ -207,9 +223,14 @@ export function PolicyForm({
  
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const found = validate(values, allowed, numberGenerated);
+    const found = validate(values, allowed, numberGenerated, { saved: onServer, editing });
+    if (Object.keys(found).length === 0 && locked && policy && changedFigures(policy, values).length === 0) {
+      toast.error("Nothing has changed. Change a figure, or cancel.");
+      return;
+    }
     setErrors(found);
     if (Object.keys(found).length > 0) {
+      focusFirstError(e.currentTarget as HTMLFormElement, Object.keys(found));
       toast.error("Please fix the highlighted fields.");
       return;
     }
@@ -218,18 +239,18 @@ export function PolicyForm({
       id: values.id.trim().toUpperCase(),
       classOfInsurance: values.classOfInsurance,
       insurer: values.insurer,
-      sumInsured: toAmount(values.sumInsured),
+      sumInsured: onServer ? (policy?.sumInsured ?? 0) : toAmount(values.sumInsured),
       premium: toAmount(values.premium),
       netPremium: toAmount(values.netPremium),
       amountPaid: toAmount(values.amountPaid),
       commissionRate: toAmount(values.commissionRate) / 100,
       start: toDisplayDate(values.start),
       renewal: toDisplayDate(values.renewal),
-      status: values.status as PolicyStatus,
+      status: onServer ? (policy?.status ?? "Active") : (values.status as PolicyStatus),
     };
     const warnings = policyAmountWarnings(
       {
-        sumInsured: toAmount(values.sumInsured),
+        sumInsured: onServer ? Number.NaN : toAmount(values.sumInsured),
         premium: toAmount(values.premium),
         netPremium: toAmount(values.netPremium),
         amountPaid: toAmount(values.amountPaid),
@@ -246,7 +267,7 @@ export function PolicyForm({
     setSaving(true);
     try {
       const updated = policy
-        ? await updatePolicy(client.id, policy.id, input)
+        ? await updatePolicy(client.id, policy.id, input, values.reason.trim())
         : await createPolicy(client.id, input);
       toast.success(policy ? `Policy ${input.id} updated.` : input.id ? `Policy ${input.id} added to ${client.name}.` : `Policy added to ${client.name}.`);
       setReview(null);
@@ -266,13 +287,15 @@ export function PolicyForm({
         {editing ? `Edit policy ${policy?.id}` : `Add policy for ${client.name}`}
       </h3>
       <p className="mt-1 text-xs text-muted-foreground">
-        All fields are required. Amounts are in RWF. Balance and commission are worked out automatically.
+        {locked
+          ? "Change the premium and payment figures. Balance and commission are worked out automatically."
+          : "All fields are required. Amounts are in RWF. Balance and commission are worked out automatically."}
       </p>
       {catalog.fromBackend ? (
         <p className="mt-2 rounded-xl bg-pale px-3 py-2 text-[11px] text-muted-foreground">
           {policy
-            ? "The policy number, insurer, class and dates cannot be changed here. Premium and payment changes are saved to GRAL's system with their history."
-            : "GRAL's system gives the policy its number when you save. The sum insured and status stay on this screen until the system can store them."}
+            ? "The policy number, insurer, class and cover dates are fixed. Each change to the figures is saved as a new version, with your reason, and shows in the policy's history."
+            : "GRAL's system gives the policy its number when you save. Its status follows the cover dates."}
         </p>
       ) : null}
  
@@ -302,6 +325,7 @@ export function PolicyForm({
               placeholder="Select an insurer"
               groups={insurerGroups}
               error={errors.insurer}
+              disabled={locked}
             />
           </Field>
           <Field id="classOfInsurance" label="Class of insurance" error={errors.classOfInsurance} wide>
@@ -312,6 +336,7 @@ export function PolicyForm({
               placeholder={values.insurer ? "Select a class" : "Choose the insurer first"}
               groups={classGroups}
               error={errors.classOfInsurance}
+              disabled={locked}
             />
             {noProductsForInsurer ? (
               <p className="mt-1.5 text-xs text-warning">
@@ -322,16 +347,18 @@ export function PolicyForm({
         </Section>
  
         <Section title="Cover and premium">
-          <Field id="sumInsured" label="Sum insured (RWF)" error={errors.sumInsured}>
-            <AmountInput
-              id="sumInsured"
-              value={values.sumInsured}
-              onChange={(v) => set("sumInsured", v)}
-              placeholder="e.g. 250000000"
-              className={inputClass(errors.sumInsured)}
-              {...describedBy("sumInsured", errors.sumInsured)}
-            />
-          </Field>
+          {onServer ? null : (
+            <Field id="sumInsured" label="Sum insured (RWF)" error={errors.sumInsured}>
+              <AmountInput
+                id="sumInsured"
+                value={values.sumInsured}
+                onChange={(v) => set("sumInsured", v)}
+                placeholder="e.g. 250000000"
+                className={inputClass(errors.sumInsured)}
+                {...describedBy("sumInsured", errors.sumInsured)}
+              />
+            </Field>
+          )}
           <Field id="premium" label="Total premium (RWF)" error={errors.premium}>
             <AmountInput
               id="premium"
@@ -375,13 +402,14 @@ export function PolicyForm({
           </Field>
         </Section>
  
-        <Section title="Dates and status">
+        <Section title={onServer ? "Cover dates" : "Dates and status"}>
           <Field id="start" label="Start date" error={errors.start}>
             <input
               id="start"
               type="date"
               value={values.start}
               onChange={(e) => set("start", e.target.value)}
+              disabled={locked}
               className={inputClass(errors.start)}
               {...describedBy("start", errors.start)}
             />
@@ -392,10 +420,12 @@ export function PolicyForm({
               type="date"
               value={values.renewal}
               onChange={(e) => set("renewal", e.target.value)}
+              disabled={locked}
               className={inputClass(errors.renewal)}
               {...describedBy("renewal", errors.renewal)}
             />
           </Field>
+          {onServer ? null : (
           <Field id="status" label="Status" error={errors.status} wide>
             <select
               id="status"
@@ -404,14 +434,32 @@ export function PolicyForm({
               className={inputClass(errors.status)}
               {...describedBy("status", errors.status)}
             >
-              {POLICY_STATUSES.map((s) => (
+              {EDITABLE_POLICY_STATUSES.map((s) => (
                 <option key={s} value={s}>
                   {s}
                 </option>
               ))}
             </select>
           </Field>
+          )}
         </Section>
+
+        {locked ? (
+          <Section title="Reason for the change">
+            <Field id="reason" label="Why are the figures changing?" error={errors.reason} wide>
+              <textarea
+                id="reason"
+                rows={2}
+                maxLength={500}
+                value={values.reason}
+                onChange={(e) => set("reason", e.target.value)}
+                placeholder="e.g. Insurer endorsement 02: two vehicles added"
+                className={inputClass(errors.reason)}
+                {...describedBy("reason", errors.reason)}
+              />
+            </Field>
+          </Section>
+        ) : null}
       </div>
  
       <div className="mt-6 flex justify-between gap-2">
@@ -427,13 +475,19 @@ export function PolicyForm({
         open={review !== null}
         title={editing ? `Check policy ${review?.input.id ?? ""}` : `Check the new policy for ${client.name}`}
         rows={
-          review
+          review && locked && policy
             ? [
-                { label: "Sum insured", amount: review.input.sumInsured! },
+                ...changedFigures(policy, values).map((c) => ({ label: c.label, value: `${c.before} → ${c.after}` })),
+                { label: "Policy number", value: review.input.id },
+                { label: "Reason", value: values.reason.trim() },
+              ]
+            : review
+            ? [
+                ...(onServer ? [] : [{ label: "Sum insured", amount: review.input.sumInsured! }]),
                 { label: "Total premium", amount: review.input.premium! },
                 { label: "Net premium", amount: review.input.netPremium! },
                 { label: "Amount paid", amount: review.input.amountPaid! },
-                { label: "Policy number", value: review.input.id },
+                { label: "Policy number", value: review.input.id || "Given by GRAL's system when you save" },
                 { label: "Class and insurer", value: `${review.input.classOfInsurance} · ${review.input.insurer}` },
                 { label: "Commission rate", value: `${values.commissionRate}%` },
                 { label: "Cover", value: `${review.input.start} to ${review.input.renewal}` },
@@ -458,6 +512,7 @@ function GroupedSelect({
   placeholder,
   groups,
   error,
+  disabled,
 }: {
   id: string;
   value: string;
@@ -465,11 +520,13 @@ function GroupedSelect({
   placeholder: string;
   groups: OptionGroup[];
   error?: string;
+  disabled?: boolean;
 }) {
   return (
     <select
       id={id}
       value={value}
+      disabled={disabled}
       onChange={(e) => onChange(e.target.value)}
       className={inputClass(error)}
       {...describedBy(id, error)}
@@ -486,4 +543,22 @@ function GroupedSelect({
       ))}
     </select>
   );
+}
+/** The figures that differ from the saved policy, as "before" and "after" text for the review. */
+function changedFigures(p: Policy, v: FormValues): { label: string; before: string; after: string }[] {
+  const money = (n: number | undefined) => (n === undefined || Number.isNaN(n) ? "Not recorded" : formatRwf(n));
+  const rows: { label: string; before: string; after: string }[] = [];
+  const add = (label: string, before: number | undefined, after: number) => {
+    if (before === after) return;
+    rows.push({ label, before: money(before), after: money(after) });
+  };
+  add("Total premium", p.premium || undefined, toAmount(v.premium));
+  add("Net premium", p.netPremium, toAmount(v.netPremium));
+  add("Amount paid", p.amountPaid, toAmount(v.amountPaid));
+  const rate = toAmount(v.commissionRate) / 100;
+  if (p.commissionRate === undefined || Math.abs(p.commissionRate - rate) > 1e-9) {
+    const pct = (n: number | undefined) => (n === undefined ? "Not recorded" : `${+(n * 100).toFixed(2)}%`);
+    rows.push({ label: "Commission rate", before: pct(p.commissionRate), after: pct(rate) });
+  }
+  return rows;
 }

@@ -24,6 +24,7 @@ import {
   ChartCard,
   FloatCard,
   NavyButton,
+  NotConnected,
   OutlineButton,
   QuickAction,
   QuickActionRow,
@@ -31,8 +32,9 @@ import {
   SegmentedTabs,
   StatTile,
 } from "@/components/gral/ui";
-import { getPoliciesByInsurer } from "@/lib/api";
+import { MOCK_AUTH, getPoliciesByInsurer } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
+import { hasPermission } from "@/lib/permissions";
 import type { ClientFileTab } from "@/components/gral/client-file";
 import type { Client, ClientType, InsurerSummary } from "@/lib/types";
 
@@ -48,7 +50,8 @@ export function ClientsView() {
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
-    getPoliciesByInsurer().then(setInsurers);
+    // The per-insurer figures are sample data, shown in demo mode only.
+    if (MOCK_AUTH) getPoliciesByInsurer().then(setInsurers);
   }, []);
 
   // The Add Client form loads the manager list from the backend by itself,
@@ -63,13 +66,15 @@ export function ClientsView() {
   // counts the clients it applies to; the button opens the next one where the
   // work is done, and the count goes down as each is finished.
   const router = useRouter();
-  const kycPage = (c: Client) => () => router.push(`/clients/kyc/${encodeURIComponent(c.id)}?mode=client`);
+  const kycPage = (c: Client) => () => router.push(`/clients/kyc/${encodeURIComponent(c.uuid ?? c.id)}?mode=client`);
   const [fileTab, setFileTab] = useState<ClientFileTab | undefined>();
   const filePage = (tab: ClientFileTab) => (c: Client) => () => {
     setFileTab(tab);
     setOpen(c);
   };
   const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  // Only actions this person can take: a read-only role (Internal Audit, say) sees none.
+  const can = (permission: string) => MOCK_AUTH || hasPermission(user, permission);
   const quickActions = [
     {
       key: "kyc-waiting",
@@ -78,6 +83,7 @@ export function ClientsView() {
       label: "Review",
       open: kycPage,
       primary: true,
+      allowed: can("KYC_DECIDE"),
     },
     {
       key: "kyc-returned",
@@ -86,6 +92,7 @@ export function ClientsView() {
       label: "Fix",
       open: kycPage,
       primary: false,
+      allowed: can("KYC_PREPARE"),
     },
     {
       key: "kyc-not-started",
@@ -94,6 +101,7 @@ export function ClientsView() {
       label: "Start KYC",
       open: kycPage,
       primary: false,
+      allowed: can("KYC_PREPARE"),
     },
     {
       key: "documents",
@@ -102,6 +110,7 @@ export function ClientsView() {
       label: "Add documents",
       open: filePage("KYC and compliance"),
       primary: false,
+      allowed: can("DOCUMENT_UPLOAD"),
     },
     {
       key: "no-policy",
@@ -110,8 +119,9 @@ export function ClientsView() {
       label: "Add policy",
       open: filePage("Policies"),
       primary: false,
+      allowed: can("POLICY_CREATE"),
     },
-  ].filter((a) => a.list.length > 0);
+  ].filter((a) => a.allowed && a.list.length > 0);
 
   const typeSegments = CLIENT_TYPES.map((t) => ({
     label: t,
@@ -224,6 +234,9 @@ export function ClientsView() {
               { label: "Premium (RWF m)", tone: "sky" },
             ]}
           >
+            {!MOCK_AUTH ? (
+              <NotConnected what="Policies by insurer" />
+            ) : (
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={insurers} margin={{ top: 4, right: 8, left: -14, bottom: 0 }}>
                 <CartesianGrid stroke="var(--border)" strokeDasharray="4 4" vertical={false} />
@@ -234,6 +247,7 @@ export function ClientsView() {
                 <Bar dataKey="premium" name="Premium (RWF m)" fill="var(--sky)" radius={[6, 6, 0, 0]} barSize={14} />
               </BarChart>
             </ResponsiveContainer>
+            )}
           </ChartCard>
         </div>
       </details>

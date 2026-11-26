@@ -2,9 +2,9 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { PageHeader } from "@/components/gral/shell";
 import { DocumentPanel } from "@/components/gral/documents";
+import { PaymentTermsCard } from "@/components/gral/payment-terms-card";
 import { Td, Th } from "@/components/gral/claim-list";
 import { CardHeader, Chip, FloatCard, NotRecorded, PageLoader, Recorded } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
@@ -12,9 +12,10 @@ import { formatRwf } from "@/lib/format";
 import { getPolicyDetail } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { recordHref } from "@/lib/links";
-import { canAccessPath, documentPermissions } from "@/lib/permissions";
+import { canAccessPath, documentPermissions, hasPermission } from "@/lib/permissions";
 import { daysBetween, formatDate, todayIso } from "@/lib/renewals";
 import type { PolicyDetail, PolicyMovementType } from "@/lib/types";
+import { BackLink } from "@/components/gral/back-link";
 
 const MOVEMENT_LABEL: Record<PolicyMovementType, string> = {
   NEW: "New business",
@@ -23,6 +24,7 @@ const MOVEMENT_LABEL: Record<PolicyMovementType, string> = {
   END_R: "Endorsement (renewal)",
   END_N: "Endorsement (change)",
   CANCELLATION: "Cancellation",
+  TERMS: "Figures updated",
 };
 
 const amount = (v: number | null) => (v === null ? <NotRecorded /> : formatRwf(v));
@@ -70,24 +72,29 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
   }
 
   const { policy: p, financials: f } = detail;
-  const current = detail.periods[0]!;
+  // The period in force today (after a renewal, the newest one may not have started yet).
+  const inForce = detail.periods.find((x) => x.current);
+  const current = inForce ?? detail.periods.find((x) => x.upcoming) ?? detail.periods[0]!;
+  const notStarted = !inForce && !!current.from && current.from > todayIso();
+  // After a renewal the next period is already on file, so the countdown is not to a renewal.
+  const nextPeriod = inForce ? detail.periods.find((x) => x.upcoming) : undefined;
   const daysLeft = current.to ? daysBetween(todayIso(), current.to) : null;
 
   return (
     <>
-      <Link
-        href={`/clients?client=${encodeURIComponent(detail.clientId)}`}
-        className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary"
-      >
-        <ArrowLeft className="size-3.5" /> {detail.client}
-      </Link>
-      <PageHeader title={p.id} subtitle={`${p.classOfInsurance} · ${p.insurer}`} />
+      <BackLink fallbackHref={`/clients?client=${encodeURIComponent(detail.clientId)}`} fallbackLabel={detail.client} />
+      <PageHeader
+        title={p.id}
+        subtitle={`${p.classOfInsurance} · ${p.insurer}${p.insurerPolicyNumber && p.insurerPolicyNumber !== p.id ? ` · insurer's number ${p.insurerPolicyNumber}` : ""}`}
+      />
 
       {/* No summary tiles: the money figures stay in the Financials card, not in large type at the top. */}
       <div className="mt-5 grid gap-3 sm:gap-4 xl:grid-cols-[1fr_360px]">
         <div className="min-w-0 space-y-3 sm:space-y-4">
           <FloatCard className="p-4 sm:p-5" delay={120}>
-            <h2 className="text-base font-semibold tracking-tight">Financials · current period</h2>
+            <h2 className="text-base font-semibold tracking-tight">
+              {notStarted && current.from ? `Financials · cover starts ${formatDate(current.from)}` : "Financials · current period"}
+            </h2>
             <dl className="mt-4 divide-y divide-border text-xs">
               <Row label="Sum insured" value={amount(f.sumInsured)} />
               <Row label="Net premium" value={amount(f.netPremium)} />
@@ -112,7 +119,7 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
               <Row label="Commission" hint="Net premium × commission rate" value={amount(f.commission)} />
             </dl>
             <p className="mt-3 text-[11px] text-subtle">
-              Balance and commission are worked out by the system. Update the terms from the client file (Edit policy).
+              Balance and commission are worked out by the system. To change the figures, use Edit policy in the client file; each change is kept in the history below.
             </p>
           </FloatCard>
 
@@ -138,6 +145,10 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
                         {period.current ? (
                           <span className="ml-2">
                             <Chip tone="sky">Current</Chip>
+                          </span>
+                        ) : period.upcoming ? (
+                          <span className="ml-2">
+                            <Chip>Starts {formatDate(period.from)}</Chip>
                           </span>
                         ) : null}
                       </Td>
@@ -186,12 +197,16 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
           <FloatCard className="p-5" delay={160}>
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-base font-semibold tracking-tight">Status</h2>
-              <Chip tone={p.status === "Active" ? "success" : p.status === "In renewal" ? "warning" : "neutral"}>{p.status}</Chip>
+              <Chip tone={p.status === "Active" ? "success" : p.status === "In renewal" ? "warning" : p.status === "Not yet in force" ? "sky" : "neutral"}>{p.status}</Chip>
             </div>
             <p className="mt-3 text-xs text-muted-foreground">
               {current.from ? formatDate(current.from) : <NotRecorded />} to {current.to ? formatDate(current.to) : <NotRecorded />}
             </p>
-            {daysLeft !== null ? (
+            {notStarted && current.from ? (
+              <p className="mt-1 text-xs text-muted-foreground">Cover starts in {daysBetween(todayIso(), current.from)} days</p>
+            ) : nextPeriod?.from ? (
+              <p className="mt-1 text-xs text-success">Renewed · the next period starts {formatDate(nextPeriod.from)}</p>
+            ) : daysLeft !== null ? (
               <p className={cn("mt-1 text-xs", daysLeft < 0 ? "font-medium text-danger" : "text-muted-foreground")}>
                 {daysLeft < 0 ? `Expired ${Math.abs(daysLeft)} days ago` : `${daysLeft} days until renewal`}
               </p>
@@ -203,6 +218,11 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
             ) : null}
           </FloatCard>
 
+          {p.uuid && current.periodId ? (
+            <PaymentTermsCard periodId={current.periodId} canEdit={hasPermission(user, "POLICY_FINANCIAL_UPDATE")} />
+          ) : null}
+
+          {detail.claimsHidden ? null : (
           <FloatCard className="p-5" delay={220}>
             <h2 className="text-base font-semibold tracking-tight">Claims on this policy</h2>
             <div className="mt-3 space-y-2">
@@ -230,16 +250,18 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
               })}
             </div>
           </FloatCard>
+          )}
 
           <FloatCard className="p-5" delay={280}>
+            {/* Backend policies store their documents by the policy's ID. */}
             <DocumentPanel
-              subject={{ type: "POLICY", id: p.id }}
+              subject={{ type: "POLICY", id: p.uuid ?? p.id }}
               classification="POLICY_SCHEDULE"
               purpose="POLICY_SCHEDULE"
               canUpload={canUpload}
               canReplace={canReplace}
               title="Policy documents"
-              emptyText={p.uuid ? "No files yet. Policy files stay in this tab until the backend accepts policy documents." : "No schedule or endorsement uploaded yet."}
+              emptyText="No schedule or endorsement uploaded yet."
             />
           </FloatCard>
         </div>

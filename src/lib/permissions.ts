@@ -27,7 +27,7 @@ export type NavItem = {
  * table, dev branch). Add "CLAIM" and "RENEWAL" when the backend adds
  * CLAIM_READ and RENEWAL_READ — then those menus follow the backend too.
  */
-const BACKEND_MODULES = ["CLIENT", "USER", "ROLE", "SESSION", "LEAD", "KYC", "INSURER", "IMPORT", "RENEWAL"];
+const BACKEND_MODULES = ["CLIENT", "USER", "ROLE", "SESSION", "LEAD", "KYC", "INSURER", "IMPORT", "RENEWAL", "APPROVAL"];
 
 const CLAIM_ROLES: readonly Role[] = [
   "MD",
@@ -89,7 +89,7 @@ export const NAV_ITEMS: NavItem[] = [
   // Everyone has work assigned to them; the list only shows what they may see.
   { label: "My work", href: "/my-work", permission: null, roles: ROLES, parent: "/" },
   // Everyone can follow the requests they sent; deciding depends on the step's role.
-  { label: "Approvals", href: "/approvals", permission: null, roles: ROLES, parent: "/" },
+  { label: "Approvals", href: "/approvals", permission: "APPROVAL_READ", roles: ROLES, parent: "/" },
   { label: "Insurer products", href: "/insurer-products", permission: "INSURER_REFERENCE_UPDATE", roles: ["GI Underwriting Manager"], businessOnly: true },
   { label: "Claims", href: "/claims", permission: "CLAIM_READ", roles: CLAIM_ROLES, businessOnly: true },
   { label: "All claims", href: "/claims/all", permission: "CLAIM_READ", roles: CLAIM_ROLES, parent: "/claims", businessOnly: true },

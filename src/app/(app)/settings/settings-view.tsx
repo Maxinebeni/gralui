@@ -1,6 +1,6 @@
 "use client";
 
-// Settings: the signed-in person's own account and keyboard shortcuts.
+// Settings: the signed-in person's own account, sign-in security and email notifications.
 // Passwords are changed from "Forgot password" on the sign-in page. Two-step
 // login (an authenticator app code after the password) is set up here.
 
@@ -9,6 +9,7 @@ import { Chip, FloatCard } from "@/components/gral/ui";
 import { useCurrentUser } from "@/lib/auth-context";
 import { initials } from "@/lib/format";
 import { ChangePassword } from "./change-password";
+import { EmailNotifications } from "./email-notifications";
 import { TwoStepLogin } from "./two-step-login";
 
 /** CLAIMS_MANAGER → Claims Manager */
@@ -20,10 +21,6 @@ function roleLabel(code: string) {
     .split("_")
     .map((w) => w[0]!.toUpperCase() + w.slice(1))
     .join(" ");
-}
-
-function Key({ children }: { children: string }) {
-  return <kbd className="rounded-md border border-border bg-secondary px-2 py-0.5 text-xs">{children}</kbd>;
 }
 
 export function SettingsView() {
@@ -62,25 +59,8 @@ export function SettingsView() {
 
         <ChangePassword />
         <TwoStepLogin />
+        <EmailNotifications />
 
-        <FloatCard className="p-5 sm:p-6">
-          <h2 className="text-base font-semibold tracking-tight">Shortcuts</h2>
-          <dl className="mt-3 divide-y divide-border text-sm">
-            <div className="flex items-center justify-between gap-3 py-3">
-              <dt>Search</dt>
-              <dd>
-                <Key>Ctrl</Key> <Key>K</Key>
-              </dd>
-            </div>
-            <div className="flex items-center justify-between gap-3 py-3">
-              <dt>Close a panel</dt>
-              <dd>
-                <Key>Esc</Key>
-              </dd>
-            </div>
-          </dl>
-          <p className="mt-3 text-xs text-subtle">GRAL Operations Platform · version {process.env.NEXT_PUBLIC_APP_VERSION}</p>
-        </FloatCard>
       </div>
     </>
   );

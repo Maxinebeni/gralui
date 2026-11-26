@@ -6,11 +6,11 @@ import { Check, Flag, Mail, MapPin, Pencil, Phone, Plus, X } from "lucide-react"
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
-import { listClientClaims, listClientPolicies } from "@/lib/api";
+import { MOCK_AUTH, getClientKyc, listClientClaims, listClientPolicies } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
-import { canAccessPath, clientEditPermissions, clientPermissions, documentPermissions } from "@/lib/permissions";
+import { canAccessPath, clientEditPermissions, clientPermissions, documentPermissions, hasPermission } from "@/lib/permissions";
 import { clientReportHref } from "@/lib/reports";
-import type { Client, ClientClaim, Policy } from "@/lib/types";
+import type { Client, ClientClaim, KycReview, Policy } from "@/lib/types";
 import { KycBadge } from "@/components/gral/kyc-badge";
 import { Chip, Dot, Loader, NavyButton, NotRecorded, OutlineButton, Recorded, SegmentedTabs, TextLink } from "./ui";
 import { PolicyForm } from "./policy-form";
@@ -53,13 +53,14 @@ export function ClientFile({
 
   useEffect(() => {
     let cancelled = false;
-    listClientClaims(client.name).then((c) => {
+    listClientClaims(client).then((c) => {
       if (!cancelled) setClaims(c);
     });
     return () => {
       cancelled = true;
     };
-  }, [client.name]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when the client changes, not on every render
+  }, [client.id, client.name, client.uuid]);
 
   useEffect(() => {
     let cancelled = false;
@@ -178,7 +179,8 @@ export function ClientFile({
       </div>
 
       <div className="px-5 py-7 sm:px-8">
-        <SegmentedTabs tabs={TABS} value={tab} onChange={setTab} />
+        {/* Claims are only listed to people who can read them; others do not get an empty tab. */}
+        <SegmentedTabs tabs={MOCK_AUTH || hasPermission(user, "CLAIM_READ") ? TABS : TABS.filter((t) => t !== "Claims")} value={tab} onChange={setTab} />
 
         {tab === "KYC and compliance" ? (
           seesDocumentDetail ? (
@@ -207,7 +209,8 @@ export function ClientFile({
                   )}
                 </div>
               ))}
-              {canFlagNonCompliant ? (
+              {/* Flagging is not stored by the backend yet, so it is only offered in the demo. */}
+              {canFlagNonCompliant && MOCK_AUTH ? (
                 <NavyButton
                   className="mt-2"
                   onClick={() => toast.success(`${client.name} flagged as non-compliant.`)}
@@ -215,7 +218,8 @@ export function ClientFile({
                   <Flag className="size-3.5" /> Flag as non-compliant
                 </NavyButton>
               ) : null}
-              <div className={client.documents.length ? "pt-6" : undefined}>
+              {client.uuid ? <KycReviewFiles clientId={client.uuid} /> : null}
+              <div className={client.documents.length || client.uuid ? "pt-6" : undefined}>
                 {/* Backend clients use the real document API; sample clients keep files in this tab. */}
                 <DocumentPanel
                   subject={{ type: "CLIENT", id: client.uuid ?? client.id }}
@@ -223,8 +227,8 @@ export function ClientFile({
                   purpose="KYC_EVIDENCE"
                   canUpload={canUploadDocuments}
                   canReplace={canReplaceDocuments}
-                  title="KYC files"
-                  emptyText="No KYC files yet."
+                  title={client.uuid ? "Other KYC files" : "KYC files"}
+                  emptyText={client.uuid ? "No other KYC files. The KYC review's documents are listed above." : "No KYC files yet."}
                 />
               </div>
             </div>
@@ -384,5 +388,50 @@ function ClaimRow({ id, linked, children }: { id: string; linked: boolean; child
     <Link href={`/claims?claim=${encodeURIComponent(id)}`} className={cn(className, "transition-colors hover:bg-pale/50")}>
       {children}
     </Link>
+  );
+}
+
+/** The documents filed on the client's latest KYC review, with a link to the review. */
+function KycReviewFiles({ clientId }: { clientId: string }) {
+  const [review, setReview] = useState<KycReview | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    getClientKyc(clientId)
+      .then(({ reviews }) => {
+        if (cancelled) return;
+        const newest = [...reviews].sort((a, b) => b.version - a.version).find((r) => r.status !== "REJECTED") ?? reviews[0] ?? null;
+        setReview(newest);
+      })
+      .catch(() => {
+        if (!cancelled) setReview(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
+  if (review === undefined) return <Loader label="Loading the KYC review" />;
+  if (!review) return <p className="text-xs text-muted-foreground">No KYC review has been started for this client.</p>;
+  const filed = review.items.filter((i) => i.documentId).length;
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-medium">
+          KYC review documents · {filed} of {review.items.length} filed
+        </p>
+        <Link href={`/clients/kyc/${encodeURIComponent(review.id)}`} className="text-xs text-primary underline underline-offset-2 hover:opacity-70">
+          Open the KYC review
+        </Link>
+      </div>
+      {review.items.map((item) => (
+        <div key={item.code} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-xl border border-border px-3 py-2.5">
+          <span className="flex items-center gap-2 text-xs">
+            {item.documentId ? <Check className="size-4 text-success" /> : <Dot tone="danger" />}
+            {item.label}
+          </span>
+          {item.documentId ? <Chip tone="success">Filed</Chip> : item.required ? <Chip tone="danger">Missing</Chip> : <Chip>Optional</Chip>}
+        </div>
+      ))}
+    </div>
   );
 }

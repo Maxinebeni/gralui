@@ -45,7 +45,7 @@ export function ApprovalsView() {
           withinRange(r.requestedAt, range) &&
           (seesAllRequests ||
             r.requestedBy === user.name ||
-            r.steps.some((s) => s.role === user.role || (s.role === "Board" && user.role === "MD"))),
+            r.steps.some((s) => s.decidedBy === user.name || s.role === user.role || (s.role === "Board" && user.role === "MD"))),
       ),
     [requests, seesAllRequests, user.name, user.role, range],
   );

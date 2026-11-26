@@ -40,7 +40,7 @@ export function NotificationsView() {
   const total = query.data?.pages[0]?.totalElements ?? 0;
 
   async function open(n: InboxNotification) {
-    router.push(notificationHref(n.type));
+    router.push(notificationHref(n.type, n.targetType, n.targetId));
     if (n.readAt) return;
     try {
       await markNotificationRead(n.id);

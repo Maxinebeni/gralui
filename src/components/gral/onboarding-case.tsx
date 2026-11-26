@@ -58,6 +58,7 @@ import {
   type TrackRun,
 } from "./track-forms";
 import { Chip, FloatCard, OutlineButton, Person } from "./ui";
+import { BackLink } from "./back-link";
 
 type StepState = "done" | "current" | "late" | "upcoming";
 
@@ -120,9 +121,7 @@ export function OnboardingCaseView({
 
   return (
     <>
-      <Link href="/clients/leads" className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary">
-        <ArrowLeft className="size-3.5" /> Leads
-      </Link>
+      <BackLink fallbackHref="/clients/leads" fallbackLabel="Leads" />
       <PageHeader
         title={l.name}
         subtitle={`${leadRef(l.id)} · ${l.type === "INDIVIDUAL" ? "Individual" : "Company"} · ${l.industry}`}

@@ -11,6 +11,7 @@ import { NavyButton, OutlineButton } from "@/components/gral/ui";
 import { PasswordInput } from "@/components/gral/password-input";
 import { useAuth } from "@/lib/auth-context";
 import { MOCK_AUTH, startSignInSetup } from "@/lib/api";
+import { returnPathFromLocation } from "@/lib/return-path";
 
 export function LoginForm() {
   const router = useRouter();
@@ -27,9 +28,10 @@ export function LoginForm() {
   const [settingUp, setSettingUp] = useState(false);
 
   // Already signed in — skip the login screen. Overview is the landing page
-  // because every role can see it (not every role has client access).
+  // because every role can see it (not every role has client access), unless
+  // the person came from a link (?next=), which takes them back there.
   useEffect(() => {
-    if (ready && user && !signedInHere.current) router.replace("/");
+    if (ready && user && !signedInHere.current) router.replace(returnPathFromLocation());
   }, [ready, user, router]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -49,7 +51,7 @@ export function LoginForm() {
         return;
       }
       // Demo mode shows the 2FA step; the backend does not send codes yet.
-      router.replace(MOCK_AUTH ? "/verify" : "/");
+      router.replace(MOCK_AUTH ? "/verify" : returnPathFromLocation());
     } catch (err) {
       signedInHere.current = false;
       // Show the backend's message (wrong password, no role, server down) on the page.
@@ -57,8 +59,8 @@ export function LoginForm() {
         err instanceof Error && err.message
           ? err.message
           : "Could not sign in right now. Please try again.";
+      // Shown once, under the password field; a toast too would repeat it.
       setError(message);
-      toast.error(message);
     } finally {
       setSubmitting(false);
     }
@@ -87,7 +89,7 @@ export function LoginForm() {
             throw err;
           }
         }}
-        onDone={() => router.replace("/")}
+        onDone={() => router.replace(returnPathFromLocation())}
       />
     );
   }
@@ -102,7 +104,7 @@ export function LoginForm() {
           signedInHere.current = true;
           try {
             await finishSignIn(challenge.challengeId, code);
-            router.replace("/");
+            router.replace(returnPathFromLocation());
           } catch (err) {
             signedInHere.current = false;
             throw err;
@@ -141,7 +143,7 @@ export function LoginForm() {
                 setEmail(e.target.value);
                 setError(null);
               }}
-              placeholder="name@gral.rw"
+              placeholder="name@globalrisk.rw"
               className="mt-1.5 w-full rounded-xl border border-input bg-card px-3.5 py-2.5 text-sm outline-none focus:border-sky focus:ring-2 focus:ring-sky/30"
             />
           </div>

@@ -15,6 +15,7 @@ import { KycBlockedNotice } from "./kyc-badge";
 import { KycReviewerAssignment } from "./kyc-reviewer-assignment";
 import { PageHeader } from "./shell";
 import { Chip, FloatCard, OutlineButton } from "./ui";
+import { BackLink } from "./back-link";
 
 export function TrackWorkspace({ detail, onChanged }: { detail: TrackDetail; onChanged: () => Promise<void> }) {
   const t = detail.track;
@@ -35,8 +36,8 @@ export function TrackWorkspace({ detail, onChanged }: { detail: TrackDetail; onC
   const actions = selected === t.stage && t.status === "OPEN" ? (STAGE_ACTIONS[selected] ?? []).filter((a) => t.availableActions.includes(a)) : [];
   const handoff = selected === t.stage ? trackHandoff(t) : null;
   return <>
-    <Link href="/my-work" className="mb-3 inline-flex text-xs text-muted-foreground hover:text-primary">Back to my work</Link>
-    <PageHeader title={t.productName ?? "Policy track"} subtitle={`${detail.lead?.name ?? "Assigned policy track"} · ${t.id}`} />
+    <BackLink fallbackHref="/my-work" fallbackLabel="My work" />
+    <PageHeader title={t.productName ?? "Policy track"} subtitle={detail.lead?.clientName ?? detail.lead?.name ?? "Assigned policy track"} />
     <FloatCard className="mt-5 space-y-4 p-4 sm:p-5">
       <div className="flex flex-wrap items-center gap-2"><HealthChip health={trackHealth(t)} /><Chip>Step {t.stage} of 11</Chip>{detail.lead ? <Link className="text-xs text-primary underline" href={`/clients/leads/${encodeURIComponent(detail.lead.id)}?track=${encodeURIComponent(t.id)}`}>Open parent lead</Link> : null}</div>
       <div className="flex flex-wrap gap-2" aria-label="Onboarding stages">{TRACK_STAGES.map((stage) => <OutlineButton key={stage.n} aria-pressed={selected === stage.n} className={selected === stage.n ? "bg-secondary text-primary" : ""} onClick={() => setSelected(stage.n)}>{stage.n}. {stage.name}</OutlineButton>)}</div>

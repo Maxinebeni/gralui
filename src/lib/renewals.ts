@@ -34,6 +34,20 @@ export function todayIso() {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Kigali" });
 }
 
+/**
+ * The Kigali calendar date (yyyy-mm-dd) of a server timestamp. Cutting the UTC text
+ * would show the previous day for anything done between midnight and 2 am in Kigali.
+ * Plain dates pass through unchanged.
+ */
+export function kigaliDate(iso: string): string;
+export function kigaliDate(iso: string | null | undefined): string | undefined;
+export function kigaliDate(iso: string | null | undefined): string | undefined {
+  if (!iso) return undefined;
+  if (iso.length <= 10) return iso;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso.slice(0, 10) : d.toLocaleDateString("en-CA", { timeZone: "Africa/Kigali" });
+}
+
 export function addDays(iso: string, days: number) {
   const d = new Date(`${iso}T00:00:00Z`);
   return new Date(d.getTime() + days * DAY).toISOString().slice(0, 10);

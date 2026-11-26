@@ -215,7 +215,8 @@ export function useOpenClient(allClients: Client[]) {
   const searchParams = useSearchParams();
   const openId = searchParams.get("client");
 
-  const open = allClients.find((c) => c.id === openId) ?? null;
+  // Links from notifications carry the client's server id rather than its reference.
+  const open = allClients.find((c) => c.id === openId || (!!openId && c.uuid === openId)) ?? null;
   const setOpen = (c: Client | null) => {
     const params = new URLSearchParams(searchParams.toString());
     if (c) params.set("client", c.id);

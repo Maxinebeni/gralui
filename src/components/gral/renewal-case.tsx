@@ -128,7 +128,13 @@ export function RenewalCasePanel({
         {/* On backend cases, quotes and acceptance are recorded from the milestone rows. */}
         {tab === "Quotes" ? <QuotesTab renewal={renewal} canUpdate={canUpdateRenewals && !renewal.backend} run={run} /> : null}
         {tab === "Acceptance" ? (
-          <AcceptanceTab renewal={renewal} canUpdate={canUpdateRenewals && !renewal.backend} userName={user.name} run={run} />
+          <AcceptanceTab
+            renewal={renewal}
+            canUpdate={canUpdateRenewals && !renewal.backend}
+            userName={user.name}
+            run={run}
+            onOpenMilestones={renewal.backend && canUpdateRenewals ? () => setTab("Milestones") : undefined}
+          />
         ) : null}
       </div>
     </div>
@@ -217,7 +223,8 @@ function MilestonesTab({
                 </p>
                 {done ? (
                   <p className="mt-1 text-[11px] text-muted-foreground">
-                    Done {formatDate(done.completedAt)} by {done.completedBy}
+                    Done{done.completedAt ? ` ${formatDate(done.completedAt)}` : ""}
+                    {done.completedBy ? ` by ${done.completedBy}` : ""}
                     {done.evidence ? (
                       <span className="ml-1 inline-flex items-center gap-1 text-primary">
                         · <FileText className="size-3" /> {done.evidence}
@@ -391,11 +398,14 @@ function AcceptanceTab({
   canUpdate,
   userName,
   run,
+  onOpenMilestones,
 }: {
   renewal: RenewalCase;
   canUpdate: boolean;
   userName: string;
   run: Run;
+  /** Backend cases record acceptance on the Milestones tab. */
+  onOpenMilestones?: () => void;
 }) {
   const recommended = renewal.quotes.find((q) => q.recommended);
   const [quoteId, setQuoteId] = useState(recommended?.id ?? "");
@@ -410,8 +420,8 @@ function AcceptanceTab({
           <Check className="size-4 text-success" /> Client accepted in writing
         </p>
         <p className="mt-1 text-muted-foreground">
-          {q ? `${q.insurer} · ${formatRwf(q.premium)}` : "Selected option"} · {formatDate(renewal.acceptance.acceptedAt)} ·
-          recorded by {renewal.acceptance.recordedBy}
+          {q ? `${q.insurer} · ${formatRwf(q.premium)}` : "Selected option"} · {formatDate(renewal.acceptance.acceptedAt)}
+          {renewal.acceptance.recordedBy ? ` · recorded by ${renewal.acceptance.recordedBy}` : ""}
         </p>
         <p className="mt-1 flex items-center gap-1 text-primary">
           <FileText className="size-3.5" /> {renewal.acceptance.evidence}
@@ -463,6 +473,11 @@ function AcceptanceTab({
           <NavyButton onClick={record} disabled={saving}>
             {saving ? "Saving…" : "Record acceptance"}
           </NavyButton>
+        </div>
+      ) : onOpenMilestones ? (
+        <div className="space-y-2 rounded-xl border border-border p-3 text-xs">
+          <p className="text-muted-foreground">Not yet accepted. The acceptance is recorded on the client acceptance milestone.</p>
+          <NavyButton onClick={onOpenMilestones}>Go to the acceptance milestone</NavyButton>
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">Not yet accepted.</p>

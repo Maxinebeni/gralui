@@ -10,7 +10,6 @@ import type {
   ClaimDocument,
   ClaimStep,
   Client,
-  ClientType,
   CompletedMilestone,
   InsurerSummary,
   PolicyMovement,
@@ -20,7 +19,19 @@ import type {
   WorkTask,
 } from "./types";
 
-export const CLIENTS: Client[] = [
+// Sample records are only for demo mode (NEXT_PUBLIC_MOCK_AUTH=true). Connected
+// to the backend, every collection below starts empty, so sample rows never mix
+// with real data. The arrays stay mutable: api.ts also caches backend claims in
+// CLAIMS for the current tab.
+const SAMPLE_DATA = process.env.NEXT_PUBLIC_MOCK_AUTH === "true";
+function sample<T>(rows: T[]): T[] {
+  return SAMPLE_DATA ? rows : [];
+}
+function sampleRecord<T>(rows: Record<string, T>): Record<string, T> {
+  return SAMPLE_DATA ? rows : {};
+}
+
+export const CLIENTS: Client[] = sample([
   {
     id: "CLT-001",
     createdAt: "2024-03-12",
@@ -219,7 +230,7 @@ export const CLIENTS: Client[] = [
     ],
     correspondence: [{ date: "01 Sep 2026", subject: "Fleet schedule update", channel: "Email" }],
   },
-];
+]);
 
 /* ---------------------------------- Claims ----------------------------------- */
 // The design's eight claims, placed on GRAL's six SOP steps. Dates are set in
@@ -237,7 +248,7 @@ function docs(list: [name: string, filedDaysAgo: number | null, required?: boole
   }));
 }
 
-export const CLAIMS: Claim[] = [
+export const CLAIMS: Claim[] = sample([
   {
     id: "CLM-2025-089",
     clientId: "CLT-001",
@@ -508,15 +519,15 @@ export const CLAIMS: Claim[] = [
       { at: wd(-6), by: "Eric Niyonzima", text: "Claim closed (settled)" },
     ],
   },
-];
+]);
 
-export const POLICIES_BY_INSURER: InsurerSummary[] = [
+export const POLICIES_BY_INSURER: InsurerSummary[] = sample([
   { insurer: "SONARWA", policies: 12, premium: 64 },
   { insurer: "RADIANT", policies: 9, premium: 38 },
   { insurer: "UAP", policies: 7, premium: 31 },
   { insurer: "SORAS", policies: 6, premium: 42 },
   { insurer: "CORAR", policies: 4, premium: 17 },
-];
+]);
 
 /* --------------------------------- Renewals ---------------------------------- */
 // Expiry dates are set relative to today so the demo always shows one expired,
@@ -556,7 +567,7 @@ function renewal(
   };
 }
 
-export const RENEWAL_CASES: RenewalCase[] = [
+export const RENEWAL_CASES: RenewalCase[] = sample([
   renewal(1, -3, 7, {
     policyId: "POL-2025-412",
     clientId: "CLT-001",
@@ -630,9 +641,9 @@ export const RENEWAL_CASES: RenewalCase[] = [
     owner: "Eric Niyonzima",
     quotes: [],
   }),
-];
+]);
 
-export const RENEWAL_MONTHLY: RenewalMonth[] = [
+export const RENEWAL_MONTHLY: RenewalMonth[] = sample([
   { month: "Sep", premium: 31, policies: 1 },
   { month: "Oct", premium: 31, policies: 2 },
   { month: "Nov", premium: 4, policies: 1 },
@@ -645,7 +656,7 @@ export const RENEWAL_MONTHLY: RenewalMonth[] = [
   { month: "Jun", premium: 7, policies: 1 },
   { month: "Jul", premium: 22, policies: 4 },
   { month: "Aug", premium: 16, policies: 2 },
-];
+]);
 
 /* --------------------------------- Overview ---------------------------------- */
 
@@ -666,7 +677,7 @@ export const POLICY_TERMS: Record<
     earlierPeriods?: Omit<PolicyPeriod, "current">[];
     movements?: PolicyMovement[];
   }
-> = {
+> = sampleRecord({
   "POL-2025-412": {
     netPremium: 28100000,
     amountPaid: 31200000,
@@ -703,7 +714,7 @@ export const POLICY_TERMS: Record<
     ],
   },
   "POL-2025-455": { netPremium: 3690000, amountPaid: 0, commissionRate: 0.1 },
-};
+});
 
 /* --------------------------------- Approvals --------------------------------- */
 // Sample approval requests (APR-01 to APR-04). Claim settlement sign-offs are
@@ -712,7 +723,7 @@ export const POLICY_TERMS: Record<
 
 const rd = (n: number) => addWorkingDays(todayIso(), n);
 
-export const APPROVALS: ApprovalRequest[] = [
+export const APPROVALS: ApprovalRequest[] = sample([
   {
     id: "APR-2026-014",
     subjectType: "RENEWAL",
@@ -835,13 +846,13 @@ export const APPROVALS: ApprovalRequest[] = [
       { at: rd(-8), by: "Patrick Nkurunziza", text: "Returned by Technical Director" },
     ],
   },
-];
+]);
 
 /* --------------------------------- My Work ----------------------------------- */
 // Tasks people add by hand. Tasks from claims, renewals, approvals and KYC
 // are built from those records (see listTasks in api.ts), as WFL-02 will do.
 
-export const MANUAL_TASKS: WorkTask[] = [
+export const MANUAL_TASKS: WorkTask[] = sample([
   {
     id: "TSK-0101",
     key: "MANUAL:TSK-0101",
@@ -893,10 +904,10 @@ export const MANUAL_TASKS: WorkTask[] = [
     createdAt: rd(-6),
     history: [{ at: rd(-6), by: "Marie Claire Uwimana", text: "Task created" }],
   },
-];
+]);
 
-/** The internal approval waiting on the sample policy track TRK-2026-016 (mock-leads.ts). */
-APPROVALS.push({
+/** The internal approval waiting on the sample policy track TRK-2026-016 (mock-leads.ts). Demo mode only. */
+if (SAMPLE_DATA) APPROVALS.push({
   id: "APR-2026-018",
   subjectType: "NEW_BUSINESS",
   subjectId: "TRK-2026-016",

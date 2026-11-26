@@ -43,6 +43,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { PageMemory } from "./back-link";
 
 export function Shell({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -104,7 +105,13 @@ export function Shell({ children }: { children: ReactNode }) {
     [approvalsQuery.data, tasksQuery.data, user],
   );
   const notifications = inboxQuery.data?.items ?? [];
-  const unreadNotificationCount = inboxQuery.data?.unreadCount ?? 0;
+  // "New approval" and "task assigned" updates are the same work as the To do
+  // items above, so the bell does not count them twice.
+  const unreadNotificationCount = Math.max(
+    0,
+    (inboxQuery.data?.unreadCount ?? 0) -
+      (notices.length ? notifications.filter((n) => !n.readAt && /APPROVAL_REQUESTED|TASK_ASSIGNED/i.test(n.type)).length : 0),
+  );
 
   // After a page change, finished work drops off if the list is over a minute old.
   const { refetch: refetchApprovals, dataUpdatedAt: approvalsAt } = approvalsQuery;
@@ -133,7 +140,7 @@ export function Shell({ children }: { children: ReactNode }) {
   );
   const openNotification = useCallback(
     async (notification: InboxNotification) => {
-      router.push(notificationHref(notification.type));
+      router.push(notificationHref(notification.type, notification.targetType, notification.targetId));
       if (notification.readAt) return;
       try {
         await markNotificationRead(notification.id);
@@ -363,6 +370,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </div>
       ) : null}
       <GlobalSearch open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <PageMemory />
       <NotificationRealtime userId={user.id} onNotification={receiveNotification} onSync={refreshNotifications} />
     </div>
   );
@@ -627,12 +635,30 @@ export function SlideOver({
 
 /** Backend notifications carry no link, so each opens the area its type belongs to. */
 /** The page a notification opens, from its type. */
-export function notificationHref(type: string) {
+export function notificationHref(type: string, targetType?: string | null, targetId?: string | null) {
+  // Newer notices name their record, so they open it rather than the section.
+  if (targetId) {
+    const id = encodeURIComponent(targetId);
+    switch ((targetType ?? "").toUpperCase()) {
+      case "APPROVAL":
+        return `/approvals?request=${id}`;
+      case "TASK":
+        return `/my-work?task=${id}`;
+      case "RENEWAL":
+        // The renewals screen keys cases by their short reference.
+        return `/renewals?case=REN-${targetId.slice(0, 8).toUpperCase()}`;
+      case "CLIENT":
+        return `/clients?client=${id}`;
+    }
+  }
   const t = type.toUpperCase();
   if (t.includes("APPROVAL")) return "/approvals";
   if (t.includes("RENEWAL")) return "/renewals";
+  if (t.includes("LEAD")) return "/clients/leads";
   if (t.includes("CLIENT")) return "/clients";
   if (t.includes("CLAIM")) return "/claims";
+  if (t.includes("PASSWORD") || t.includes("MFA") || t.includes("IDENTITY")) return "/settings";
+  // Task updates (assigned, due soon, overdue) open My Work, where each task links to its record.
   return "/my-work";
 }
 

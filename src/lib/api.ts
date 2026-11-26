@@ -77,7 +77,7 @@ import {
   stageLabel,
   stepDef,
 } from "./claims";
-import { displayToIso } from "./format";
+import { displayToIso, formatRwf } from "./format";
 import {
   ACTION_LABEL,
   TIER_LABEL,
@@ -91,8 +91,9 @@ import {
 import { RWANDA_HOLIDAYS, type Holiday } from "./holidays";
 import { recordHref } from "./links";
 import { demoCanRunTrackAction } from "./permissions";
+import { oneReportAtATime, retryDelayMs, wait } from "./report-queue";
 import { INSURER_GROUPS, PRODUCT_GROUPS, type OptionGroup } from "./reference-data";
-import { RENEWAL_MILESTONES, completionBlocker, currentMilestone, formatDate, milestoneDue, todayIso } from "./renewals";
+import { RENEWAL_MILESTONES, completionBlocker, currentMilestone, kigaliDate, milestoneDue, todayIso } from "./renewals";
 import type {
   RenewalMilestoneCode,
   AccessCategory,
@@ -225,8 +226,63 @@ const LOCAL_POLICIES = new Map<string, Policy[]>();
 /** Eligible account managers from the backend, loaded once. */
 let MANAGERS: ManagerChoice[] | null = null;
 
+/**
+ * Every active colleague's name (GET /api/v1/staff), loaded once per sign-in, so
+ * screens can name who requested, decided or recorded something for every role.
+ */
+let STAFF: Map<string, string> | null = null;
+/** Role codes by person, from the same list (e.g. to offer claim handlers). */
+const STAFF_ROLES = new Map<string, string[]>();
+let STAFF_REQUEST: Promise<Map<string, string>> | null = null;
+function loadStaff(): Promise<Map<string, string>> {
+  if (STAFF) return Promise.resolve(STAFF);
+  if (MOCK_AUTH) return Promise.resolve((STAFF = new Map()));
+  STAFF_REQUEST ??= (async () => {
+    const names = new Map<string, string>();
+    try {
+      const res = await apiFetch("/api/v1/staff?size=100");
+      // An older server or an Administration account: names fall back to the managers list.
+      if (res.ok) {
+        for (const m of ((await res.json()) as Page<{ id: string; fullName: string; roles?: string[] }>).items ?? []) {
+          names.set(m.id, m.fullName);
+          STAFF_ROLES.set(m.id, m.roles ?? []);
+        }
+      }
+    } catch {
+      // Offline: try again next time.
+      STAFF_REQUEST = null;
+      return names;
+    }
+    STAFF = names;
+    return names;
+  })();
+  return STAFF_REQUEST;
+}
+
+/** Name of a colleague already loaded, or undefined. */
+function staffName(id?: string): string | undefined {
+  if (!id) return undefined;
+  if (CURRENT_USER?.id === id) return CURRENT_USER.name;
+  return STAFF?.get(id);
+}
+
+/** Active Claims Managers and Claims Underwriters, who can handle a claim. */
+export async function listClaimHandlers(): Promise<{ id: string; name: string }[]> {
+  const names = await loadStaff();
+  return [...names.entries()]
+    .filter(([id]) => (STAFF_ROLES.get(id) ?? []).some((r) => r === "CLAIMS_MANAGER" || r === "CLAIMS_UNDERWRITER"))
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 async function loadManagers(): Promise<ManagerChoice[]> {
   if (MANAGERS) return MANAGERS;
+  void loadStaff();
+  // Others would get a 403 from the backend, so do not ask.
+  if (CURRENT_USER && !canListManagers()) {
+    MANAGERS = [];
+    return MANAGERS;
+  }
   try {
     const res = await apiFetch("/api/v1/clients/managers?size=100");
     // Not allowed to list managers (403), or this account cannot use the list at
@@ -241,14 +297,89 @@ async function loadManagers(): Promise<ManagerChoice[]> {
   }
 }
 
+/** Shown when a client has a manager whose name this user is not allowed to see. */
+export const MANAGER_NAME_HIDDEN = "Assigned";
+
 function managerName(id: string | undefined, managers: ManagerChoice[]): string {
   if (!id) return "Unassigned";
-  return managers.find((m) => m.id === id)?.fullName ?? "Account manager";
+  if (CURRENT_USER?.id === id) return CURRENT_USER.name;
+  return managers.find((m) => m.id === id)?.fullName ?? STAFF?.get(id) ?? MANAGER_NAME_HIDDEN;
+}
+
+/* ------------------------- Active policies per client ------------------------- */
+// Counted from the backend's "active policies" list (one request, cached for a
+// minute), so the client list matches the Overview. Null when this user cannot
+// read that list: the count then comes from policies loaded in this tab.
+
+type ActivePolicyItem = { clientId?: string | null };
+type ActivePolicyPage = { items?: ActivePolicyItem[]; hasMore?: boolean; nextCursor?: string | null };
+let ACTIVE_POLICY_COUNTS: { at: number; counts: Map<string, number> | null } | null = null;
+let ACTIVE_POLICY_REQUEST: Promise<Map<string, number> | null> | null = null;
+const ACTIVE_POLICY_TTL_MS = 60_000;
+
+/** Thrown when the backend is busy (429/503 twice): try again on the next load, do not remember it. */
+class ReportBusyError extends Error {}
+
+/** One page of the list. Shares the dashboard's report queue and retries once when the backend is busy. */
+function activePolicyPage(path: string): Promise<ActivePolicyPage | null> {
+  return oneReportAtATime(async () => {
+    for (let attempt = 0; ; attempt++) {
+      const res = await apiFetch(path);
+      if (res.ok) return (await res.json()) as ActivePolicyPage;
+      if (res.status === 429 || res.status === 503) {
+        if (attempt === 0) {
+          await wait(retryDelayMs(res));
+          continue;
+        }
+        throw new ReportBusyError();
+      }
+      return null; // 403 and the like: this user cannot read the list.
+    }
+  });
+}
+
+async function loadActivePolicyCounts(): Promise<Map<string, number> | null> {
+  if (ACTIVE_POLICY_COUNTS && Date.now() - ACTIVE_POLICY_COUNTS.at < ACTIVE_POLICY_TTL_MS) return ACTIVE_POLICY_COUNTS.counts;
+  // The dashboard list needs REPORT_READ; people without it would only be refused.
+  if (CURRENT_USER && !hasPermission("REPORT_READ")) return null;
+  if (ACTIVE_POLICY_REQUEST) return ACTIVE_POLICY_REQUEST;
+  ACTIVE_POLICY_REQUEST = (async () => {
+    const counts = new Map<string, number>();
+    try {
+      let cursor: string | null | undefined = null;
+      for (let page = 0; page < 50; page++) {
+        const params = new URLSearchParams({ size: "100" });
+        if (cursor) params.set("cursor", cursor);
+        const body = await activePolicyPage(`/api/v1/reports/operations-dashboard/lists/ACTIVE_POLICIES?${params}`);
+        if (!body) {
+          // Not allowed: remember that for a minute instead of asking again.
+          ACTIVE_POLICY_COUNTS = { at: Date.now(), counts: null };
+          return null;
+        }
+        for (const item of body.items ?? []) {
+          if (item.clientId) counts.set(item.clientId, (counts.get(item.clientId) ?? 0) + 1);
+        }
+        if (!body.hasMore || !body.nextCursor) break;
+        cursor = body.nextCursor;
+      }
+    } catch (err) {
+      // Busy or offline: keep the last good counts (even if older than a minute)
+      // rather than showing "0 active policies", and try again next time.
+      if (!(err instanceof ReportBusyError)) console.warn("Could not load active policy counts:", err);
+      return ACTIVE_POLICY_COUNTS?.counts ?? null;
+    }
+    ACTIVE_POLICY_COUNTS = { at: Date.now(), counts };
+    return counts;
+  })().finally(() => {
+    ACTIVE_POLICY_REQUEST = null;
+  });
+  return ACTIVE_POLICY_REQUEST;
 }
 
 /** Turns a backend error into a message the user can act on. */
 async function problemMessage(res: Response, fallback: string): Promise<string> {
   const problem = await readProblem(res);
+  if (res.status >= 500) return serverFailure(problem);
   if (res.status === 401) return "Your session has ended. Please sign in again.";
   if (res.status === 403) return "You do not have permission to do this.";
   if (res.status === 404) return "This client could not be found.";
@@ -276,13 +407,16 @@ function toBackendPhone(phone: string): string {
 
 function toClient(v: ClientView, managers: ManagerChoice[]): Client {
   const policies = LOCAL_POLICIES.get(v.reference) ?? [];
-  const active = policies.filter((p) => p.status === "Active" || p.status === "In renewal").length;
+  const backendActive = ACTIVE_POLICY_COUNTS?.counts?.get(v.id);
+  const active =
+    backendActive ??
+    (ACTIVE_POLICY_COUNTS?.counts ? 0 : policies.filter((p) => p.status === "Active" || p.status === "In renewal").length);
   const client: Client = {
     id: v.reference,
     uuid: v.id,
     version: v.version,
     managerId: v.managerId,
-    createdAt: v.createdAt?.slice(0, 10),
+    createdAt: kigaliDate(v.createdAt),
     name: v.profile.registeredName,
     type: TYPE_FROM_BACKEND[v.profile.type] ?? "Corporate",
     // Older records say "Banking & Finance"; show them the way the list now reads.
@@ -298,14 +432,14 @@ function toClient(v: ClientView, managers: ManagerChoice[]): Client {
         }
       : undefined,
     manager: managerName(v.managerId, managers),
-    // Not tracked by the backend yet.
     activePolicies: active,
     kyc: false,
     policiesOk: active > 0,
     claimsOk: false,
     correspondenceOk: false,
+    // Backend clients keep their KYC documents in the KYC review, not a client checklist.
     docsFiled: 0,
-    docsTotal: 4,
+    docsTotal: 0,
     nonCompliant: false,
     documents: [],
     policies,
@@ -358,6 +492,21 @@ function clientFromSummary(s: ClientSummary, managers: ManagerChoice[]): Client 
 
 let CLIENT_CHOICES_REQUEST: Promise<Client[]> | null = null;
 
+/** Client list pages already on their way, by URL, so two screens loading at once share one request. */
+const CLIENT_PAGE_REQUESTS = new Map<string, Promise<Page<ClientSummary>>>();
+
+function fetchClientPage(path: string): Promise<Page<ClientSummary>> {
+  const pending = CLIENT_PAGE_REQUESTS.get(path);
+  if (pending) return pending;
+  const request = (async () => {
+    const res = await apiFetch(path);
+    if (!res.ok) throw new Error(await problemMessage(res, "Could not load clients."));
+    return (await res.json()) as Page<ClientSummary>;
+  })().finally(() => CLIENT_PAGE_REQUESTS.delete(path));
+  CLIENT_PAGE_REQUESTS.set(path, request);
+  return request;
+}
+
 /**
  * Clients for pick lists and the claims list: one request, names and IDs only.
  * Much faster than listClients, which also loads every full record.
@@ -368,10 +517,8 @@ export async function listClientChoices(): Promise<Client[]> {
   if (CLIENT_CHOICES_REQUEST) return CLIENT_CHOICES_REQUEST;
   CLIENT_CHOICES_REQUEST = (async () => {
     try {
-      const res = await apiFetch("/api/v1/clients?size=100&sort=name");
-      if (!res.ok) throw new Error(await problemMessage(res, "Could not load clients."));
-      const page = (await res.json()) as Page<ClientSummary>;
-      const managers = await loadManagers();
+      const page = await fetchClientPage("/api/v1/clients?size=100&sort=name");
+      const [managers] = await Promise.all([loadManagers(), loadActivePolicyCounts()]);
       return page.items.map((s) => {
         const cached = CLIENT_CACHE.get(s.reference);
         return cached && cached.uuid === s.id ? cached : clientFromSummary(s, managers);
@@ -406,10 +553,23 @@ export async function listClients(query = ""): Promise<Client[]> {
     try {
       const params = new URLSearchParams({ size: "100", sort: "name" });
       if (key) params.set("q", key);
-      const res = await apiFetch(`/api/v1/clients?${params}`);
-      if (!res.ok) throw new Error(await problemMessage(res, "Could not load clients."));
-      const page = (await res.json()) as Page<ClientSummary>;
-      const managers = await loadManagers();
+      const page = await fetchClientPage(`/api/v1/clients?${params}`);
+      // Full records and KYC summaries for the whole page in two requests (newer servers),
+      // instead of two per client. An older server falls back to one request per client below.
+      const [managers, details] = await Promise.all([
+        loadManagers(),
+        fetchClientDetails(params),
+        loadActivePolicyCounts(),
+        prefetchKycSummaries(page.items.map((s) => s.id)),
+      ]);
+      for (const v of details) {
+        const cached = CLIENT_CACHE.get(v.reference);
+        if (!cached || cached.uuid !== v.id || cached.version !== v.version || SUMMARY_ONLY.has(v.reference)) toClient(v, managers);
+        SUMMARY_ONLY.delete(v.reference);
+      }
+
+      // Users who cannot read the active-policies report: counts for the whole page in one request.
+      const ownCounts = ACTIVE_POLICY_COUNTS?.counts ? null : await activeCountsFor(page.items.map((s) => s.id));
 
       // The list only has summaries, so load each full record, 4 at a time.
       // Unchanged ones come from the cache. One that fails is shown from its summary.
@@ -437,7 +597,9 @@ export async function listClients(query = ""): Promise<Client[]> {
         }
         client.kycGateStatus = kycGateStatus;
         client.kyc = client.kycGateStatus === "READY";
-        return client;
+        const own = ownCounts?.get(s.id);
+        if (own !== undefined) return { ...client, activePolicies: own, policiesOk: client.policiesOk || own > 0 };
+        return ownCounts ? client : withOwnActiveCount(client);
       });
     } catch (err) {
       console.warn(err);
@@ -454,8 +616,46 @@ export async function listClients(query = ""): Promise<Client[]> {
 export async function getClient(id: string): Promise<Client | null> {
   if (MOCK_AUTH) return mockGetClient(id);
   const cached = CLIENT_CACHE.get(id);
-  if (cached?.uuid) return toClient(await fetchClientView(cached.uuid), await loadManagers());
+  if (cached?.uuid) {
+    const [view, managers] = await Promise.all([fetchClientView(cached.uuid), loadManagers(), loadActivePolicyCounts()]);
+    return withOwnActiveCount(toClient(view, managers));
+  }
   return (await listClients(id)).find((c) => c.id === id) ?? null;
+}
+
+/** Policies in force today per client (GET /policies/active-counts); null on an older server or without POLICY_READ. */
+async function activeCountsFor(clientIds: string[]): Promise<Map<string, number> | null> {
+  if (CURRENT_USER && !hasPermission("POLICY_READ")) return null;
+  const counts = new Map<string, number>();
+  try {
+    for (let i = 0; i < clientIds.length; i += 100) {
+      const params = new URLSearchParams();
+      for (const id of clientIds.slice(i, i + 100)) params.append("clientIds", id);
+      const res = await apiFetch(`/api/v1/policies/active-counts?${params}`);
+      if (!res.ok) return null;
+      for (const [id, n] of Object.entries((await res.json()) as Record<string, number>)) counts.set(id, n);
+    }
+  } catch {
+    return null;
+  }
+  return counts;
+}
+
+/**
+ * Users who cannot read the active-policies report (an Accounts Executive, say)
+ * would otherwise see "0 active policies" on every client. For them, count the
+ * client's own policies instead.
+ */
+async function withOwnActiveCount(client: Client): Promise<Client> {
+  if (ACTIVE_POLICY_COUNTS?.counts || !client.uuid) return client;
+  if (CURRENT_USER && !hasPermission("POLICY_READ")) return client;
+  try {
+    const policies = await listClientPolicies(client.id);
+    const active = policies.filter((p) => p.status === "Active" || p.status === "In renewal").length;
+    return { ...client, activePolicies: active, policiesOk: client.policiesOk || active > 0 };
+  } catch {
+    return client;
+  }
 }
 
 /** Account manager names for the dropdown, from the backend. */
@@ -509,8 +709,30 @@ export async function createClient(input: ClientInput): Promise<Client> {
     managerId: await managerIdFor(input.manager),
   };
   const res = await apiFetch("/api/v1/clients", { method: "POST", body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(await problemMessage(res, "Could not save the client. Please try again."));
+  if (!res.ok) {
+    if (res.status === 409 && (await readProblem(res.clone())).code === "DUPLICATE_REVIEW_REQUIRED") {
+      const names = await duplicateNames(body.profile, body.primaryContact);
+      if (names) throw new Error(`A client with the same name, email or phone number already exists: ${names}. Open that client instead of adding a new one.`);
+    }
+    throw new Error(await problemMessage(res, "Could not save the client. Please try again."));
+  }
   return toClient((await res.json()) as ClientView, await loadManagers());
+}
+
+/** "Kigali Motors (CLT-0012)" for the clients that match, or null when they cannot be listed. */
+async function duplicateNames(profile: unknown, primaryContact: unknown): Promise<string | null> {
+  try {
+    const res = await apiFetch("/api/v1/clients/duplicate-check?page=0&size=5", {
+      method: "POST",
+      body: JSON.stringify({ profile, primaryContact }),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { candidates?: Page<{ client: { reference: string; registeredName: string } }> };
+    const items = body.candidates?.items ?? [];
+    return items.length ? items.map((c) => `${c.client.registeredName} (${c.client.reference})`).join(", ") : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -757,6 +979,9 @@ type FinancialTermsView = {
   balance: number;
   commissionAmount: number;
   recordedAt: string;
+  /** Why this version was recorded, and by whom. */
+  reason?: string;
+  recordedBy?: string;
 };
 
 type PolicyView = {
@@ -771,6 +996,76 @@ type PolicyView = {
 
 /** Current money snapshot version per cover period, needed to record new terms. */
 const FINANCIAL_VERSION = new Map<string, number>();
+
+/* ------------------------------- Payment terms ------------------------------- */
+// GET/PUT /api/v1/policy-periods/{id}/payment-terms. When the premium is due:
+// a number of days after cover starts, set by the kind of client, or a date
+// someone chose. The server works out the payment status and whether it is overdue.
+
+export type PaymentCategory = "CORPORATE" | "GOVERNMENT" | "INDIVIDUAL";
+export type PaymentTerms = {
+  periodId: string;
+  version: number;
+  terms: {
+    category: PaymentCategory;
+    anchorDate: string;
+    allowanceDays: number;
+    dueDate: string;
+    overridden: boolean;
+    recordedBy?: string;
+    reason?: string;
+    recordedAt: string;
+  } | null;
+  paymentStatus: string;
+  balance: number | null;
+  currency: string;
+  overdue: boolean;
+};
+
+export async function getPaymentTerms(periodId: string): Promise<PaymentTerms | null> {
+  if (MOCK_AUTH) return null;
+  const res = await apiFetch(`/api/v1/policy-periods/${periodId}/payment-terms`);
+  if (res.status === 403 || res.status === 404) return null;
+  if (!res.ok) throw new Error(await policyProblem(res, "Could not load the payment terms."));
+  return (await res.json()) as PaymentTerms;
+}
+
+export async function updatePaymentTerms(
+  periodId: string,
+  input: { expectedVersion: number; category: PaymentCategory; dueDateOverride?: string; reason: string },
+): Promise<PaymentTerms> {
+  const res = await apiFetch(`/api/v1/policy-periods/${periodId}/payment-terms`, {
+    method: "PUT",
+    body: JSON.stringify({ ...input, dueDateOverride: input.dueDateOverride || null, reason: input.reason.trim() }),
+  });
+  if (res.status === 409) throw new Error("Someone else changed the payment terms. Reload the page and try again.");
+  if (res.status === 403) throw new Error("You do not have permission to change payment terms.");
+  if (res.status === 400) throw new Error("Choose the kind of client and give a reason (up to 500 characters).");
+  if (!res.ok) throw new Error(await policyProblem(res, "Could not save the payment terms. Please try again."));
+  return (await res.json()) as PaymentTerms;
+}
+
+/** Name of a colleague by id, loading the staff list if needed. */
+export async function colleagueName(id?: string): Promise<string | undefined> {
+  if (!id) return undefined;
+  await loadStaff();
+  return staffName(id);
+}
+
+/** "amount paid RWF 300,000 → RWF 500,000" for each figure that changed between two versions. */
+function termChanges(before: FinancialTermsView, after: FinancialTermsView): string {
+  const parts: string[] = [];
+  const money = (label: string, a: number, b: number) => {
+    if (Number(a) !== Number(b)) parts.push(`${label} ${formatRwf(Number(a))} → ${formatRwf(Number(b))}`);
+  };
+  money("total premium", before.totalPremium, after.totalPremium);
+  money("net premium", before.netPremium, after.netPremium);
+  money("amount paid", before.amountPaid, after.amountPaid);
+  if (Number(before.commissionRate) !== Number(after.commissionRate)) {
+    parts.push(`commission ${+(Number(before.commissionRate) * 100).toFixed(2)}% → ${+(Number(after.commissionRate) * 100).toFixed(2)}%`);
+  }
+  return parts.join(", ");
+}
 
 function latestTerms(period: PolicyPeriodView): FinancialTermsView | undefined {
   return [...(period.financialTerms ?? [])].sort((a, b) => b.version - a.version)[0];
@@ -797,8 +1092,17 @@ async function getJson<T>(path: string): Promise<T | null> {
   }
 }
 
-async function loadCatalog(): Promise<Catalog | null> {
-  if (CATALOG) return CATALOG;
+/** In-flight catalog load, so screens opening together share one set of requests. */
+let CATALOG_REQUEST: Promise<Catalog | null> | null = null;
+function loadCatalog(): Promise<Catalog | null> {
+  if (CATALOG) return Promise.resolve(CATALOG);
+  CATALOG_REQUEST ??= readCatalog().finally(() => {
+    CATALOG_REQUEST = null;
+  });
+  return CATALOG_REQUEST;
+}
+
+async function readCatalog(): Promise<Catalog | null> {
   const [insurers, products, lines, insurerTypes, terms] = await Promise.all([
     getJson<InsurerView[]>("/api/v1/policy/catalog/insurers"),
     getJson<ProductView[]>("/api/v1/policy/catalog/products"),
@@ -871,8 +1175,6 @@ export async function productsForInsurer(insurerName: string): Promise<string[] 
   return linked ? linked.filter((p) => p.active).map((p) => p.name) : null;
 }
 
-/** Fields the backend does not store yet (sum insured and status), by backend policy ID. */
-const LOCAL_POLICY_TERMS = new Map<string, Partial<Policy>>();
 
 function isoToDisplay(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);
@@ -880,13 +1182,32 @@ function isoToDisplay(iso: string): string {
 }
 
 /** Until the backend sends a status, a policy past its expiry date shows as Lapsed. */
-function statusFromDates(expiryIso: string): PolicyStatus {
-  return expiryIso < todayIso() ? "Lapsed" : "Active";
+function statusFromDates(expiryIso: string, effectIso?: string): PolicyStatus {
+  const today = todayIso();
+  if (expiryIso < today) return "Lapsed";
+  // Placed but cover has not started: not counted as an active policy yet.
+  if (effectIso && effectIso > today) return "Not yet in force";
+  return "Active";
 }
 
 /** Turns a backend policy into the shape the screens use, from its latest cover period. */
+/**
+ * The period in force today. After a renewal the next period already exists but
+ * has not started, so "latest" is not "current": use the one covering today, else
+ * the most recent that has started, else the first upcoming one.
+ */
+function currentPeriod<P extends { effectDate: string; expiryDate: string }>(periods: P[]): P | undefined {
+  const today = todayIso();
+  const newestFirst = [...periods].sort((a, b) => b.effectDate.localeCompare(a.effectDate));
+  return (
+    newestFirst.find((p) => p.effectDate <= today && today <= p.expiryDate) ??
+    newestFirst.find((p) => p.effectDate <= today) ??
+    newestFirst.at(-1)
+  );
+}
+
 function toPolicy(v: PolicyView): Policy | null {
-  const latest = [...v.periods].sort((a, b) => b.effectDate.localeCompare(a.effectDate))[0];
+  const latest = currentPeriod(v.periods);
   if (!latest) return null;
   const terms = latestTerms(latest);
   FINANCIAL_VERSION.set(latest.id, terms?.version ?? 0);
@@ -897,11 +1218,12 @@ function toPolicy(v: PolicyView): Policy | null {
     version: v.version,
     classOfInsurance: latest.productName,
     insurer: latest.insurerName,
+    insurerPolicyNumber: latest.externalPolicyNumber || undefined,
     // Sum insured is not on the backend yet, so it stays undefined and shows
     // as "Not recorded" (unless typed in this session).
     start: isoToDisplay(latest.effectDate),
     renewal: isoToDisplay(latest.expiryDate),
-    status: statusFromDates(latest.expiryDate),
+    status: statusFromDates(latest.expiryDate, latest.effectDate),
     covers: [...v.periods]
       .sort((a, b) => a.effectDate.localeCompare(b.effectDate))
       .map((period) => {
@@ -920,8 +1242,7 @@ function toPolicy(v: PolicyView): Policy | null {
             : {}),
         };
       }),
-    ...LOCAL_POLICY_TERMS.get(v.id),
-    ...(terms
+...(terms
       ? {
           premium: Number(terms.totalPremium),
           netPremium: Number(terms.netPremium),
@@ -934,6 +1255,7 @@ function toPolicy(v: PolicyView): Policy | null {
 
 async function policyProblem(res: Response, fallback: string): Promise<string> {
   const problem = await readProblem(res);
+  if (res.status >= 500) return serverFailure(problem);
   if (res.status === 401) return "Your session has ended. Please sign in again.";
   if (res.status === 403) return "You do not have permission to add or view policies for this client.";
   if (res.status === 404) return "This client or policy could not be found.";
@@ -1019,23 +1341,77 @@ export async function listClientPolicies(clientId: string): Promise<Policy[]> {
  * records, so each client's policies are loaded too, 4 clients at a time. A client
  * whose policies cannot be loaded keeps whatever is already known.
  */
-export async function listClientsWithPolicies(): Promise<Client[]> {
-  const clients = await listClients("");
-  if (MOCK_AUTH) return clients;
-  return mapLimited(clients, 4, async (c) => {
+/** Policies for many clients at once (GET /policies/by-clients), keyed by client UUID. Empty on older servers. */
+async function policiesForClients(clientIds: string[]): Promise<Map<string, Policy[]>> {
+  const found = new Map<string, Policy[]>();
+  for (let i = 0; i < clientIds.length; i += 100) {
+    const params = new URLSearchParams();
+    for (const id of clientIds.slice(i, i + 100)) params.append("clientIds", id);
     try {
-      return { ...c, policies: await listClientPolicies(c.id) };
-    } catch (err) {
-      console.warn(`Could not load the policies of ${c.id}:`, err);
-      return c;
+      const res = await apiFetch(`/api/v1/policies/by-clients?${params}`);
+      if (!res.ok) return found;
+      const page = (await res.json()) as Record<string, PolicyView[]>;
+      for (const [id, views] of Object.entries(page)) {
+        found.set(
+          id,
+          views
+            .map(toPolicy)
+            .filter((p): p is Policy => p !== null)
+            .sort((a, b) => displayToIso(b.start).localeCompare(displayToIso(a.start))),
+        );
+      }
+    } catch {
+      return found;
     }
+  }
+  return found;
+}
+
+/**
+ * Every client with its policies and KYC status, for Reports. Reports only need
+ * names, policies and KYC, so this starts from the one-request client list
+ * instead of loading each full client record (2 requests per client, not 3).
+ * A single backend report endpoint would remove the per-client requests.
+ */
+export async function listClientsWithPolicies(): Promise<Client[]> {
+  if (MOCK_AUTH) return listClients("");
+  const clients = await listClientChoices();
+  // One request each for every client's policies and KYC; older servers fall back to one per client.
+  const uuids = clients.map((c) => c.uuid).filter((id): id is string => !!id);
+  const [batched] = await Promise.all([policiesForClients(uuids), prefetchKycSummaries(uuids)]);
+  return mapLimited(clients, 4, async (c) => {
+    const known = c.uuid ? batched.get(c.uuid) : undefined;
+    if (known) {
+      try {
+        savePolicies(c.id, known);
+      } catch {
+        // Not in the client cache: the report still uses the list below.
+      }
+    }
+    const [policies, kyc] = await Promise.all([
+      (known ? Promise.resolve(known) : listClientPolicies(c.id)).catch((err) => {
+        console.warn(`Could not load the policies of ${c.id}:`, err);
+        return c.policies;
+      }),
+      c.uuid
+        ? kycSummary(c.uuid).catch((err) => {
+            console.warn(`Could not load the KYC summary of ${c.id}:`, err);
+            return null;
+          })
+        : Promise.resolve(null),
+    ]);
+    const kycGateStatus = kyc ? (kyc.gateStatus ?? "NOT_STARTED") : (c.kycGateStatus ?? "UNAVAILABLE");
+    return {
+      ...c,
+      policies,
+      kycStatus: kyc?.status ?? c.kycStatus,
+      kycGateStatus,
+      kyc: kycGateStatus === "READY",
+    };
   });
 }
 
 /** The fields the backend does not store yet: sum insured and status. */
-function localTerms(input: PolicyInput): Partial<Policy> {
-  return { sumInsured: input.sumInsured, status: input.status };
-}
 
 /** The money fields the backend stores (POL-03). Commission rate is a fraction, e.g. 0.1 for 10%. */
 function moneyTerms(input: PolicyInput) {
@@ -1077,21 +1453,22 @@ export async function createPolicy(clientId: string, input: PolicyInput): Promis
   });
   if (!res.ok) throw new Error(await policyProblem(res, "Could not save the policy. Please try again."));
   const view = (await res.json()) as PolicyView;
-  LOCAL_POLICY_TERMS.set(view.id, localTerms(input));
 
   await listClientPolicies(clientId);
   return findClientForPolicies(clientId);
 }
 
 /**
- * Update one of a client's policies. The backend has no edit endpoint yet, so
- * for backend policies only the premium, payment and status fields can change,
- * and they are kept in this browser tab until refresh.
+ * Update one of a client's policies. On GRAL's system only the money terms
+ * change: each save appends a new financial-terms version with its reason.
+ * The number, insurer, class and dates are fixed once the policy is saved.
  */
 export async function updatePolicy(
   clientId: string,
   originalPolicyId: string,
   input: PolicyInput,
+  /** Why the figures changed; stored with the new version on GRAL's system. */
+  reason?: string,
 ): Promise<Client> {
   const client = findClientForPolicies(clientId);
   const original = client.policies.find((p) => p.id === originalPolicyId);
@@ -1114,7 +1491,7 @@ export async function updatePolicy(
         body: JSON.stringify({
           expectedVersion: FINANCIAL_VERSION.get(original.periodId) ?? 0,
           ...moneyTerms(input),
-          reason: "Updated from the client file",
+          reason: reason?.trim() || "Updated from the client file",
         }),
       });
       if (res.status === 409) throw new Error("Someone else changed this policy. Close the form, reopen it and try again.");
@@ -1122,8 +1499,8 @@ export async function updatePolicy(
       const saved = (await res.json()) as FinancialTermsView;
       FINANCIAL_VERSION.set(original.periodId, saved.version);
     }
-    LOCAL_POLICY_TERMS.set(original.uuid, localTerms(input));
-    const updated = { ...localTerms(input), premium: input.premium, netPremium: input.netPremium, amountPaid: input.amountPaid, commissionRate: input.commissionRate };
+    // Only the money terms change on GRAL's system; status keeps following the cover dates.
+    const updated = { premium: input.premium, netPremium: input.netPremium, amountPaid: input.amountPaid, commissionRate: input.commissionRate };
     return savePolicies(
       clientId,
       client.policies.map((p) => (p.id === originalPolicyId ? { ...p, ...updated } : p)),
@@ -1141,8 +1518,23 @@ export async function updatePolicy(
 
 /* ---------------------------------- Claims ----------------------------------- */
 
-export async function listClientClaims(clientName: string): Promise<ClientClaim[]> {
-  return CLAIMS.filter((c) => c.client === clientName).map(toClaimSummary);
+/** Claims on one client's file. Connected to the backend, they come from GET /clients/{id}/claims. */
+export async function listClientClaims(client: Pick<Client, "id" | "name" | "uuid">): Promise<ClientClaim[]> {
+  if (MOCK_AUTH || !client.uuid) return CLAIMS.filter((c) => c.client === client.name).map(toClaimSummary);
+  // Without claim access the backend refuses; do not ask.
+  if (CURRENT_USER && !hasPermission("CLAIM_READ")) return [];
+  try {
+    const res = await apiFetch(`/api/v1/clients/${client.uuid}/claims?size=100`);
+    if (!res.ok) return [];
+    const views = ((await res.json()) as Page<ClaimView>).items ?? [];
+    const claims = await mapLimited(views, 4, async (v) =>
+      rememberClaim(toClaim(v, client.id, client.name, await loadPeriod(v.policyPeriodId))),
+    );
+    return claims.map(toClaimSummary);
+  } catch (err) {
+    console.warn(`Could not load claims for ${client.id}:`, err);
+    return [];
+  }
 }
 
 export async function getPoliciesByInsurer(): Promise<InsurerSummary[]> {
@@ -1184,6 +1576,9 @@ type RenewalMilestoneView = {
   status: string;
   assigneeId?: string | null;
   responsibleRoles?: string[];
+  /** Who recorded the milestone as done, and when (newer servers). */
+  completedBy?: string | null;
+  completedAt?: string | null;
 };
 type RenewalQuoteView = {
   id: string;
@@ -1306,6 +1701,8 @@ function toRenewalCase(
       status: m.status,
       responsibleRoles: m.responsibleRoles ?? [],
       assigneeId: m.assigneeId ?? undefined,
+      completedBy: m.completedBy ?? undefined,
+      completedAt: m.completedAt ?? undefined,
     }));
 
   // The screen reads the current milestone as the first unfinished one, so
@@ -1316,8 +1713,12 @@ function toRenewalCase(
     if (!m || !DONE_RENEWAL_STATUS.includes(m.status.toUpperCase())) break;
     completed.push({
       code: def.code,
-      completedAt: renewalDoneDate(v, m.serverCode) ?? m.dueDate ?? todayIso(),
-      completedBy: "Recorded in GRAL's system",
+      // Older records may not say when a step was done; never show a planned (possibly future) date as done.
+      completedAt:
+        kigaliDate(m.completedAt) ??
+        renewalDoneDate(v, m.serverCode) ??
+        (m.dueDate && m.dueDate <= todayIso() ? m.dueDate : ""),
+      completedBy: m.completedBy ? managerName(m.completedBy, managers) : "",
       note: `${def.name} recorded`,
     });
   }
@@ -1344,8 +1745,8 @@ function toRenewalCase(
     acceptance: acceptance
       ? {
           quoteId: v.proposal?.quoteId ?? "",
-          acceptedAt: acceptance.occurredAt.slice(0, 10),
-          recordedBy: "Recorded in GRAL's system",
+          acceptedAt: kigaliDate(acceptance.occurredAt),
+          recordedBy: "",
           evidence: acceptance.detail ?? "Written acceptance on file",
         }
       : undefined,
@@ -1402,6 +1803,8 @@ async function renewalContext() {
     listClientChoices().catch(() => [] as Client[]),
     loadManagers(),
     loadCatalog(),
+    // Names for who completed each milestone.
+    loadStaff(),
   ]);
   return { clients, managers, insurers: catalog?.insurers ?? [] };
 }
@@ -1427,12 +1830,18 @@ export async function renewalChoices(): Promise<{
   insurers: { id: string; name: string }[];
   products: { id: string; name: string }[];
   managers: { id: string; name: string }[];
+  /** Product IDs each insurer offers, so forms only list classes an insurer can quote. Empty when unknown. */
+  insurerProducts: Record<string, string[]>;
 }> {
   const [catalog, managers] = await Promise.all([loadCatalog(), loadManagers()]);
+  const insurers = (catalog?.insurers ?? []).filter((i) => i.active);
+  // Loaded once per session (one request per insurer), then cached.
+  await loadInsurerProductLinks(insurers).catch(() => undefined);
   return {
-    insurers: (catalog?.insurers ?? []).filter((i) => i.active).map((i) => ({ id: i.id, name: i.name })),
+    insurers: insurers.map((i) => ({ id: i.id, name: i.name })),
     products: (catalog?.products ?? []).filter((p) => p.active).map((p) => ({ id: p.id, name: p.name })),
     managers: managers.map((m) => ({ id: m.id, name: m.fullName })),
+    insurerProducts: Object.fromEntries(insurers.filter((i) => INSURER_PRODUCT_IDS.has(i.id)).map((i) => [i.id, INSURER_PRODUCT_IDS.get(i.id)!])),
   };
 }
 
@@ -1829,7 +2238,8 @@ function claimTask(c: Claim): WorkTask | null {
   const missing = missingDocuments(c).length;
   const titles: Record<Claim["step"], string> = {
     REGISTER: "Confirm the claim registration",
-    DOCUMENTS: `Collect ${missing} missing ${missing === 1 ? "document" : "documents"}`,
+    // Live claims keep their checklist on the server; the count here is only known for sample claims.
+    DOCUMENTS: c.uuid ? "Complete the documents pack" : `Collect ${missing} missing ${missing === 1 ? "document" : "documents"}`,
     SUBMIT: `Submit the claim to ${c.insurer}`,
     FOLLOW_UP: needsEscalation(c) ? `Escalate: no response from ${c.insurer}` : `Follow up with ${c.insurer}`,
     SETTLEMENT: "Record the payment to the client",
@@ -1945,12 +2355,15 @@ export async function listTasks(loadedApprovals?: ApprovalRequest[]): Promise<Wo
 
 /** Names that tasks can be assigned to. */
 export async function listAssignees(): Promise<string[]> {
+  if (!MOCK_AUTH) {
+    // Backend tasks can only be given to active colleagues the backend knows.
+    const [staff, managers] = await Promise.all([loadStaff(), loadManagers()]);
+    return [...new Set([...staff.values(), ...managers.map((m) => m.fullName)])].sort();
+  }
   const names = new Set<string>([
     ...CLAIMS.map((c) => c.handler),
     ...RENEWAL_CASES.map((r) => r.owner),
     ...MANUAL_TASKS.flatMap((t) => (t.owner ? [t.owner] : [])),
-    // Backend tasks can only be given to people the backend knows.
-    ...(MOCK_AUTH ? [] : (await loadManagers()).map((m) => m.fullName)),
   ]);
   return [...names].sort();
 }
@@ -1992,6 +2405,7 @@ export async function completeTask(id: string, note: string, by: string): Promis
 export type NewTaskInput = Pick<WorkTask, "title" | "detail" | "resourceType" | "resourceId" | "resourceRef" | "client" | "owner" | "dueDate">;
 
 export async function createTask(input: NewTaskInput, by: string): Promise<WorkTask> {
+  if (!MOCK_AUTH) return createBackendFollowUp(input);
   if (!input.title.trim()) throw new Error("Say what needs to be done.");
   if (!input.owner) throw new Error("Choose who should do this.");
   if (!input.dueDate) throw new Error("Choose a due date.");
@@ -2012,6 +2426,35 @@ export async function createTask(input: NewTaskInput, by: string): Promise<WorkT
   return task;
 }
 
+/** A follow-up task on a claim or renewal, stored on the backend (POST /tasks/follow-ups). */
+async function createBackendFollowUp(input: NewTaskInput): Promise<WorkTask> {
+  const title = [input.title.trim(), input.detail?.trim()].filter(Boolean).join(" — ").slice(0, 200);
+  if (title.length < 3) throw new Error("Say what needs to be done.");
+  if (!input.dueDate) throw new Error("Choose a due date.");
+  const subjectId =
+    input.resourceType === "CLAIM"
+      ? CLAIMS.find((c) => c.id === input.resourceId)?.uuid
+      : input.resourceType === "RENEWAL"
+        ? RENEWAL_INDEX.get(input.resourceId)
+        : isRecordId(input.resourceId)
+          ? input.resourceId
+          : undefined;
+  if (!subjectId) throw new Error("This record is not on the server, so a task cannot be added to it.");
+  const staff = await loadStaff();
+  const ownerId =
+    !input.owner || input.owner === CURRENT_USER?.name ? undefined : [...staff.entries()].find(([, name]) => name === input.owner)?.[0];
+  if (input.owner && input.owner !== CURRENT_USER?.name && !ownerId) throw new Error("Choose someone from the list.");
+  const res = await apiFetch("/api/v1/tasks/follow-ups", {
+    method: "POST",
+    body: JSON.stringify({ subjectType: input.resourceType, subjectId, title, dueDate: input.dueDate, assigneeId: ownerId }),
+  });
+  if (res.status === 404 || res.status === 405) throw new Error("Adding your own tasks needs the latest server version.");
+  if (!res.ok) throw new Error(await taskProblem(res, "Could not add the task."));
+  const task = await toBackendTask((await res.json()) as BackendTaskView);
+  BACKEND_TASKS.set(task.id, task);
+  return task;
+}
+
 /* ----------------------- Approvals and tasks on the backend ---------------------- */
 // Connected: GET /approvals/inbox, GET /approvals/{id}/history, POST
 // /approvals/{id}/decisions (APR-01, APR-02) and GET /tasks, POST
@@ -2022,6 +2465,28 @@ export async function createTask(input: NewTaskInput, by: string): Promise<WorkT
 
 /** The signed-in user, kept so tasks can be matched to them. */
 let CURRENT_USER: SessionUser | null = null;
+
+/** True when the signed-in user has this backend permission code. */
+function hasPermission(code: string): boolean {
+  return CURRENT_USER?.permissions?.includes(code) ?? false;
+}
+
+function hasBackendRole(code: string): boolean {
+  return CURRENT_USER?.backendRoles?.includes(code) ?? false;
+}
+
+/**
+ * Who may list account managers (GET /clients/managers). Mirrors the backend
+ * (ClientApplicationService.managers): Commercial Directors with LEAD_READ, CRM
+ * Managers who create or assign clients, MDs who assign them, and Accounts
+ * Executives who create clients (they see themselves).
+ */
+function canListManagers(): boolean {
+  if (hasBackendRole("COMMERCIAL_DIRECTOR") && hasPermission("LEAD_READ")) return true;
+  if (hasBackendRole("CRM_MANAGER") && (hasPermission("CLIENT_CREATE") || hasPermission("CLIENT_ASSIGN"))) return true;
+  if (hasBackendRole("MD") && hasPermission("CLIENT_ASSIGN")) return true;
+  return hasBackendRole("ACCOUNTS_EXECUTIVE") && hasPermission("CLIENT_CREATE");
+}
 
 type BackendApprovalView = {
   id: string;
@@ -2081,7 +2546,8 @@ function roleName(code?: string): string {
 async function personName(id?: string): Promise<string | undefined> {
   if (!id) return undefined;
   if (CURRENT_USER?.id === id) return CURRENT_USER.name;
-  return (await loadManagers()).find((m) => m.id === id)?.fullName;
+  const [managers, staff] = await Promise.all([loadManagers(), loadStaff()]);
+  return managers.find((m) => m.id === id)?.fullName ?? staff.get(id);
 }
 
 /** The reference people know a record by: claim number, client ID, or a short ID. */
@@ -2107,6 +2573,20 @@ function approvalStatus(code: string): ApprovalRequest["status"] {
   if (c.includes("REJECT")) return "REJECTED";
   if (c.includes("RETURN")) return "RETURNED";
   return "PENDING";
+}
+
+/** What the approver is asked to agree to: the recommended insurer and premium, when known. */
+async function approvalSummary(ref: string, track: TrackDetail | null, renewal: RenewalCase | null): Promise<string> {
+  const recommended = renewal?.quotes.find((q) => q.recommended);
+  if (recommended) return `Recommended renewal for ${ref}: ${recommended.insurer} at ${formatRwf(recommended.premium)}.`;
+  const rec = track?.track.recommendation;
+  const quote = rec ? track?.track.quotes.find((q) => q.id === rec.quoteId) : undefined;
+  if (quote) {
+    const catalog = await loadCatalog().catch(() => null);
+    const insurer = catalog?.insurers.find((i) => i.id === quote.terms.insurerId)?.name ?? "the recommended insurer";
+    return `Recommended placement for ${ref}: ${insurer} at ${formatRwf(quote.terms.totalPremium)}.`;
+  }
+  return `Approval requested in the system for ${ref}.`;
 }
 
 /**
@@ -2154,18 +2634,19 @@ async function toBackendApproval(h: BackendApprovalHistory, inInbox = false): Pr
           evidencePurpose: st.evidencePurpose,
           role: mineNow ? CURRENT_USER!.role : roleName(st.requiredRole),
           status: stepStatus,
-          decidedBy: decided ? (await personName(decided.actorId)) ?? "Reviewer" : undefined,
-          decidedAt: decided?.occurredAt.slice(0, 10),
+          // Names come from the managers list; other approvers are named by their role.
+          decidedBy: decided ? (await personName(decided.actorId)) ?? roleName(st.requiredRole) : undefined,
+          decidedAt: kigaliDate(decided?.occurredAt),
           comment: decided?.comment || undefined,
         };
       }),
   );
-  const requestedAt = v.createdAt.slice(0, 10);
+  const requestedAt = kigaliDate(v.createdAt);
   const history = await Promise.all(
     h.decisions.map(async (d) => ({
-      at: d.occurredAt.slice(0, 10),
-      by: (await personName(d.actorId)) ?? "Reviewer",
-      text: `${humanize(d.outcome)} at step ${d.step}${d.comment ? `: ${d.comment}` : ""}`,
+      at: kigaliDate(d.occurredAt),
+      by: (await personName(d.actorId)) ?? roleName(h.steps.find((st) => st.number === d.step)?.requiredRole),
+      text: `${DECISION_PAST[d.outcome.toUpperCase()] ?? humanize(d.outcome)} step ${d.step}${d.comment ? `: ${d.comment}` : ""}`,
     })),
   );
   const known = BACKEND_APPROVALS.get(v.id);
@@ -2183,25 +2664,55 @@ async function toBackendApproval(h: BackendApprovalHistory, inInbox = false): Pr
     subjectId: v.subjectId,
     subjectRef: subject.ref,
     subjectRevision: v.materialRevision,
-    title: `${humanize(v.action)} · ${humanize(v.subjectType)}`,
-    summary: `Approval requested in the system for ${subject.ref}.`,
+    title: approvalTitle(v.action, v.subjectType),
+    replaces: v.previousRequestId ?? undefined,
+    summary: await approvalSummary(subject.ref, onboardingTrack, renewal),
     clientId: subject.clientId,
     client: subject.client,
     amount: onboardingTrack?.track.recommendation?.annualCommissionRwf ?? renewal?.backend?.annualCommissionRwf,
     amountLabel:
       onboardingTrack?.track.recommendation || renewal?.backend?.annualCommissionRwf !== undefined ? "Annual commission" : undefined,
     policyVersion: v.policyVersion !== undefined ? `Policy v${v.policyVersion}` : "Backend policy",
-    requestedBy: (await personName(v.initiatedBy)) ?? "Requested in the system",
+    requestedBy: (await personName(v.initiatedBy)) ?? "A colleague",
     requestedAt,
     dueAt: addWorkingDays(requestedAt, DECISION_DAYS),
     status,
     steps,
     evidenceRequired: h.steps.some((st) => st.number === v.currentStep && st.evidenceRequired),
-    // Evidence attached in this tab but not sent yet stays until the decision.
-    evidence: known?.evidence ?? [],
+    // Evidence attached in this tab but not sent yet stays until the decision; once decided,
+    // the evidence filed with each decision is listed instead.
+    evidence:
+      status === "PENDING" || known?.evidence?.length
+      ? (known?.evidence ?? [])
+      : (
+          await Promise.all(
+            h.decisions.map(async (d) => {
+              const who = (await personName(d.actorId)) ?? roleName(h.steps.find((st) => st.number === d.step)?.requiredRole);
+              return (d.evidence ?? []).map((e) => ({ name: `Signed by ${who} (step ${d.step})`, documentId: e.documentId, version: e.version }));
+            }),
+          )
+        ).flat(),
     version: v.version,
-    history: [{ at: requestedAt, by: "System", text: "Approval requested" }, ...history],
+    history: [{ at: requestedAt, by: (await personName(v.initiatedBy)) ?? "", text: "Approval requested" }, ...history],
   };
+}
+
+/** A decision as it reads in a history: "Approved step 1". */
+const DECISION_PAST: Record<string, string> = { APPROVE: "Approved", RETURN: "Returned", REJECT: "Rejected", WITHDRAW: "Withdrew" };
+
+/** What an approval is for, in words people use. Unknown actions fall back to their code in plain text. */
+const APPROVAL_ACTION_TITLE: Record<string, string> = {
+  PLACE_RENEWAL_STANDARD: "Renewal placement",
+  PLACE_RENEWAL_LARGE: "Renewal placement (large commission)",
+  PLACE_RENEWAL_STRATEGIC: "Renewal placement (strategic, Board evidence)",
+  RECOMMEND_STANDARD: "New business recommendation",
+  RECOMMEND_LARGE: "New business recommendation (large commission)",
+  RECOMMEND_STRATEGIC: "New business recommendation (strategic, Board evidence)",
+  SINGLE_SOURCE: "Single-source placement",
+};
+
+function approvalTitle(action: string, subjectType: string): string {
+  return APPROVAL_ACTION_TITLE[action.toUpperCase()] ?? `${humanize(action)} · ${humanize(subjectType)}`;
 }
 
 /**
@@ -2210,6 +2721,42 @@ async function toBackendApproval(h: BackendApprovalHistory, inInbox = false): Pr
  */
 const KYC_SUMMARIES = new Map<string, { at: number; value: Promise<KycGate | null> }>();
 const KYC_SUMMARY_MS = 2 * 60_000;
+/** Full client records for one search page (GET /clients/details); empty on an older server. */
+async function fetchClientDetails(params: URLSearchParams): Promise<ClientView[]> {
+  try {
+    const res = await apiFetch(`/api/v1/clients/details?${params}`);
+    if (!res.ok) return [];
+    return ((await res.json()) as Page<ClientView>).items ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** Loads many clients' KYC summaries in one request (GET /kyc-summaries) into the cache below. */
+async function prefetchKycSummaries(clientIds: string[]): Promise<void> {
+  const missing = clientIds.filter((id) => {
+    const hit = KYC_SUMMARIES.get(id);
+    return !hit || Date.now() - hit.at >= KYC_SUMMARY_MS;
+  });
+  for (let i = 0; i < missing.length; i += 100) {
+    const batch = missing.slice(i, i + 100);
+    try {
+      const params = new URLSearchParams();
+      for (const id of batch) params.append("clientIds", id);
+      const res = await apiFetch(`/api/v1/kyc-summaries?${params}`);
+      if (!res.ok) return; // older server: each summary is read on its own
+      const found = (await res.json()) as Record<string, KycGate>;
+      const at = Date.now();
+      for (const id of batch) {
+        // A client left out could not be read: its own request will say why.
+        if (found[id]) KYC_SUMMARIES.set(id, { at, value: Promise.resolve(found[id]) });
+      }
+    } catch {
+      return;
+    }
+  }
+}
+
 function kycSummary(clientId: string): Promise<KycGate | null> {
   const hit = KYC_SUMMARIES.get(clientId);
   if (hit && Date.now() - hit.at < KYC_SUMMARY_MS) return hit.value;
@@ -2233,6 +2780,7 @@ async function approvalHistory(id: string): Promise<BackendApprovalHistory> {
 
 async function approvalProblem(res: Response, fallback: string): Promise<string> {
   const problem = await readProblem(res);
+  if (res.status >= 500) return serverFailure(problem);
   if (res.status === 401) return "Your session has ended. Please sign in again.";
   if (res.status === 403) return "You are not allowed to decide or see this request.";
   if (res.status === 404) return "This approval request could not be found.";
@@ -2242,16 +2790,37 @@ async function approvalProblem(res: Response, fallback: string): Promise<string>
 }
 
 /** Requests waiting for the signed-in user's decision (the backend's inbox). */
-async function listBackendApprovals(): Promise<ApprovalRequest[]> {
+/** Requests the user started or decided (GET /approvals/mine). An older server without it gives none. */
+async function listMyBackendApprovals(): Promise<BackendApprovalView[]> {
   try {
-    const res = await apiFetch("/api/v1/approvals/inbox?size=100");
+    const res = await apiFetch("/api/v1/approvals/mine?size=100");
     if (!res.ok) return [];
-    const items = ((await res.json()) as Page<BackendApprovalView>).items ?? [];
+    return ((await res.json()) as Page<BackendApprovalView>).items ?? [];
+  } catch {
+    return [];
+  }
+}
+
+async function listBackendApprovals(): Promise<ApprovalRequest[]> {
+  // People without APPROVAL_READ would only be refused.
+  if (CURRENT_USER && !hasPermission("APPROVAL_READ")) return [];
+  try {
+    const [res, mine] = await Promise.all([apiFetch("/api/v1/approvals/inbox?size=100"), listMyBackendApprovals()]);
+    if (!res.ok) return [];
+    const waiting = ((await res.json()) as Page<BackendApprovalView>).items ?? [];
+    // Waiting requests first; the user's own and decided ones keep their history visible.
+    const inInbox = new Set(waiting.map((v) => v.id));
+    const items = [...waiting, ...mine.filter((v) => !inInbox.has(v.id))];
     return await mapLimited(items, 4, async (v) => {
       const known = APPROVAL_LIST_CACHE.get(v.id);
-      if (known && known.version === v.version) return known.approval;
+      if (known && known.version === v.version) {
+        // Evidence attached in this tab lives on the live copy until the decision is sent,
+        // and attaching does not change the request's version: show that copy, not the cached one.
+        const live = BACKEND_APPROVALS.get(v.id);
+        return live && live.version === v.version ? live : known.approval;
+      }
       const history = await approvalHistory(v.id).catch(() => ({ request: v, steps: [], decisions: [] }));
-      const mapped = await toBackendApproval(history, true);
+      const mapped = await toBackendApproval(history, inInbox.has(v.id));
       BACKEND_APPROVALS.set(mapped.id, mapped);
       const step = history.steps.find((st) => st.number === v.currentStep);
       BACKEND_APPROVAL_SUBJECTS.set(v.id, {
@@ -2304,13 +2873,36 @@ type BackendTaskView = {
   completedAt?: string;
   version: number;
   ownerControlled?: boolean;
+  /** Set on follow-up tasks people add themselves. */
+  title?: string | null;
 };
+
+/** What each kind of task asks the person to do. */
+const TASK_TITLES: Record<string, string> = {
+  LEAD_TECH_NOTICE: "New lead: technical notice",
+  LEAD_CONFIRMATION: "Confirm the lead registration",
+  LEAD_RESPONSE: "Send the lead a first response",
+  LEAD_ASSESSMENT: "Record the needs assessment",
+  KYC_REVIEW: "Review the KYC checklist",
+  KYC_ESCALATION: "KYC review past its deadline",
+};
+
+/** Lead names by ID, from one list request when a task on a lead needs one. */
+let LEAD_NAMES: Promise<Map<string, string>> | null = null;
+async function leadName(id: string): Promise<string | undefined> {
+  LEAD_NAMES ??= readAllOnboarding<Lead>("/api/v1/leads", "")
+    .then((leads) => new Map(leads.map((l) => [l.id, l.name])))
+    .catch(() => new Map<string, string>());
+  return (await LEAD_NAMES).get(id);
+}
 
 /** Backend tasks already loaded, by ID, with the version the next change must send. */
 const BACKEND_TASKS = new Map<string, WorkTask & { version: number }>();
 
 function taskType(kind: string): WorkTask["type"] {
   const k = kind.toUpperCase();
+  if (k === "FOLLOW_UP") return "MANUAL";
+  if (k.startsWith("LEAD")) return "ONBOARDING_STEP";
   if (k.includes("APPROVAL")) return "APPROVAL";
   if (k.includes("FOLLOW")) return "CLAIM_FOLLOW_UP";
   if (k.includes("CLAIM")) return "CLAIM_STEP";
@@ -2327,17 +2919,21 @@ function taskResourceType(type: string): WorkTask["resourceType"] {
 }
 
 async function toBackendTask(v: BackendTaskView): Promise<WorkTask & { version: number }> {
-  const subject = subjectReference(v.subjectType, v.subjectId);
+  let subject = subjectReference(v.subjectType, v.subjectId);
+  if (v.subjectType.toUpperCase() === "LEAD") {
+    const name = await leadName(v.subjectId);
+    if (name) subject = { ref: name };
+  }
   const done = v.status.toUpperCase().includes("COMPLET") || v.status.toUpperCase() === "DONE";
   return {
     id: v.id,
     key: `BACKEND:${v.id}`,
     type: taskType(v.kind),
-    title: humanize(v.kind),
+    title: v.title ?? TASK_TITLES[v.kind.toUpperCase()] ?? humanize(v.kind),
     detail: subject.ref,
     resourceType: taskResourceType(v.subjectType),
     // Links open the record by the reference people know; the UUID when there is none.
-    resourceId: subject.ref.includes(" ") ? v.subjectId : subject.ref,
+    resourceId: subject.ref.includes(" ") || v.subjectType.toUpperCase() === "LEAD" ? v.subjectId : subject.ref,
     resourceRef: subject.ref,
     client: subject.client,
     owner: (await personName(v.assigneeId)) ?? (v.assigneeId ? "Assigned user" : undefined),
@@ -2345,10 +2941,11 @@ async function toBackendTask(v: BackendTaskView): Promise<WorkTask & { version: 
     // Some owner-controlled work has no deadline yet; it shows as due today.
     dueDate: v.dueDate ?? todayIso(),
     status: done ? "DONE" : "OPEN",
-    // Owner-controlled work is completed by hand; the rest closes when its workflow moves on.
-    source: v.ownerControlled ? "MANUAL" : "SYSTEM",
+    // Owner-controlled work closes when its workflow moves on (the server refuses to complete it by hand);
+    // the rest, such as notices and follow-ups, is marked done by the person it is assigned to.
+    source: v.ownerControlled ? "SYSTEM" : "MANUAL",
     createdAt: todayIso(),
-    completedAt: v.completedAt?.slice(0, 10),
+    completedAt: kigaliDate(v.completedAt),
     completedBy: await personName(v.completedBy),
     history: [],
     version: v.version,
@@ -2356,12 +2953,34 @@ async function toBackendTask(v: BackendTaskView): Promise<WorkTask & { version: 
 }
 
 /** Tasks from the backend: the whole team's for people who may assign work, otherwise the user's own. */
+/** Set when the team's task list could not be loaded, so My Work can say so instead of showing none. */
+let TEAM_TASKS_PROBLEM: string | null = null;
+
+/** Why the team's tasks are missing from the last task list, or null when they loaded. */
+export function teamTasksProblem(): string | null {
+  return TEAM_TASKS_PROBLEM;
+}
+
 async function listBackendTasks(): Promise<WorkTask[]> {
+  TEAM_TASKS_PROBLEM = null;
   try {
-    let res = await apiFetch("/api/v1/tasks?assignedToMe=false&size=100");
-    if (res.status === 403) res = await apiFetch("/api/v1/tasks?assignedToMe=true&size=100");
-    if (!res.ok) return [];
+    // The whole team's list needs TASK_ASSIGN; without it, ask for the user's own only.
+    const team = !CURRENT_USER || hasPermission("TASK_ASSIGN");
+    let res = await apiFetch(`/api/v1/tasks?assignedToMe=${team ? "false" : "true"}&size=100`);
+    if (team && res.status === 403) res = await apiFetch("/api/v1/tasks?assignedToMe=true&size=100");
+    if (team && res.status >= 500) {
+      // Keep the person's own tasks visible when the team list fails.
+      TEAM_TASKS_PROBLEM = `The team's tasks could not be loaded, so only yours are shown. ${serverFailure(await readProblem(res))}`;
+      res = await apiFetch("/api/v1/tasks?assignedToMe=true&size=100");
+    }
+    if (!res.ok) {
+      TEAM_TASKS_PROBLEM = res.status >= 500 ? serverFailure(await readProblem(res)) : TEAM_TASKS_PROBLEM;
+      return [];
+    }
     const items = ((await res.json()) as Page<BackendTaskView>).items ?? [];
+    // Claim tasks are named by claim number (CLM-000006), which needs the claims list (one request).
+    const unknownClaim = items.some((t) => t.subjectType.toUpperCase() === "CLAIM" && !CLAIMS.some((c) => c.uuid === t.subjectId));
+    if (unknownClaim && (!CURRENT_USER || hasPermission("CLAIM_READ"))) await listClaims().catch(() => []);
     const tasks = await Promise.all(items.map(toBackendTask));
     for (const t of tasks) BACKEND_TASKS.set(t.id, t);
     return tasks.map(({ version: _version, ...t }) => t);
@@ -2373,6 +2992,7 @@ async function listBackendTasks(): Promise<WorkTask[]> {
 
 async function taskProblem(res: Response, fallback: string): Promise<string> {
   const problem = await readProblem(res);
+  if (res.status >= 500) return serverFailure(problem);
   if (res.status === 401) return "Your session has ended. Please sign in again.";
   if (res.status === 403) return "You are not allowed to change this task.";
   if (res.status === 409) return "This task changed since you opened it. Close it and open it again.";
@@ -2392,7 +3012,9 @@ async function completeBackendTask(id: string, note: string): Promise<void> {
 }
 
 async function reassignBackendTask(t: WorkTask & { version: number }, owner: string): Promise<void> {
-  const assignee = (await loadManagers()).find((m) => m.fullName === owner);
+  const [managers, staff] = await Promise.all([loadManagers(), loadStaff()]);
+  const assignee =
+    managers.find((m) => m.fullName === owner) ?? [...staff.entries()].map(([id, fullName]) => ({ id, fullName })).find((m) => m.fullName === owner);
   if (!assignee) throw new Error("Choose someone from the list. The backend can only assign work to its own users.");
   const res = await apiFetch(`/api/v1/tasks/${t.id}/reassign`, {
     method: "POST",
@@ -2444,8 +3066,8 @@ async function findBackendPolicy(policyNumber: string): Promise<{ uuid: string; 
 
 /**
  * Policy page for a backend policy: GET /policies/{id} for the policy and all
- * its cover periods, plus the client's claims on those periods. Premiums,
- * payments and policy history (POL-03, POL-05) are not on the backend yet.
+ * its cover periods, the history of their figures, and the client's claims on
+ * those periods.
  */
 async function getBackendPolicyDetail(policyNumber: string, policyUuid?: string): Promise<PolicyDetail | null> {
   const found = policyUuid ? { uuid: policyUuid, clientRef: "" } : await findBackendPolicy(policyNumber);
@@ -2468,18 +3090,26 @@ async function getBackendPolicyDetail(policyNumber: string, policyUuid?: string)
   const financials = policyFinancials(policy);
   // Newest period first; the oldest one is when the policy was placed.
   const sorted = [...view.periods].sort((a, b) => b.effectDate.localeCompare(a.effectDate));
+  const inForce = currentPeriod(view.periods);
   const periods: PolicyPeriod[] = sorted.map((per, i) => ({
     periodId: per.id,
     from: per.effectDate,
     to: per.expiryDate,
     // Premiums come from each period's latest money snapshot (POL-03).
     // Sum insured is not on the backend yet, so only this session's value shows.
-    sumInsured: i === 0 ? (policy.sumInsured ?? null) : null,
+    sumInsured: per.id === inForce?.id ? (policy.sumInsured ?? null) : null,
     netPremium: latestTerms(per) ? Number(latestTerms(per)!.netPremium) : null,
     totalPremium: latestTerms(per) ? Number(latestTerms(per)!.totalPremium) : null,
     movement: i === sorted.length - 1 ? "NEW" : "RENEWAL",
-    current: i === 0,
+    // Current only once cover has started; a policy whose only period starts later has none.
+    current: per.id === inForce?.id && per.effectDate <= todayIso(),
+    upcoming: per.effectDate > todayIso(),
   }));
+  await loadStaff();
+  const firstBy = (per: PolicyPeriodView) => {
+    const first = [...(per.financialTerms ?? [])].sort((a, b) => a.version - b.version)[0];
+    return (first?.recordedBy && staffName(first.recordedBy)) || "Recorded in the system";
+  };
   const movements: PolicyMovement[] = sorted.map((per, i) => ({
     id: `MOV-${per.id}`,
     date: per.effectDate,
@@ -2488,11 +3118,32 @@ async function getBackendPolicyDetail(policyNumber: string, policyUuid?: string)
       i === sorted.length - 1
         ? `Policy placed with ${per.insurerName}`
         : `Renewed for ${formatIsoRange(per.effectDate, per.expiryDate)}`,
-    by: "Recorded in the system",
+    by: firstBy(per),
   }));
+  // Every later version of a period's figures is a change someone made, with its reason.
+  for (const per of sorted) {
+    const versions = [...(per.financialTerms ?? [])].sort((a, b) => a.version - b.version);
+    // Newest first, so changes on the same day keep their order after the sort by date below.
+    for (let i = versions.length - 1; i >= 1; i--) {
+      const before = versions[i - 1]!;
+      const after = versions[i]!;
+      const changes = termChanges(before, after);
+      movements.push({
+        id: `TERMS-${per.id}-${after.version}`,
+        date: kigaliDate(after.recordedAt),
+        type: "TERMS",
+        description: [after.reason?.trim() || "Figures updated", changes].filter(Boolean).join(" · "),
+        premiumChange: Number(after.totalPremium) - Number(before.totalPremium) || undefined,
+        by: (after.recordedBy && staffName(after.recordedBy)) || "A colleague",
+      });
+    }
+  }
+  movements.sort((a, b) => b.date.localeCompare(a.date));
 
   // Claims registered on any of this policy's cover periods.
   let claims: ClientClaim[] = [];
+  // Only people who may read claims ask for them (others would get a 403).
+  if (CURRENT_USER && !hasPermission("CLAIM_READ")) return { policy, clientId: clientRef, client: clientName, financials, periods, movements, claims, claimsHidden: true };
   try {
     const periodIds = new Set(view.periods.map((per) => per.id));
     const claimRes = await apiFetch(`/api/v1/clients/${view.clientId}/claims?size=100`);
@@ -2604,8 +3255,8 @@ const LOCAL_FILES = new Map<string, Blob>();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function usesDocumentBackend(subject: DocumentSubject) {
-  // The backend accepts documents for clients, claims, leads, policy tracks and KYC reviews.
-  return !MOCK_AUTH && ["CLIENT", "CLAIM", "LEAD", "ONBOARDING", "KYC", "RENEWAL"].includes(subject.type) && UUID_PATTERN.test(subject.id);
+  // The backend accepts documents for clients, claims, leads, policy tracks, KYC reviews, renewals and policies.
+  return !MOCK_AUTH && ["CLIENT", "CLAIM", "LEAD", "ONBOARDING", "KYC", "RENEWAL", "POLICY"].includes(subject.type) && UUID_PATTERN.test(subject.id);
 }
 
 function subjectKey(subject: DocumentSubject) {
@@ -2623,6 +3274,7 @@ export function documentProblem(file: File): string | null {
 
 async function documentError(res: Response, fallback: string) {
   const problem = await readProblem(res);
+  if (res.status >= 500) return serverFailure(problem);
   if (res.status === 401) return "Your session has ended. Please sign in again.";
   if (res.status === 403) return "You do not have permission to upload or read documents here.";
   if (res.status === 409) return "Someone else replaced this file. Refresh the list and try again.";
@@ -2802,6 +3454,25 @@ export async function getDocumentContent(
   return res.blob();
 }
 
+/** Open a document attached as evidence to a workflow step, in a new tab. */
+export async function openEvidenceDocument(subject: DocumentSubject, documentId: string, version: number, purpose: string): Promise<void> {
+  if (!usesDocumentBackend(subject)) throw new Error("This is a sample record; there is no file to open.");
+  // Opened before the download so the browser does not block it as a pop-up.
+  const tab = window.open("", "_blank");
+  try {
+    const params = new URLSearchParams({ subjectType: subject.type, subjectId: subject.id, purpose });
+    const res = await apiFetch(`/api/v1/documents/${documentId}/versions/${version}/content?${params}`);
+    if (!res.ok) throw new Error(await documentError(res, "Could not open the file."));
+    const url = URL.createObjectURL(await res.blob());
+    if (tab) tab.location.href = url;
+    else window.location.assign(url);
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } catch (err) {
+    tab?.close();
+    throw err;
+  }
+}
+
 /** Download an exact version of a document. */
 export async function downloadDocument(
   subject: DocumentSubject,
@@ -2846,6 +3517,7 @@ const ADMIN_MESSAGES: Record<string, string> = {
 
 async function adminError(res: Response, fallback: string): Promise<string> {
   const problem = (await readProblem(res)) as AdminProblem;
+  if (res.status >= 500) return serverFailure(problem);
   if (res.status === 401) return "Your session has ended. Please sign in again.";
   if (res.status === 429) return "Too many attempts. Please wait a few minutes and try again.";
   if (problem.code && ADMIN_MESSAGES[problem.code]) return ADMIN_MESSAGES[problem.code]!;
@@ -3170,8 +3842,11 @@ const ONBOARDING_MESSAGES: Record<string, string> = {
   KYC_NOT_READY: "The client's KYC must be approved first.",
   RFQ_ALREADY_DISPATCHED: "The requests for quotations were already sent.",
   RESPONSE_NOT_DUE: "An insurer can be marked as not replying only after its response date.",
-  INSURER_PRODUCT_NOT_AVAILABLE: "That insurer does not offer this product.",
+  INSURER_PRODUCT_NOT_AVAILABLE: "That insurer does not offer this class of insurance. Choose a class the insurer offers, or another insurer.",
+  NO_ELIGIBLE_APPROVER:
+    "Nobody who can approve this is assigned yet. Ask the CRM Manager or the MD to assign a Technical Director (More actions → Assign people), then send it again.",
   QUOTE_REQUIRED: "Choose a quote to recommend.",
+  INSURER_LICENSE_REQUIRED: "Record a current licence check for this insurer first (“Record an insurer licence check”).",
   RECOMMENDATION_REQUIRED: "Recommend a quote first.",
   APPROVAL_ALREADY_REQUESTED: "Approval was already requested.",
   PLACEMENT_ALREADY_INSTRUCTED: "The insurer was already instructed, so the recommendation can no longer be revised.",
@@ -3195,6 +3870,7 @@ const ONBOARDING_MESSAGES: Record<string, string> = {
 
 async function onboardingProblem(res: Response, fallback: string): Promise<string> {
   const problem = await readProblem(res);
+  if (res.status >= 500) return serverFailure(problem);
   if (res.status === 401) return "Your session has ended. Please sign in again.";
   // The backend's reason code says which rule refused, e.g. not the assigned reviewer.
   if (res.status === 403 && problem.code && ONBOARDING_MESSAGES[problem.code]) return ONBOARDING_MESSAGES[problem.code]!;
@@ -3288,7 +3964,7 @@ export async function checkProspectDuplicates(input: ProspectInput): Promise<Pro
     const matches = DEMO_LEADS.filter((l) => l.clientId && l.clientName?.trim().toLowerCase() === input.registeredName.trim().toLowerCase());
     return { fingerprint: JSON.stringify(input), candidates: matches.map((l) => ({ id: l.clientId!, reference: l.clientId!, name: l.clientName!, matches: ["name"], managerId: l.ownerId })) };
   }
-  const body = { profile: { registeredName: input.registeredName, type: input.clientType, sector: input.sector, physicalAddress: input.address }, primaryContact: { name: input.contactName, jobTitle: input.jobTitle, email: input.email, phone: input.phone } };
+  const body = { profile: { registeredName: input.registeredName, type: input.clientType, sector: input.sector, physicalAddress: input.address }, primaryContact: { name: input.contactName, jobTitle: input.jobTitle, email: input.email, phone: input.phone.trim() ? toBackendPhone(input.phone) : input.phone } };
   let fingerprint = "";
   const candidates = await collectPages(async (page) => {
     const result = await sendOnboarding<{ fingerprint: string; candidates: Page<{ client: { id: string; reference: string; registeredName: string; managerId?: string }; matches: string[] }> }>("POST", `/api/v1/clients/duplicate-check?page=${page}&size=100`, body, "Could not review matching clients.");
@@ -3501,6 +4177,7 @@ export async function unlinkProductFromInsurer(insurerId: string, productId: str
 
 async function catalogApiProblem(res: Response, fallback: string): Promise<string> {
   const problem = await readProblem(res);
+  if (res.status >= 500) return serverFailure(problem);
   if (res.status === 401) return "Your session has ended. Please sign in again.";
   if (res.status === 403) return "You do not have permission to manage insurer products.";
   if (problem.code === "INSURANCE_TYPE_MISMATCH") return "This insurer cannot offer products in that insurance term.";
@@ -3527,6 +4204,24 @@ async function decorateLead(l: Lead, withClient = true): Promise<Lead> {
 
 async function decorateTrack(t: PolicyTrack, leadName?: string): Promise<PolicyTrack> {
   return { ...t, productName: t.productName ?? (await nameOf("product", t.productId)) ?? "Policy", leadName: t.leadName ?? leadName };
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** True for a backend record ID (UUID), as opposed to a reference such as CL00014. */
+export function isRecordId(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
+/** A client's backend ID and name, from its ID or its reference (CL00014). Null when it cannot be found. */
+export async function resolveClient(idOrReference: string): Promise<{ uuid: string; name: string } | null> {
+  if (MOCK_AUTH) return { uuid: idOrReference, name: (await clientNameById(idOrReference)) ?? "Client" };
+  if (isRecordId(idOrReference)) {
+    const name = await clientNameById(idOrReference);
+    return name ? { uuid: idOrReference, name } : null;
+  }
+  const client = await getClient(idOrReference).catch(() => null);
+  return client?.uuid ? { uuid: client.uuid, name: client.name } : null;
 }
 
 async function clientNameById(id: string): Promise<string | undefined> {
@@ -3800,7 +4495,14 @@ export async function openProspect(lead: Lead, input: ProspectInput, attempt?: C
     });
   }
   return decorateLead(
-    await sendOnboarding<Lead>("POST", `/api/v1/leads/${lead.id}/prospect`, { command: commandEnvelope(lead.version, undefined, attempt), ...input }, "Could not open the prospect client.", attempt),
+    await sendOnboarding<Lead>(
+      "POST",
+      `/api/v1/leads/${lead.id}/prospect`,
+      // The backend only takes +250 numbers; accept 0788… and spaces too.
+      { command: commandEnvelope(lead.version, undefined, attempt), ...input, phone: input.phone.trim() ? toBackendPhone(input.phone) : input.phone },
+      "Could not open the prospect client.",
+      attempt,
+    ),
   );
 }
 
@@ -4014,7 +4716,6 @@ export async function saveKycTemplate(
   }
   const path = `/api/v1/kyc-templates/${encodeURIComponent(code)}`;
   const body = { expectedVersion, ...input };
-  console.info("[KYC checklist request]", { method: "PUT", url: `${API_URL}${path}`, body });
   return sendOnboarding<KycTemplate>("PUT", path, body, "Could not save the KYC checklist.");
 }
 
@@ -4150,8 +4851,8 @@ export async function decideKycReview(review: KycReview, input: { decision: "APP
     });
   }
   const path = `/api/v1/kyc-cases/${review.id}/decisions`;
-  const body = { command: kycCommand(review, attempt), decision: input.decision, reason: input.reason.trim(), documentId: p?.documentId, documentVersion: p?.documentVersion };
-  console.info("[KYC decision request]", { method: "POST", url: `${API_URL}${path}`, body });
+  // documentVersion is always sent: the server rejects a body that leaves it out (Return and Reject have no form).
+  const body = { command: kycCommand(review, attempt), decision: input.decision, reason: input.reason.trim(), documentId: p?.documentId, documentVersion: p?.documentVersion ?? 0 };
   return sendOnboarding<KycReview>("POST", path, body, "Could not record the decision.", attempt);
 }
 
@@ -4612,21 +5313,64 @@ function onboardingTasks(): WorkTask[] {
 
 type BackendCalendar = { today: string; timeZone: string; holidays: { date: string; label: string }[] };
 
+/** The holiday list changes rarely, so it is loaded once per page load and shared. */
+let HOLIDAYS_REQUEST: Promise<Holiday[]> | null = null;
+
 export async function getHolidays(): Promise<Holiday[]> {
   if (MOCK_AUTH) return RWANDA_HOLIDAYS;
-  try {
-    const res = await apiFetch("/api/v1/workflow/calendar");
-    if (!res.ok) return RWANDA_HOLIDAYS;
-    const calendar = (await res.json()) as BackendCalendar;
-    return calendar.holidays?.length ? calendar.holidays : RWANDA_HOLIDAYS;
-  } catch {
-    return RWANDA_HOLIDAYS;
-  }
+  HOLIDAYS_REQUEST ??= (async () => {
+    try {
+      const res = await apiFetch("/api/v1/workflow/calendar");
+      if (!res.ok) {
+        HOLIDAYS_REQUEST = null; // try again next time
+        return RWANDA_HOLIDAYS;
+      }
+      const calendar = (await res.json()) as BackendCalendar;
+      return calendar.holidays?.length ? calendar.holidays : RWANDA_HOLIDAYS;
+    } catch {
+      HOLIDAYS_REQUEST = null;
+      return RWANDA_HOLIDAYS;
+    }
+  })();
+  return HOLIDAYS_REQUEST;
 }
 
 /* --------------------------------- Overview ---------------------------------- */
 
 /** Short claim rows for the Overview, search and client file (open claims only). */
+/** Every claim this person can see, closed ones included (for search). */
+export async function listAllClaimsSummary(): Promise<(ClientClaim & { closed: boolean })[]> {
+  return (await listClaims()).map((c) => ({ ...toClaimSummary(c), closed: isClosed(c) || c.serverState === "CLOSED" }));
+}
+
+/**
+ * Policies for search: every visible client's policies, loaded with the batch call
+ * and kept for a minute. Empty for people who cannot read policies.
+ */
+let POLICY_SEARCH: { at: number; value: Promise<{ number: string; client: string; clientRef: string; insurer: string; product: string; status: string }[]> } | null = null;
+export function searchablePolicies() {
+  if (MOCK_AUTH) return Promise.resolve([]);
+  if (POLICY_SEARCH && Date.now() - POLICY_SEARCH.at < 60_000) return POLICY_SEARCH.value;
+  const value = (async () => {
+    const clients = await listClientChoices();
+    const byUuid = new Map(clients.filter((c) => c.uuid).map((c) => [c.uuid!, c]));
+    const found = await policiesForClients([...byUuid.keys()]);
+    return [...found.entries()].flatMap(([uuid, policies]) =>
+      policies.map((p) => ({
+        number: p.id,
+        client: byUuid.get(uuid)?.name ?? "Client",
+        clientRef: byUuid.get(uuid)?.id ?? "",
+        insurer: p.insurer,
+        product: p.classOfInsurance,
+        status: p.status,
+      })),
+    );
+  })();
+  POLICY_SEARCH = { at: Date.now(), value };
+  value.catch(() => (POLICY_SEARCH = null));
+  return value;
+}
+
 export async function listClaimsSummary(): Promise<ClientClaim[]> {
   return (await listClaims()).filter((c) => !isClosed(c)).map(toClaimSummary);
 }
@@ -4689,6 +5433,10 @@ type ClaimView = {
   version: number;
   createdAt: string;
   updatedAt: string;
+  /** P1 to P3; older servers do not send it. */
+  priority?: string;
+  /** The date the client reported the loss; older servers do not send it. */
+  reportedOn?: string;
 };
 
 type PolicyPeriodDetail = {
@@ -4701,26 +5449,65 @@ type PolicyPeriodDetail = {
   expiryDate: string;
 };
 
-/** Details typed in this tab that the backend does not store yet, by claim UUID. */
-const LOCAL_CLAIM_DETAILS = new Map<string, Pick<Claim, "priority" | "handler" | "dateReported">>();
+/**
+ * Details typed at registration that the backend does not store yet (priority,
+ * handler, date reported), by claim UUID. Kept in this browser so they survive a
+ * reload; other people and other browsers will not see them until the backend
+ * stores them.
+ */
+type LocalClaimDetails = Pick<Claim, "priority" | "handler" | "dateReported">;
+const LOCAL_CLAIM_DETAILS_KEY = "gral:claim-details";
+const LOCAL_CLAIM_DETAILS = {
+  read(): Record<string, LocalClaimDetails> {
+    try {
+      if (typeof window === "undefined") return {};
+      return JSON.parse(window.localStorage.getItem(LOCAL_CLAIM_DETAILS_KEY) ?? "{}") as Record<string, LocalClaimDetails>;
+    } catch {
+      return {};
+    }
+  },
+  get(id: string): LocalClaimDetails | undefined {
+    return this.read()[id];
+  },
+  set(id: string, details: LocalClaimDetails) {
+    try {
+      const all = this.read();
+      all[id] = details;
+      window.localStorage.setItem(LOCAL_CLAIM_DETAILS_KEY, JSON.stringify(all));
+    } catch {
+      // Storage full or blocked: the details just will not survive a reload.
+    }
+  },
+};
 
 /** Policy periods already loaded, by period UUID. */
 const PERIOD_CACHE = new Map<string, PolicyPeriodDetail | null>();
 
+/** Each period is asked for once, even when several claims on it load at the same time. */
+const PERIOD_REQUESTS = new Map<string, Promise<PolicyPeriodDetail | null>>();
 async function loadPeriod(periodId: string): Promise<PolicyPeriodDetail | null> {
   if (PERIOD_CACHE.has(periodId)) return PERIOD_CACHE.get(periodId)!;
-  try {
-    const res = await apiFetch(`/api/v1/policy-periods/${periodId}`);
-    const period = res.ok ? ((await res.json()) as PolicyPeriodDetail) : null;
-    PERIOD_CACHE.set(periodId, period);
-    return period;
-  } catch {
-    return null;
-  }
+  const pending = PERIOD_REQUESTS.get(periodId);
+  if (pending) return pending;
+  const request = (async () => {
+    try {
+      const res = await apiFetch(`/api/v1/policy-periods/${periodId}`);
+      const period = res.ok ? ((await res.json()) as PolicyPeriodDetail) : null;
+      PERIOD_CACHE.set(periodId, period);
+      return period;
+    } catch {
+      return null;
+    } finally {
+      PERIOD_REQUESTS.delete(periodId);
+    }
+  })();
+  PERIOD_REQUESTS.set(periodId, request);
+  return request;
 }
 
 async function claimProblem(res: Response, fallback: string): Promise<string> {
   const problem = await readProblem(res);
+  if (res.status >= 500) return serverFailure(problem);
   if (res.status === 401) return "Your session has ended. Please sign in again.";
   if (res.status === 403) return "You do not have permission to register claims for this client.";
   if (res.status === 404) return "This client or policy could not be found.";
@@ -4739,7 +5526,7 @@ function standardClaimDocuments(): Claim["documents"] {
 
 /** Turns a backend claim into the shape the screens use. */
 function toClaim(v: ClaimView, clientRef: string, clientName: string, period: PolicyPeriodDetail | null): Claim {
-  const created = v.createdAt.slice(0, 10);
+  const created = kigaliDate(v.createdAt);
   const local = LOCAL_CLAIM_DETAILS.get(v.id);
   // Work done in this tab on the same claim (documents, steps, notes) is kept.
   const existing = CLAIMS.find((c) => c.uuid === v.id);
@@ -4750,7 +5537,7 @@ function toClaim(v: ClaimView, clientRef: string, clientName: string, period: Po
       documents: standardClaimDocuments(),
       followUps: [],
       notes: [],
-      history: [{ at: created, by: "Backend", text: "Claim registered" }],
+      history: [{ at: created, by: "", text: "Claim registered" }],
     }),
     id: v.reference,
     uuid: v.id,
@@ -4758,7 +5545,7 @@ function toClaim(v: ClaimView, clientRef: string, clientName: string, period: Po
     serverState: v.state,
     // The backend's state decides the step shown for backend claims.
     step: CLAIM_STEP_FOR_STATE[v.state] ?? existing?.step ?? "REGISTER",
-    stepStartedAt: (v.updatedAt ?? v.createdAt).slice(0, 10),
+    stepStartedAt: kigaliDate(v.updatedAt ?? v.createdAt),
     clientId: clientRef,
     client: clientName,
     policyId: period?.externalPolicyNumber || undefined,
@@ -4766,11 +5553,13 @@ function toClaim(v: ClaimView, clientRef: string, clientName: string, period: Po
     classOfInsurance: period?.productName ?? "",
     insurer: period?.insurerName ?? "",
     dateOfLoss: v.lossDate,
-    dateReported: local?.dateReported ?? existing?.dateReported ?? created,
+    dateReported: v.reportedOn ?? local?.dateReported ?? existing?.dateReported ?? created,
     amount: Number(v.estimatedAmount),
     currency: v.currency,
-    priority: local?.priority ?? existing?.priority ?? "P2",
-    handler: local?.handler ?? existing?.handler ?? "Not assigned",
+    // Claims registered before the server stored priority (no report date) keep what this browser noted.
+    priority: (v.reportedOn ? (v.priority as ClaimPriority | undefined) : undefined) ?? local?.priority ?? (v.priority as ClaimPriority | undefined) ?? existing?.priority ?? "P2",
+    handler: staffName(v.ownerId) ?? local?.handler ?? existing?.handler ?? "Not assigned",
+    handlerId: v.ownerId,
     description: v.description,
     ...claimStatusFromState(v),
   };
@@ -4778,8 +5567,8 @@ function toClaim(v: ClaimView, clientRef: string, clientName: string, period: Po
 
 /** The queue's closed and disputed counts read these, so they follow the backend's state. */
 export function claimStatusFromState(v: Pick<ClaimView, "state" | "createdAt" | "updatedAt">): Pick<Claim, "closure" | "dispute"> {
-  const since = (v.updatedAt ?? v.createdAt).slice(0, 10);
-  const by = "Recorded in GRAL's system";
+  const since = kigaliDate(v.updatedAt ?? v.createdAt);
+  const by = "";
   if (v.state === "CLOSED") return { closure: { closedAt: since, by, outcome: "CLOSED", evidence: "" }, dispute: undefined };
   if (v.state === "DISPUTED_REJECTED" || v.state === "CLAIMS_COMMITTEE_REVIEW") {
     return { closure: undefined, dispute: { raisedAt: since, reason: "Disputed or rejected by the insurer" } };
@@ -4917,6 +5706,51 @@ function rememberClaim(claim: Claim): Claim {
   return claim;
 }
 
+/**
+ * Change a claim's priority or handler after it was registered
+ * (PUT /claims/{id}/handling). The handler must be a Claims Manager or
+ * Claims Underwriter; closed claims cannot be changed.
+ */
+export async function updateClaimHandling(
+  id: string,
+  change: { priority: ClaimPriority; handlerId?: string },
+  by: string,
+): Promise<Claim> {
+  const c = findClaim(id);
+  requireOpen(c);
+  if (!c.uuid || MOCK_AUTH) {
+    const handler = change.handlerId ? (STAFF?.get(change.handlerId) ?? change.handlerId) : c.handler;
+    return saveClaim({ ...c, priority: change.priority, handler }, by, "Priority or handler changed");
+  }
+  const res = await apiFetch(`/api/v1/claims/${c.uuid}/handling`, {
+    method: "PUT",
+    body: JSON.stringify({ expectedVersion: c.version, priority: change.priority, ownerId: change.handlerId ?? null }),
+  });
+  if (!res.ok) {
+    const problem = await readProblem(res.clone());
+    if (res.status === 409)
+      throw new Error(
+        problem.code === "INVALID_CLAIM_STATE"
+          ? "This claim is closed, so its priority and handler cannot change."
+          : "Someone else changed this claim. Reload it and try again.",
+      );
+    if (problem.code === "INVALID_CLAIM_HANDLER")
+      throw new Error("Choose a Claims Manager or Claims Underwriter as the handler.");
+    if (res.status === 403) throw new Error("You do not have permission to change this claim.");
+    throw new Error(await claimProblem(res, "Could not save the change. Please try again."));
+  }
+  const view = (await res.json()) as ClaimView;
+  await loadStaff();
+  // Claims registered before the server stored priority read it from this browser's note; keep that in step.
+  const local = LOCAL_CLAIM_DETAILS.get(view.id);
+  if (local) LOCAL_CLAIM_DETAILS.set(view.id, { ...local, priority: change.priority, handler: staffName(view.ownerId) ?? local.handler });
+  const updated = toClaim(view, c.clientId, c.client, await loadPeriod(view.policyPeriodId));
+  return rememberClaim({
+    ...updated,
+    history: [...updated.history, { at: todayIso(), by, text: `Priority ${updated.priority}, handler ${updated.handler}` }],
+  });
+}
+
 /** Claims on the backend, loaded client by client (4 at a time). */
 /**
  * The claim list only says a claim is CLOSED, not how it ended. For closed claims,
@@ -4940,7 +5774,7 @@ async function withClosureOutcome(claim: Claim): Promise<Claim> {
       ...claim,
       closure: {
         ...claim.closure,
-        closedAt: closed.occurredAt.slice(0, 10),
+        closedAt: kigaliDate(closed.occurredAt),
         outcome: closureOutcome(closed.outcome),
         evidence: closed.summary ?? claim.closure.evidence,
       },
@@ -4967,7 +5801,36 @@ export async function listClaimsWithOutcomes(claims?: Claim[]): Promise<Claim[]>
   });
 }
 
+/** All claims the user can read in one list (GET /claims), a page of 100 at a time. Null on an older server. */
+async function listVisibleClaimViews(): Promise<ClaimView[] | null> {
+  const all: ClaimView[] = [];
+  for (let page = 0; page < 20; page++) {
+    const res = await apiFetch(`/api/v1/claims?size=100&page=${page}`);
+    if (res.status === 404 || res.status === 405) return null;
+    if (!res.ok) throw new Error(await claimProblem(res, "Could not load claims."));
+    const body = (await res.json()) as Page<ClaimView>;
+    all.push(...(body.items ?? []));
+    if (page + 1 >= (body.totalPages ?? 1)) break;
+  }
+  return all;
+}
+
 async function listBackendClaims(): Promise<Claim[]> {
+  await loadStaff();
+  const views = await listVisibleClaimViews().catch((err) => {
+    console.warn("Could not load claims:", err);
+    return null;
+  });
+  if (views) {
+    // One list request, then one client list and each policy period once (cached).
+    const clients = await listClientChoices().catch(() => [] as Client[]);
+    const byUuid = new Map(clients.map((c) => [c.uuid, c]));
+    const claims = await mapLimited(views, 4, async (v) => {
+      const client = byUuid.get(v.clientId);
+      return rememberClaim(toClaim(v, client?.id ?? "", client?.name ?? "Client", await loadPeriod(v.policyPeriodId)));
+    });
+    return claims.sort((a, b) => b.dateReported.localeCompare(a.dateReported));
+  }
   let clients: Client[];
   try {
     clients = (await listClientChoices()).filter((c) => c.uuid);
@@ -5029,6 +5892,9 @@ export async function createClaim(input: NewClaimInput, by: string): Promise<Cla
         description: input.description,
         estimatedAmount: input.amount,
         currency: "RWF",
+        priority: input.priority,
+        reportedOn: input.dateReported,
+        ownerId: (await listClaimHandlers()).find((h) => h.name === input.handler)?.id,
       }),
     });
     if (!res.ok) throw new Error(await claimProblem(res, "Could not register the claim. Please try again."));
@@ -5110,6 +5976,10 @@ function checklistStatus(i: ClaimChecklistItemView): ClaimChecklistItem["status"
   const status = (i.status ?? "").toUpperCase();
   if (i.notApplicableReason || status === "NOT_APPLICABLE") return "NOT_APPLICABLE";
   if (i.documentId) return "RECEIVED";
+  // "RECORDED" (taken from the claim's own description) is not enough for the
+  // server's readiness check, which still lists the item as missing until a file
+  // is attached. Show it as still needed, so it can be uploaded.
+  if (status === "RECORDED") return "MISSING";
   return CHECKLIST_MISSING.includes(status) ? "MISSING" : "RECEIVED";
 }
 
@@ -5134,6 +6004,7 @@ function toChecklist(v: ClaimChecklistView): ClaimChecklist {
 
 async function claimChecklistProblem(res: Response, fallback: string): Promise<string> {
   const problem = await readProblem(res);
+  if (res.status >= 500) return serverFailure(problem);
   if (res.status === 401) return "Your session has ended. Please sign in again.";
   if (res.status === 403) return "You do not have permission to update this claim's documents.";
   if (res.status === 404) return "The claim or the document could not be found. Refresh and try again.";
@@ -5366,9 +6237,67 @@ export async function listActivity(modules: { claims: boolean; renewals: boolean
 
 /** The activity in claims and renewals that are already loaded, newest first. */
 export function activityFrom(claims: Claim[], renewals: RenewalCase[]): ActivityItem[] {
+  return activityFromRecords({ claims, renewals });
+}
+
+/**
+ * Everything recent across the records a person can see, newest first: claim steps,
+ * renewal milestones, approval requests and decisions, new clients, and leads
+ * registered or converted. Only records already loaded are used.
+ */
+export function activityFromRecords(r: {
+  claims?: Claim[];
+  renewals?: RenewalCase[];
+  approvals?: ApprovalRequest[];
+  clients?: Client[];
+  leads?: Lead[];
+}): ActivityItem[] {
+  const claims = r.claims ?? [];
+  const renewals = r.renewals ?? [];
   const items: ActivityItem[] = [
+    ...(r.approvals ?? []).flatMap((a) =>
+      [...a.history]
+        .reverse()
+        .filter((e) => e.at)
+        .map((e) => ({
+          at: e.at,
+          who: e.by,
+          what: `${e.text} · ${a.title} · ${a.subjectRef}`,
+          module: "Approvals" as const,
+          href: `/approvals?request=${encodeURIComponent(a.id)}`,
+        })),
+    ),
+    ...(r.clients ?? [])
+      .filter((c) => c.uuid && c.createdAt)
+      .map((c) => ({
+        at: c.createdAt!,
+        who: "",
+        what: `New client · ${c.name} (${c.id})`,
+        module: "Clients" as const,
+        href: `/clients?client=${encodeURIComponent(c.id)}`,
+      })),
+    ...(r.leads ?? []).flatMap((l) => [
+      ...(l.convertedAt
+        ? [
+            {
+              at: kigaliDate(l.convertedAt),
+              who: l.ownerName ?? "",
+              what: `Lead became a client · ${l.name}`,
+              module: "Leads" as const,
+              href: `/clients/leads/${encodeURIComponent(l.id)}`,
+            },
+          ]
+        : []),
+      {
+        at: kigaliDate(l.receivedAt),
+        who: "",
+        what: `Lead registered · ${l.name}`,
+        module: "Leads" as const,
+        href: `/clients/leads/${encodeURIComponent(l.id)}`,
+      },
+    ]),
     ...claims.flatMap((c) =>
-      c.history.map((e) => ({
+      [...c.history].reverse().map((e) => ({
         at: e.at,
         who: e.by,
         what: `${e.text} · ${c.id}`,
@@ -5377,7 +6306,7 @@ export function activityFrom(claims: Claim[], renewals: RenewalCase[]): Activity
       })),
     ),
     ...renewals.flatMap((r) =>
-      r.completed.map((m) => ({
+      [...r.completed].reverse().filter((m) => m.completedAt).map((m) => ({
         at: m.completedAt,
         who: m.completedBy,
         what: `${RENEWAL_MILESTONES.find((x) => x.code === m.code)?.name ?? m.code} done · ${r.id}`,
@@ -5386,7 +6315,7 @@ export function activityFrom(claims: Claim[], renewals: RenewalCase[]): Activity
       })),
     ),
   ];
-  return items.sort((a, b) => b.at.localeCompare(a.at));
+  return items.filter((i) => i.at).sort((a, b) => b.at.localeCompare(a.at));
 }
 
 /* ------------------------------- Authentication ------------------------------ */
@@ -5406,7 +6335,23 @@ type MeResponse = {
 };
 
 /** Problem details the backend sends with errors, e.g. { code: "LOGIN_FAILED" }. */
-type ApiProblem = { title?: string; status?: number; code?: string; fields?: string[] };
+type ApiProblem = { title?: string; status?: number; code?: string; fields?: string[]; correlationId?: string };
+
+/** A server failure (5xx): say so plainly, with the reference to give an administrator, instead of guessing a cause. */
+/** Server settings a feature needs; the administrator can fix these, so say which. */
+const MISSING_SETTING: Record<string, string> = {
+  MFA_NOT_CONFIGURED:
+    "Two-step login is not set up on this server yet (its encryption key is missing). Ask your administrator to set IDENTITY_MFA_ENCRYPTION_KEY.",
+  RECOVERY_LINKS_NOT_CONFIGURED:
+    "Invitation and password-reset emails cannot be sent: the server does not know the app's address. Ask your administrator to set FRONTEND_BASE_URL.",
+};
+
+function serverFailure(problem: ApiProblem): string {
+  if (problem.code && MISSING_SETTING[problem.code]) return MISSING_SETTING[problem.code]!;
+  return problem.correlationId
+    ? `The server could not complete this. Please try again. If it keeps failing, give your administrator this reference: ${problem.correlationId}.`
+    : "The server could not complete this. Please try again in a moment.";
+}
 
 async function readProblem(res: Response): Promise<ApiProblem> {
   try {
@@ -5432,8 +6377,42 @@ async function getCsrf(): Promise<{ headerName: string; token: string }> {
  * is not a GET, it adds a fresh CSRF token, and retries once if the backend
  * says the token was invalid (it changes after login and logout).
  */
-export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+/**
+ * Reads that are on their way, or finished a moment ago, by path. Screens that open
+ * together often ask for the same thing (the client list, a renewal, its policy);
+ * they share one request instead of sending it again. Any write clears this, so a
+ * read after a change always goes to the server.
+ */
+const SHARED_READS = new Map<string, { at: number; response: Promise<Response> }>();
+const SHARED_READ_MS = 2000;
+
+export function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const method = (init.method ?? "GET").toUpperCase();
+  // Only plain reads are shared: no body, no abort signal of their own, not sign-in checks.
+  const shareable = method === "GET" && !init.body && !init.signal && !path.startsWith("/api/v1/auth/");
+  if (!shareable) {
+    if (method !== "GET" && method !== "HEAD") SHARED_READS.clear();
+    return sendApi(path, init, method);
+  }
+  const now = Date.now();
+  const hit = SHARED_READS.get(path);
+  if (hit && now - hit.at < SHARED_READ_MS) return hit.response.then((r) => r.clone());
+  const response = sendApi(path, init, method);
+  SHARED_READS.set(path, { at: now, response });
+  // Failed reads are not reused; successful ones expire after a moment.
+  response.then(
+    (r) => {
+      if (!r.ok) SHARED_READS.delete(path);
+      setTimeout(() => {
+        if (SHARED_READS.get(path)?.response === response) SHARED_READS.delete(path);
+      }, SHARED_READ_MS);
+    },
+    () => SHARED_READS.delete(path),
+  );
+  return response.then((r) => r.clone());
+}
+
+async function sendApi(path: string, init: RequestInit, method: string): Promise<Response> {
 
   const send = async () => {
     const headers = new Headers(init.headers);
@@ -5468,6 +6447,9 @@ export type InboxNotification = {
   body: string;
   createdAt: string;
   readAt: string | null;
+  /** The record the notice is about, when the server knows it (APPROVAL, TASK, RENEWAL, CLIENT). */
+  targetType?: string | null;
+  targetId?: string | null;
 };
 
 export type NotificationInbox = { items: InboxNotification[]; unreadCount: number };
@@ -5567,7 +6549,16 @@ function toSessionUser(me: MeResponse): SessionUser {
  * Who is signed in (GET /api/v1/me). Returns null when nobody is, so the app
  * can send the user to the login page. Used when the page loads or refreshes.
  */
-export async function getCurrentUser(): Promise<SessionUser | null> {
+/** One "who is signed in" request at a time: callers at the same moment share it. */
+let CURRENT_USER_REQUEST: Promise<SessionUser | null> | null = null;
+export function getCurrentUser(): Promise<SessionUser | null> {
+  CURRENT_USER_REQUEST ??= readCurrentUser().finally(() => {
+    CURRENT_USER_REQUEST = null;
+  });
+  return CURRENT_USER_REQUEST;
+}
+
+async function readCurrentUser(): Promise<SessionUser | null> {
   if (MOCK_AUTH) return null; // demo sessions live in the browser (auth-context.tsx)
   const res = await apiFetch("/api/v1/me");
   if (res.status === 401) return null;
@@ -5674,7 +6665,9 @@ export async function confirmSignInSetup(challengeId: string, code: string): Pro
 
 /** Errors from setting up or turning off two-step login, in plain words. */
 async function mfaProblem(res: Response, fallback: string) {
-  const code = (await readProblem(res)).code ?? "";
+  const problem = await readProblem(res);
+  const code = problem.code ?? "";
+  if (res.status >= 500) return serverFailure(problem);
   if (code === "UNAUTHENTICATED") return "Your session has ended. Please sign in again.";
   if (res.status === 429) return "Too many tries. Please wait 15 minutes and try again.";
   if (res.status === 409) return "Two-step login is already set up on your account.";
@@ -5700,6 +6693,50 @@ export async function confirmMfaEnrollment(code: string): Promise<string[]> {
   return ((await res.json()) as { recoveryCodes: string[] }).recoveryCodes;
 }
 
+/** Whether two-step login is on for the signed-in user; null when the server cannot say (older server). */
+/* ---------------------- Email notification preferences ---------------------- */
+// GET/PUT /api/v1/me/preferences/email-notifications. Each optional event can
+// be emailed or not; the bell in the app shows every notice regardless.
+
+export type EmailPreference = { key: string; label: string; group: string; enabled: boolean };
+
+async function emailPreferenceProblem(res: Response): Promise<string> {
+  if (res.status === 401) return "Your session has ended. Please sign in again.";
+  if (res.status === 403) return "Your session needs refreshing. Reload the page and try again.";
+  if (res.status === 404) return "This email setting is no longer offered. Reload the page to see the current list.";
+  if (res.status >= 500) return serverFailure(await readProblem(res));
+  return "Could not save your email setting. Please try again.";
+}
+
+/** The signed-in person's email settings, or null in demo mode. */
+export async function getEmailPreferences(): Promise<EmailPreference[] | null> {
+  if (MOCK_AUTH) return null;
+  const res = await apiFetch("/api/v1/me/preferences/email-notifications");
+  if (!res.ok) throw new Error(res.status >= 500 ? serverFailure(await readProblem(res)) : "Could not load your email settings.");
+  return ((await res.json()) as { events: EmailPreference[] }).events;
+}
+
+/** Turn emails for one event on or off; returns the full updated list. */
+export async function setEmailPreference(key: string, enabled: boolean): Promise<EmailPreference[]> {
+  const res = await apiFetch(`/api/v1/me/preferences/email-notifications/${encodeURIComponent(key)}`, {
+    method: "PUT",
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) throw new Error(await emailPreferenceProblem(res));
+  return ((await res.json()) as { events: EmailPreference[] }).events;
+}
+
+export async function getMfaStatus(): Promise<boolean | null> {
+  if (MOCK_AUTH) return null;
+  try {
+    const res = await apiFetch("/api/v1/auth/mfa/status");
+    if (!res.ok) return null;
+    return Boolean(((await res.json()) as { enabled?: boolean }).enabled);
+  } catch {
+    return null;
+  }
+}
+
 /** Turns two-step login off. The server then signs this account out everywhere. */
 export async function disableMfa(password: string, code: string): Promise<void> {
   const res = await apiFetch("/api/v1/auth/mfa/enrollment/disable", { method: "POST", body: JSON.stringify({ password, code: code.trim() }) });
@@ -5711,6 +6748,10 @@ export async function signOut(): Promise<void> {
   // Forget cached clients and managers so the next user starts fresh.
   CLIENT_CACHE.clear();
   MANAGERS = null;
+  STAFF = null;
+  STAFF_REQUEST = null;
+  ACTIVE_POLICY_COUNTS = null;
+  CURRENT_USER = null;
   if (MOCK_AUTH) return;
   const res = await apiFetch("/api/v1/auth/logout", { method: "POST" });
   // 401 means the session had already ended, which is fine.
@@ -5812,6 +6853,7 @@ const IMPORT_MESSAGES: Record<string, string> = {
 async function importProblem(res: Response, fallback: string) {
   if (res.status === 401) return "Your session has ended. Please sign in again.";
   const problem = await readProblem(res);
+  if (res.status >= 500) return serverFailure(problem);
   const code = problem.code ?? "";
   if (IMPORT_MESSAGES[code]) return IMPORT_MESSAGES[code];
   if (code.startsWith("MISSING_SHEET_")) {

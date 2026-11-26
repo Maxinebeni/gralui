@@ -6,6 +6,7 @@
 // client endpoints.
 
 import { useEffect, useState } from "react";
+import { focusFirstError } from "@/lib/focus-error";
 import { X } from "lucide-react";
 import { toast } from "sonner";
 import { SlideOver } from "@/components/gral/shell";
@@ -169,6 +170,7 @@ export function ClientFormPanel({
     const found = validate(values);
     setErrors(found);
     if (Object.keys(found).length > 0) {
+      focusFirstError(e.currentTarget as HTMLFormElement, Object.keys(found));
       toast.error("Please fix the highlighted fields.");
       return;
     }

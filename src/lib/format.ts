@@ -3,10 +3,13 @@ export function formatRwf(amount: number) {
 }
 
 export function initials(name: string) {
+  // "Not assigned" and similar placeholders have no person behind them.
+  if (!name || /^(not assigned|unassigned|not recorded)$/i.test(name.trim())) return "–";
   return name
-    .split(" ")
+    .split(/\s+/)
+    .filter(Boolean)
     .slice(0, 2)
-    .map((p) => p[0])
+    .map((p) => p[0]!.toUpperCase())
     .join("");
 }
 

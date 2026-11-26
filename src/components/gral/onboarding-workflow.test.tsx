@@ -13,7 +13,7 @@ const mock = vi.hoisted(() => ({
 vi.mock("@/lib/api", () => ({ ...mock, MOCK_AUTH: false, DEMO_REVIEWER: "Risk and Compliance Manager" }));
 vi.mock("@/lib/auth-context", () => ({ useCurrentUser: () => ({ user: state.user }) }));
 vi.mock("@/lib/queries", () => ({ useRefresh: () => state.refresh }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: state.push, replace: state.push }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: state.push, replace: state.push }), usePathname: () => "/" }));
 vi.mock("./documents", () => ({ FilePickButton: ({ onFile, children }: { onFile: (f: File) => void; children: React.ReactNode }) => <button type="button" onClick={() => onFile(new File(["signed"], "signed.pdf", { type: "application/pdf" }))}>{children}</button> }));
 vi.mock("./document-preview", () => ({ DocumentPreviewButton: () => <span>Document preview</span> }));
 
@@ -169,8 +169,9 @@ describe("KYC assignment and review", () => {
   });
   it("filters new review checklists to the actual client type", async () => {
     render(<StartKycReview clientId={review.clientId} reviews={[]} onStarted={vi.fn()} />);
-    await screen.findByRole("option", { name: /CORPORATE/ });
-    expect(screen.queryByRole("option", { name: /INDIVIDUAL/ })).not.toBeInTheDocument();
+    // Checklists are named in words ("Corporate KYC checklist"), not by their codes.
+    await screen.findByRole("option", { name: /corporate KYC checklist/i });
+    expect(screen.queryByRole("option", { name: /individual KYC checklist/i })).not.toBeInTheDocument();
   });
   it("shows template-loading errors instead of an empty-checklist message", async () => {
     mock.listKycTemplates.mockRejectedValue(new Error("Checklist unavailable"));
@@ -338,7 +339,7 @@ describe("duplicate reviews and command recovery", () => {
     render(<TrackWorkspace detail={{ track: { ...track, stage: 4, availableActions: [] }, lead: null, history: [] }} onChanged={vi.fn()} />);
     await screen.findByText(/Assigned policy track/);
     expect(screen.queryByRole("link", { name: "Open parent lead" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Back to my work" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Back to My work" })).toBeInTheDocument();
   });
   it("gates direct track and KYC routes independently from the lead menu", () => {
     const specialist = { ...defaultUser, permissions: ["CLIENT_READ", "ONBOARDING_READ"] };

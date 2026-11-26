@@ -176,7 +176,7 @@ export function UserPanel({
 
         {inactive ? (
           <p className="rounded-2xl border border-border p-4 text-xs text-muted-foreground">
-            This account is deactivated and can't sign in. There is no way to reactivate it from here yet.
+            This account is deactivated and can&apos;t sign in. There is no way to reactivate it from here yet.
           </p>
         ) : rights.canDeactivate && !isSelf ? (
           <section className="rounded-2xl border border-danger/30 p-4">
@@ -184,7 +184,7 @@ export function UserPanel({
               <UserX className="size-4" /> Deactivate account
             </h3>
             <p className="mt-1 text-xs text-muted-foreground">
-              They will no longer be able to sign in. Their past work and history stay in the system. This can't be undone
+              They will no longer be able to sign in. Their past work and history stay in the system. This can&apos;t be undone
               from here.
             </p>
             {confirming ? (
@@ -376,7 +376,7 @@ export function InviteUserForm({
                 </label>
               ))}
             </div>
-            <p className="mt-1.5 text-xs text-subtle">This can't be changed later.</p>
+            <p className="mt-1.5 text-xs text-subtle">This can&apos;t be changed later.</p>
           </div>
           <div className="sm:col-span-2">
             <p className="text-xs font-medium text-muted-foreground">Roles</p>

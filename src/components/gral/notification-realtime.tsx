@@ -2,7 +2,6 @@
 
 import { Client, type IMessage } from "@stomp/stompjs";
 import { useEffect, useRef } from "react";
-import { toast } from "sonner";
 import { getNotificationSocketCsrf, type InboxNotification } from "@/lib/api";
 import { MOCK_AUTH } from "@/lib/api";
 
@@ -17,10 +16,23 @@ function parseNotification(message: IMessage): InboxNotification | null {
       body: value.body,
       createdAt: typeof value.createdAt === "string" ? value.createdAt : new Date().toISOString(),
       readAt: typeof value.readAt === "string" ? value.readAt : null,
+      targetType: typeof value.targetType === "string" ? value.targetType : null,
+      targetId: typeof value.targetId === "string" ? value.targetId : null,
     };
   } catch {
     return null;
   }
+}
+
+/** The socket address does not change while the app is open, so it is asked for once. */
+let SOCKET_CONFIG: Promise<{ url: string }> | null = null;
+function socketConfig(): Promise<{ url: string }> {
+  SOCKET_CONFIG ??= fetch("/api/notification-socket", { credentials: "include", cache: "no-store" }).then((res) => {
+    if (!res.ok) throw new Error("Could not load the notification socket configuration.");
+    return res.json() as Promise<{ url: string }>;
+  });
+  SOCKET_CONFIG.catch(() => (SOCKET_CONFIG = null));
+  return SOCKET_CONFIG;
 }
 
 export function NotificationRealtime({
@@ -49,9 +61,7 @@ export function NotificationRealtime({
 
     void (async () => {
       try {
-        const configResponse = await fetch("/api/notification-socket", { credentials: "include", cache: "no-store" });
-        if (!configResponse.ok) throw new Error("Could not load the notification socket configuration.");
-        const { url } = (await configResponse.json()) as { url: string };
+        const { url } = await socketConfig();
         if (disposed) return;
         // The session cookie belongs to this site (API calls go through its /api
         // proxy), so a socket on another host cannot sign in.

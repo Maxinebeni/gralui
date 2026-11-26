@@ -24,7 +24,7 @@ import { addWorkingDays } from "@/lib/claims";
 import { KYC_STATUS_LABEL, SUGGESTED_KYC_REQUIREMENTS } from "@/lib/onboarding";
 import { onboardingPermissions } from "@/lib/permissions";
 import { useRefresh } from "@/lib/queries";
-import { todayIso } from "@/lib/renewals";
+import { kigaliDate, todayIso } from "@/lib/renewals";
 import type {
   CommandHistory,
   KycRequirement,
@@ -33,7 +33,7 @@ import type {
   LeadType,
   Proof,
 } from "@/lib/types";
-import { ArrowLeft, Check, Plus, Trash2 } from "lucide-react";
+import { Check, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -54,6 +54,7 @@ import {
 } from "./onboarding-ui";
 import { PageHeader } from "./shell";
 import { Chip, Dot, FloatCard, Loader, OutlineButton, SegmentedTabs } from "./ui";
+import { BackLink as SharedBackLink } from "./back-link";
 
 const EVIDENCE_LABELS: Record<string, string> = { SCREENING: "Screening record", KYC_APPROVAL: "Signed KYC approval form", KYC_ESCALATION: "Escalation note" };
 
@@ -81,10 +82,8 @@ export function KycReviewPage({ review: r, history, onChanged }: { review: KycRe
 
   return (
     <>
-      <Link href="/clients/leads" className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary">
-        <ArrowLeft className="size-3.5" /> Leads
-      </Link>
-      <PageHeader title={`KYC · ${r.clientName ?? "Client"}`} subtitle={`Checklist ${r.templateCode} (version ${r.templateVersion})`} />
+      <BackLink />
+      <PageHeader title={`KYC · ${r.clientName ?? "Client"}`} subtitle={`${checklistName(r.templateCode)} (version ${r.templateVersion})`} />
 
       <FloatCard className="mt-5 p-4 sm:p-5" delay={60}>
         <div className="flex flex-wrap items-center gap-2">
@@ -208,7 +207,8 @@ function KycStages({ review: r, youPrepare, youReview }: { review: KycReview; yo
           </p>
           <p className="mt-0.5 text-xs text-muted-foreground">
             {s.owner}
-            {s.you ? " · you" : ""}
+            {/* Only steps still to do: a finished review has nothing left to act on. */}
+            {s.you && !s.done ? " · you can act here" : ""}
           </p>
         </li>
       ))}
@@ -377,6 +377,11 @@ function EscalationForm({ review, onChanged }: { review: KycReview; onChanged: (
 
 /* Starting a review, and GRAL's checklists */
 
+/** Back to wherever the person came from (client file, lead, My Work); Client records when opened directly. */
+function BackLink() {
+  return <SharedBackLink fallbackHref="/clients" fallbackLabel="Client records" />;
+}
+
 export function StartKycReview({ clientId, clientName, reviews, onStarted }: { clientId: string; clientName?: string; reviews: KycReview[]; onStarted: (r: KycReview) => void }) {
   const { user } = useCurrentUser();
   const refresh = useRefresh();
@@ -402,9 +407,7 @@ export function StartKycReview({ clientId, clientName, reviews, onStarted }: { c
 
   return (
     <>
-      <Link href="/clients/leads" className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary">
-        <ArrowLeft className="size-3.5" /> Leads
-      </Link>
+      <BackLink />
       <PageHeader title={`KYC · ${clientName ?? "Client"}`} subtitle="No open KYC review for this client" />
       <div className="mt-5 grid gap-4 xl:grid-cols-[1fr_340px]">
         <div className="min-w-0 space-y-4">
@@ -430,7 +433,7 @@ export function StartKycReview({ clientId, clientName, reviews, onStarted }: { c
                 onStarted(started);
               }}
             >
-              <SelectInput id="kyc-template" label="Checklist" value={code} onChange={setCode} options={templates.map((t) => ({ value: t.code, label: `${t.code} · ${t.clientType === "INDIVIDUAL" ? "Individuals" : "Companies"} · ${t.requirements.length} documents (version ${t.version})` }))} wide />
+              <SelectInput id="kyc-template" label="Checklist" value={code} onChange={setCode} options={templates.map((t) => ({ value: t.code, label: `${checklistName(t.code)} · ${t.requirements.length} documents (version ${t.version})` }))} wide />
             </ActionForm>
           ) : (
             <FloatCard className="p-5">
@@ -464,7 +467,7 @@ export function StartKycReview({ clientId, clientName, reviews, onStarted }: { c
                 {reviews.map((r) => (
                   <li key={r.id}>
                     <Link href={`/clients/kyc/${encodeURIComponent(r.id)}`} className="flex items-center justify-between gap-2 rounded-xl border border-border px-3 py-2 text-xs hover:bg-secondary/60">
-                      <span>{r.templateCode}</span>
+                      <span>{checklistName(r.templateCode)}{r.decidedAt ? ` · ${kigaliDate(r.decidedAt)}` : ""}</span>
                       <Chip tone={statusTone(r.status)}>{KYC_STATUS_LABEL[r.status]}</Chip>
                     </Link>
                   </li>
@@ -530,4 +533,12 @@ function ChecklistEditor({ templates, onDone, onCancel }: { templates: KycTempla
       <TextInput id="ck-reason" label="Why (kept in the history)" value={reason} onChange={setReason} wide />
     </ActionForm>
   );
+}
+
+/** "DEFAULT_CORPORATE" → "Company KYC checklist"; other codes read as words. */
+function checklistName(code: string): string {
+  if (code === "DEFAULT_CORPORATE") return "Company KYC checklist";
+  if (code === "DEFAULT_INDIVIDUAL") return "Individual KYC checklist";
+  const words = code.toLowerCase().replace(/_/g, " ");
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)} KYC checklist`;
 }

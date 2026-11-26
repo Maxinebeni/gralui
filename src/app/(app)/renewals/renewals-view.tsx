@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 import { PageHeader } from "@/components/gral/shell";
 import { usePaged } from "@/components/gral/pager";
 import { ALL_OPTION, ClearFilters, FilterMenu, optionsFrom } from "@/components/gral/filter-menu";
@@ -42,6 +42,7 @@ import {
 import type { RenewalCase } from "@/lib/types";
 import { useCurrentUser } from "@/lib/auth-context";
 import { hasPermission, usesBackendPermissions } from "@/lib/permissions";
+import { BackLink } from "@/components/gral/back-link";
 
 const TABS = ["Overdue", "Next 30 days", "Next 60 days", "All"] as const;
 /** "On track" has no tab; its summary tile sets it. */
@@ -129,14 +130,8 @@ export function RenewalsView({ full = false }: { full?: boolean }) {
   if (open) {
     return (
       <>
-        <Link
-          href={pathname}
-          scroll={false}
-          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="size-4" /> {full ? "All renewals" : "Renewals"}
-        </Link>
-        <FloatCard className="mt-4 overflow-hidden">
+        <BackLink fallbackHref={pathname} fallbackLabel={full ? "All renewals" : "Renewals"} recordParam="case" />
+        <FloatCard className="overflow-hidden">
           <RenewalCasePanel key={open.id} renewal={open} onChanged={replaceCase} />
         </FloatCard>
       </>
@@ -146,9 +141,7 @@ export function RenewalsView({ full = false }: { full?: boolean }) {
   return (
     <>
       {full ? (
-        <Link href="/renewals" className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary">
-          <ArrowLeft className="size-3.5" /> Renewals
-        </Link>
+        <BackLink fallbackHref="/renewals" fallbackLabel="Renewals" />
       ) : null}
       <PageHeader
         title={full ? "All renewals" : "Renewals pipeline"}
@@ -280,17 +273,21 @@ function RenewalCard({ renewal: r, onOpen }: { renewal: RenewalCase; onOpen: () 
               {r.classOfInsurance} · {r.insurer}
             </p>
           </div>
+          {current ? (
           <div className="text-right">
             <p className={cn("text-2xl leading-none font-semibold", days < 0 ? "text-danger" : "text-foreground")}>
               {days < 0 ? `−${Math.abs(days)}` : days}
             </p>
-            <p className="text-[10px] text-subtle">days to renewal</p>
+            <p className="text-[10px] text-subtle">{days < 0 ? "days past expiry" : "days to renewal"}</p>
           </div>
+          ) : (
+            <Chip tone={isLostRenewal(r) ? "danger" : "success"}>{isLostRenewal(r) ? "Lost" : "Renewed"}</Chip>
+          )}
         </div>
 
         <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 text-[11px]">
           <span className="min-w-0 truncate text-muted-foreground">{formatRwf(r.premium)}</span>
-          <Chip tone={days < 0 ? "danger" : days <= 30 ? "warning" : "sky"}>{formatDate(r.expiryDate)}</Chip>
+          <Chip tone={!current ? "neutral" : days < 0 ? "danger" : days <= 30 ? "warning" : "sky"}>{formatDate(r.expiryDate)}</Chip>
         </div>
       </button>
 

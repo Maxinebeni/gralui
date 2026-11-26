@@ -33,7 +33,7 @@ export function KycReviewerAssignment({ review, caseId, onChanged }: { review?: 
       <h2 className="text-base font-semibold tracking-tight">Compliance reviewer</h2>
       <Chip tone={current?.reviewerId ? "success" : "warning"}>{current?.reviewerId ? "Assigned" : "Not assigned"}</Chip>
     </div>
-    {current?.reviewerId ? <p className="mt-2 break-words text-xs text-muted-foreground">{choices?.find((p) => p.id === current.reviewerId)?.fullName ?? (current.reviewerId === user.id ? user.name : "Assigned compliance reviewer")} <span className="text-subtle">· {current.reviewerId}</span></p> : <p className="mt-2 text-xs text-muted-foreground">The CRM Manager or MD must assign a reviewer before this checklist can be submitted.</p>}
+    {current?.reviewerId ? <p className="mt-2 break-words text-xs text-muted-foreground">{choices?.find((p) => p.id === current.reviewerId)?.fullName ?? (current.reviewerId === user.id ? user.name : "Assigned compliance reviewer")}</p> : <p className="mt-2 text-xs text-muted-foreground">The CRM Manager or MD must assign a reviewer before this checklist can be submitted.</p>}
     {!current && !caseId ? <p className="mt-2 text-xs text-muted-foreground">Start the KYC checklist before assigning its reviewer.</p> : null}
     {error ? <div className="mt-3 space-y-2"><p role="alert" className="text-xs text-danger">{error}</p><OutlineButton onClick={() => void load()}>Try again</OutlineButton></div> : null}
     {canAssignKyc && active && !error ? <div className="mt-3">

@@ -5,9 +5,10 @@
 // whole app and a page you have seen opens at once. After a change, call
 // useRefresh() with the lists it affects.
 
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
+  activityFromRecords,
   listApprovals,
   listAssignees,
   listClaims,
@@ -21,6 +22,8 @@ import {
 } from "./api";
 import { getOperationsDashboard } from "./operations-dashboard";
 import { queryKeys } from "./query";
+import { canAccessPath } from "./permissions";
+import type { ActivityItem, ActivityModule, SessionUser } from "./types";
 
 /** Every client with all their policies, for reports. Refreshed with the client lists. */
 export function useClientsWithPolicies(enabled = true) {
@@ -96,4 +99,48 @@ export function useRefresh() {
     },
     [queryClient],
   );
+}
+
+/**
+ * Recent activity across everything this person can open: claims, renewals,
+ * approvals, clients and leads. sources lists the kinds they can see; when it is
+ * empty there is nothing to show, and the activity card is left out.
+ */
+export function useRecentActivity(user: SessionUser): {
+  items: ActivityItem[] | null;
+  sources: ActivityModule[];
+} {
+  const can = {
+    Claims: canAccessPath(user, "/claims"),
+    Renewals: canAccessPath(user, "/renewals"),
+    Approvals: canAccessPath(user, "/approvals"),
+    Clients: canAccessPath(user, "/clients"),
+    Leads: canAccessPath(user, "/clients/leads"),
+  };
+  const claims = useClaims(can.Claims);
+  const renewals = useRenewals(can.Renewals);
+  const approvals = useApprovals(user.role, can.Approvals);
+  const clients = useClients("", can.Clients);
+  const leads = useLeads(can.Leads);
+  const pending =
+    (can.Claims && claims.isPending) ||
+    (can.Renewals && renewals.isPending) ||
+    (can.Approvals && approvals.isPending) ||
+    (can.Clients && clients.isPending) ||
+    (can.Leads && leads.isPending);
+  const items = useMemo(
+    () =>
+      pending
+        ? null
+        : activityFromRecords({
+            claims: can.Claims ? claims.data : [],
+            renewals: can.Renewals ? renewals.data : [],
+            approvals: can.Approvals ? approvals.data : [],
+            clients: can.Clients ? clients.data : [],
+            leads: can.Leads ? leads.data?.leads : [],
+          }),
+    [pending, claims.data, renewals.data, approvals.data, clients.data, leads.data, can.Claims, can.Renewals, can.Approvals, can.Clients, can.Leads],
+  );
+  const sources = (Object.keys(can) as ActivityModule[]).filter((k) => can[k]);
+  return { items, sources };
 }

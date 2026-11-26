@@ -302,7 +302,7 @@ export function DocumentPanel({
     <div>
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold tracking-tight">{title}</h3>
-        {documents?.length ? <span className="text-[11px] text-muted-foreground">{documents.length} files</span> : null}
+        {documents?.length ? <span className="text-[11px] text-muted-foreground">{documents.length} {documents.length === 1 ? "file" : "files"}</span> : null}
       </div>
 
       {canUpload ? (
