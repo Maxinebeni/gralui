@@ -1,11 +1,9 @@
 "use client";
 
 // Two-step login (MFA) for the signed-in person: set it up with an
-// authenticator app, save the recovery codes, or turn it off. Most roles must
-// set it up at sign-in already (backend ADR-036); this card is for anyone who
-// has not, and for turning it off. The backend does
-// not say whether it is already on, so both actions are offered and the server
-// answers if one does not apply. The app secret and recovery codes are shown
+// authenticator app and save the recovery codes. Most roles must set it up at
+// sign-in already (backend ADR-036); this card is for anyone who has not.
+// Everyone keeps it on, so there is no way to turn it off here. The app secret and recovery codes are shown
 // once, kept only in this screen's memory, and never logged.
 
 import { useEffect, useState } from "react";
@@ -16,7 +14,7 @@ import { AuthenticatorQr, RecoveryCodeList } from "@/components/gral/authenticat
 import { CODE_LENGTH, CodeBoxes } from "@/components/gral/code-boxes";
 import { PasswordInput } from "@/components/gral/password-input";
 import { FloatCard, NavyButton, OutlineButton } from "@/components/gral/ui";
-import { MOCK_AUTH, confirmMfaEnrollment, disableMfa, getMfaStatus, startMfaEnrollment } from "@/lib/api";
+import { MOCK_AUTH, confirmMfaEnrollment, getMfaStatus, startMfaEnrollment } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
 const INPUT =
@@ -26,8 +24,7 @@ type Step =
   | { name: "idle" }
   | { name: "password" }
   | { name: "scan"; secret: string; uri: string }
-  | { name: "codes"; codes: string[] }
-  | { name: "disable" };
+  | { name: "codes"; codes: string[] };
 
 export function TwoStepLogin() {
   const [step, setStep] = useState<Step>({ name: "idle" });
@@ -60,17 +57,14 @@ export function TwoStepLogin() {
       ) : step.name === "idle" ? (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
           {enabled === true ? <p className="text-xs font-medium text-success">Two-step login is on.</p> : enabled === false ? <p className="text-xs text-muted-foreground">Two-step login is off.</p> : null}
-          {enabled !== false ? <OutlineButton onClick={() => setStep({ name: "disable" })}>Turn it off</OutlineButton> : null}
           {enabled !== true ? <NavyButton onClick={() => setStep({ name: "password" })}>Set up two-step login</NavyButton> : null}
         </div>
       ) : step.name === "password" ? (
         <StartSetup onCancel={() => setStep({ name: "idle" })} onStarted={(secret, uri) => setStep({ name: "scan", secret, uri })} />
       ) : step.name === "scan" ? (
         <ScanAndConfirm secret={step.secret} uri={step.uri} onCancel={() => setStep({ name: "idle" })} onConfirmed={(codes) => setStep({ name: "codes", codes })} />
-      ) : step.name === "codes" ? (
-        <RecoveryCodes codes={step.codes} />
       ) : (
-        <TurnOff onCancel={() => setStep({ name: "idle" })} />
+        <RecoveryCodes codes={step.codes} />
       )}
     </FloatCard>
   );
@@ -200,60 +194,5 @@ function RecoveryCodes({ codes }: { codes: string[] }) {
         }}
       />
     </div>
-  );
-}
-
-function TurnOff({ onCancel }: { onCancel: () => void }) {
-  const router = useRouter();
-  const { signOut } = useAuth();
-  const [password, setPassword] = useState("");
-  const [code, setCode] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!password || !code.trim()) {
-      setError("Enter your password and a code.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await disableMfa(password, code);
-      // The server signs the account out everywhere when two-step login is turned off.
-      toast.success("Two-step login is off. Please sign in again.");
-      await signOut();
-      router.replace("/login");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not turn off two-step login.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <form onSubmit={submit} className="mt-4 space-y-3">
-      <p className="text-xs text-muted-foreground">You will be signed out on every device and need to sign in again.</p>
-      <label className="block text-xs font-medium text-muted-foreground">
-        Your password
-        <PasswordInput value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" className={INPUT} />
-      </label>
-      <label className="block text-xs font-medium text-muted-foreground">
-        Code from your app, or a recovery code
-        <input value={code} onChange={(e) => setCode(e.target.value)} autoComplete="one-time-code" className={INPUT} />
-      </label>
-      {error ? (
-        <p role="alert" className="text-xs font-medium text-danger">
-          {error}
-        </p>
-      ) : null}
-      <div className="flex flex-wrap justify-between gap-2">
-        <OutlineButton onClick={onCancel}>Cancel</OutlineButton>
-        <NavyButton type="submit" disabled={busy}>
-          {busy ? "Turning off…" : "Turn off two-step login"}
-        </NavyButton>
-      </div>
-    </form>
   );
 }

@@ -1,9 +1,10 @@
 "use client";
 
 // Settings: the signed-in person's own account, sign-in security and email notifications.
-// Passwords are changed from "Forgot password" on the sign-in page. Two-step
-// login (an authenticator app code after the password) is set up here.
+// Change password emails a reset link. Two-step login (an authenticator app code
+// after the password) is set up here; it cannot be turned off.
 
+import { UserRound } from "lucide-react";
 import { PageHeader } from "@/components/gral/shell";
 import { Chip, FloatCard } from "@/components/gral/ui";
 import { useCurrentUser } from "@/lib/auth-context";
@@ -31,9 +32,12 @@ export function SettingsView() {
     <>
       <PageHeader title="Settings" />
 
-      <div className="mt-5 grid items-start gap-3 sm:gap-4 xl:grid-cols-2">
+      <div className="mt-5 grid gap-3 sm:gap-4 xl:grid-cols-2">
         <FloatCard className="p-5 sm:p-6">
-          <h2 className="text-base font-semibold tracking-tight">My account</h2>
+          <div className="flex items-center gap-2">
+            <UserRound className="size-5 text-primary" />
+            <h2 className="text-base font-semibold tracking-tight">My account</h2>
+          </div>
           <div className="mt-4 flex items-center gap-4">
             <span className="flex size-14 shrink-0 items-center justify-center rounded-full bg-primary text-lg font-semibold text-primary-foreground">
               {initials(user.name).toUpperCase()}
@@ -60,7 +64,6 @@ export function SettingsView() {
         <ChangePassword />
         <TwoStepLogin />
         <EmailNotifications />
-
       </div>
     </>
   );

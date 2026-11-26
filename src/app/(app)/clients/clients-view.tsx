@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronDown, Download, Plus } from "lucide-react";
+import { ChevronDown, Download } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { PageHeader } from "@/components/gral/shell";
 import {
@@ -18,7 +18,6 @@ import {
   useClientList,
   useOpenClient,
 } from "@/components/gral/client-list";
-import { ClientFormSlideOver, canManageClients } from "@/components/gral/client-form";
 import {
   CardHeader,
   ChartCard,
@@ -47,15 +46,14 @@ export function ClientsView() {
   const { open, setOpen } = useOpenClient(allClients);
   const { user } = useCurrentUser();
   const [insurers, setInsurers] = useState<InsurerSummary[]>([]);
-  const [adding, setAdding] = useState(false);
 
   useEffect(() => {
     // The per-insurer figures are sample data, shown in demo mode only.
     if (MOCK_AUTH) getPoliciesByInsurer().then(setInsurers);
   }, []);
 
-  // The Add Client form loads the manager list from the backend by itself,
-  // so this page no longer builds one.
+  // There is no Add client button: new clients come through Leads and onboarding,
+  // and GRAL's existing clients through Imports.
 
   // The tiles count the chosen sector, and each one filters the table below.
   const inSector = filterClientsBy(allClients, "All", sector);
@@ -138,11 +136,6 @@ export function ClientsView() {
             <OutlineButton className="px-4 py-2 text-sm" disabled={allClients.length === 0} onClick={() => downloadClients(allClients)}>
               <Download className="size-4" /> <span>Download<span className="hidden sm:inline"> all clients</span></span>
             </OutlineButton>
-            {canManageClients(user) ? (
-              <NavyButton className="px-4 py-2 text-sm" onClick={() => setAdding(true)}>
-                <Plus className="size-4" /> Add client
-              </NavyButton>
-            ) : null}
           </>
         }
       />
@@ -260,15 +253,6 @@ export function ClientsView() {
           setFileTab(undefined);
         }}
         onChanged={reload}
-      />
-
-      <ClientFormSlideOver
-        open={adding}
-        onClose={() => setAdding(false)}
-        onSaved={(saved) => {
-          reload();
-          setOpen(saved);
-        }}
       />
     </>
   );
