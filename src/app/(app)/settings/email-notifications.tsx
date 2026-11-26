@@ -111,12 +111,12 @@ export function EmailNotifications() {
           <p className="mt-3 text-xs text-muted-foreground">
             {onCount === 0 ? "No emails are turned on." : `${onCount} ${onCount === 1 ? "email is" : "emails are"} turned on.`}
           </p>
-          <div className="mt-2 divide-y divide-border">
+          <div className="mt-2 grid gap-x-10 md:grid-cols-2 2xl:grid-cols-3">
             {groups.map((g) => {
               const allOn = g.events.every((e) => e.enabled);
               const busy = g.events.some((e) => saving.has(e.key));
               return (
-                <section key={g.name} className="py-4" aria-labelledby={`email-group-${g.name}`}>
+                <section key={g.name} className="border-t border-border py-4" aria-labelledby={`email-group-${g.name}`}>
                   <div className="flex items-center justify-between gap-3">
                     <h3 id={`email-group-${g.name}`} className="text-sm font-semibold">
                       {g.name}

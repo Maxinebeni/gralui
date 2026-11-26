@@ -5,9 +5,8 @@
 // person's own address, and the link opens the set-new-password page. Setting the
 // new password signs the account out everywhere, so they sign in again with it.
 
-import { KeyRound } from "lucide-react";
 import { useState } from "react";
-import { FloatCard, NavyButton } from "@/components/gral/ui";
+import { NavyButton } from "@/components/gral/ui";
 import { useCurrentUser } from "@/lib/auth-context";
 import { MOCK_AUTH, requestPasswordReset } from "@/lib/api";
 
@@ -29,31 +28,31 @@ export function ChangePassword() {
   }
 
   return (
-    <FloatCard className="p-5 sm:p-6">
-      <div className="flex items-center gap-2">
-        <KeyRound className="size-5 text-primary" />
-        <h2 className="text-base font-semibold tracking-tight">Change password</h2>
+    <section className="flex flex-col gap-3 py-5 sm:flex-row sm:items-start sm:justify-between sm:gap-8" aria-labelledby="settings-password">
+      <div className="min-w-0 max-w-2xl">
+        <h3 id="settings-password" className="text-sm font-semibold">
+          Password
+        </h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          We email a link to <span className="font-medium text-foreground">{user.email}</span>. After you choose a new password you are signed out
+          everywhere and sign in again with it.
+        </p>
+        {state === "sent" ? (
+          <p role="status" className="mt-2 text-sm text-success">
+            {MOCK_AUTH ? "Demo: no email is sent." : "Link sent. Check your email; it can take a few minutes."}
+          </p>
+        ) : null}
+        {error ? (
+          <p role="alert" className="mt-2 text-sm text-danger">
+            {error}
+          </p>
+        ) : null}
       </div>
-      <p className="mt-2 text-sm text-muted-foreground">
-        We email a link to <span className="font-medium text-foreground">{user.email}</span>. Open it to choose a new password. The link works
-        once and for a limited time. After you set the new password you are signed out on every device, so sign in again with it.
-      </p>
-      {state === "sent" ? (
-        <p role="status" className="mt-4 rounded-xl bg-success-soft px-3 py-2 text-sm text-success">
-          {MOCK_AUTH ? "Demo: no email is sent. On the live system the link arrives in a few minutes." : "Check your email for the link. It can take a few minutes; also look in junk mail."}
-        </p>
-      ) : (
-        <div className="mt-4">
-          <NavyButton onClick={send} disabled={state === "sending"}>
-            {state === "sending" ? "Sending…" : "Email me a link to change my password"}
-          </NavyButton>
-        </div>
-      )}
-      {error ? (
-        <p role="alert" className="mt-3 text-sm text-danger">
-          {error}
-        </p>
+      {state !== "sent" ? (
+        <NavyButton className="shrink-0 self-start" onClick={send} disabled={state === "sending"}>
+          {state === "sending" ? "Sending…" : "Change password"}
+        </NavyButton>
       ) : null}
-    </FloatCard>
+    </section>
   );
 }

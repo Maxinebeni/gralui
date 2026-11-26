@@ -7,15 +7,17 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Search } from "lucide-react";
+import { ChevronDown, Download, Search } from "lucide-react";
 import { ClientFile, type ClientFileTab } from "@/components/gral/client-file";
 import { ClientFormPanel } from "@/components/gral/client-form";
 import { ALL_OPTION, FilterMenu, optionsFrom } from "@/components/gral/filter-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { KycBadge } from "@/components/gral/kyc-badge";
 import { usePaged } from "@/components/gral/pager";
 import { SlideOver } from "@/components/gral/shell";
-import { Chip, Loader, NotRecorded, Recorded, TextLink } from "@/components/gral/ui";
+import { Chip, Loader, NotRecorded, Recorded } from "@/components/gral/ui";
 import { downloadCsv } from "@/lib/csv";
+import { downloadXlsx } from "@/lib/xlsx";
 import { useClients, useRefresh } from "@/lib/queries";
 import type { Client } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -112,7 +114,7 @@ export function ClientsTable({
     {/* Phones: one card per client instead of a wide table. */}
     <div className="divide-y divide-border px-4 sm:hidden">
       {items.map((c) => (
-        <article key={c.id} className="py-4">
+        <button key={c.id} type="button" onClick={() => onView(c)} className="block w-full py-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-sky">
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3">
             <div className="min-w-0">
               <p className="text-sm font-semibold">{c.name}</p>
@@ -122,22 +124,15 @@ export function ClientsTable({
             </div>
             {c.nonCompliant ? <Chip tone="danger">Flagged</Chip> : <KycBadge short kyc={c.kyc} status={c.kycStatus} gateStatus={c.kycGateStatus} />}
           </div>
-          <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-3">
+          <div className="mt-3">
             <div className="min-w-0 text-xs text-muted-foreground">
               <p>
                 {c.activePolicies} active {c.activePolicies === 1 ? "policy" : "policies"}
               </p>
               {c.manager ? <p className="mt-0.5 break-words">{c.manager}</p> : null}
             </div>
-            <button
-              type="button"
-              onClick={() => onView(c)}
-              className="rounded-full border border-border bg-card px-3.5 py-2 text-xs font-medium hover:bg-secondary"
-            >
-              View file
-            </button>
           </div>
-        </article>
+        </button>
       ))}
       {clients.length === 0 ? <div className="py-6 text-center text-sm text-muted-foreground">{emptyMessage}</div> : null}
     </div>
@@ -174,11 +169,21 @@ export function ClientsTable({
             </tr>
           ) : (
             items.map((c) => (
-              <tr key={c.id} className="group transition-colors hover:bg-secondary/20">
-                <Td className="sticky left-0 z-[1] bg-card group-hover:bg-secondary/20">
-                  <div className="truncate text-sm font-medium" title={c.name}>{c.name}</div>
+              <tr key={c.id} onClick={() => onView(c)} className="group cursor-pointer transition-colors hover:bg-secondary/40">
+                <Td className="sticky left-0 z-[1] bg-card group-hover:bg-secondary/40">
+                  {/* The whole row opens the file; this button is the keyboard way in. */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onView(c);
+                    }}
+                    className="block max-w-full truncate rounded text-left text-sm font-medium outline-none group-hover:text-primary group-hover:underline focus-visible:ring-2 focus-visible:ring-sky"
+                    title={`Open ${c.name}`}
+                  >
+                    {c.name}
+                  </button>
                   {c.nonCompliant ? <div><Chip tone="danger">Flagged</Chip></div> : null}
-                  <TextLink onClick={() => onView(c)}>View file</TextLink>
                 </Td>
                 <Td className="text-sm">
                   <span className="block truncate" title={c.type}>{c.type}</span>
@@ -289,9 +294,11 @@ function Td({ children, className }: { children?: React.ReactNode; className?: s
 }
 
 /** The clients as listed, for Download. */
-export function downloadClients(clients: Client[], fileName = "clients.csv") {
-  downloadCsv(fileName, [
-    ["Client ID", "Client", "Type", "Sector", "Address", "Contact person", "Contact email", "Contact phone", "Active policies", "KYC", "Non-compliant", "Account manager"],
+const CLIENT_COLUMNS = ["Client ID", "Client", "Type", "Sector", "Address", "Contact person", "Contact email", "Contact phone", "Active policies", "KYC", "Non-compliant", "Account manager"];
+
+function clientRows(clients: Client[]) {
+  return [
+    CLIENT_COLUMNS,
     ...clients.map((c) => [
       c.id,
       c.name,
@@ -306,7 +313,158 @@ export function downloadClients(clients: Client[], fileName = "clients.csv") {
       c.nonCompliant ? "Yes" : "No",
       c.manager,
     ]),
-  ]);
+  ];
+}
+
+export type DownloadFormat = "xlsx" | "csv";
+
+export function downloadClients(clients: Client[], format: DownloadFormat = "xlsx", name = "clients") {
+  const stamp = new Date().toISOString().slice(0, 10);
+  if (format === "csv") downloadCsv(`${name}-${stamp}.csv`, clientRows(clients));
+  else downloadXlsx(`${name}-${stamp}.xlsx`, clientRows(clients), "Clients");
+}
+
+const NO_SECTOR = "Not recorded";
+const sectorOf = (c: Client) => c.sector || NO_SECTOR;
+const fileSlug = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+/**
+ * Download button with a small panel: pick the sectors (all, one or a few) and
+ * Excel or CSV. It downloads from the list it is given, so a page's tab and
+ * search still apply.
+ */
+export function DownloadClientsMenu({ clients, sector = "" }: { clients: Client[]; sector?: string }) {
+  const sectors = useMemo(() => [...new Set(clients.map(sectorOf))].sort((a, b) => a.localeCompare(b)), [clients]);
+  const counts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of clients) m.set(sectorOf(c), (m.get(sectorOf(c)) ?? 0) + 1);
+    return m;
+  }, [clients]);
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [format, setFormat] = useState<DownloadFormat>("xlsx");
+  const [query, setQuery] = useState("");
+
+  const all = picked.size === 0;
+  const chosen = all ? clients : clients.filter((c) => picked.has(sectorOf(c)));
+  const q = query.trim().toLowerCase();
+  const shown = q ? sectors.filter((s) => s.toLowerCase().includes(q)) : sectors;
+  const toggle = (s: string) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s);
+      else next.add(s);
+      return next.size === sectors.length ? new Set() : next;
+    });
+
+  function download() {
+    const name = all ? "clients" : picked.size === 1 ? `clients-${fileSlug([...picked][0]!)}` : "clients-selected-sectors";
+    downloadClients(chosen, format, name);
+    setOpen(false);
+  }
+
+  return (
+    <DropdownMenu
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) setPicked(sector && sectors.includes(sector) ? new Set([sector]) : new Set());
+        else setQuery("");
+      }}
+    >
+      <DropdownMenuTrigger
+        disabled={clients.length === 0}
+        className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2 text-sm font-medium outline-none transition-colors hover:bg-secondary focus-visible:ring-2 focus-visible:ring-sky disabled:opacity-50"
+      >
+        <Download className="size-4" /> Download
+        <ChevronDown className="size-3.5 text-subtle" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        sideOffset={8}
+        className="w-80 max-w-[calc(100vw-2rem)] rounded-2xl p-0 shadow-[var(--shadow-float)]"
+        onKeyDown={(e) => {
+          // Let typing and space reach the search box and checkboxes; Escape still closes.
+          if (e.key !== "Escape") e.stopPropagation();
+        }}
+      >
+        <div className="border-b border-border px-4 pt-4 pb-3">
+          <p className="text-sm font-semibold">Download clients</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">Choose the sectors, or leave all of them.</p>
+        </div>
+
+        <div className="max-h-64 overflow-y-auto px-2 py-2">
+          {sectors.length > 8 ? (
+            <label className="mx-1 mb-1 flex items-center gap-2 rounded-xl border border-border px-3 py-2">
+              <Search className="size-3.5 text-subtle" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Find a sector"
+                aria-label="Find a sector"
+                className="w-full bg-transparent text-xs outline-none"
+              />
+            </label>
+          ) : null}
+          {!q ? <SectorCheck label="All sectors" count={clients.length} checked={all} onChange={() => setPicked(new Set())} /> : null}
+          {shown.map((s) => (
+            <SectorCheck key={s} label={s} count={counts.get(s) ?? 0} checked={!all && picked.has(s)} onChange={() => toggle(s)} />
+          ))}
+          {shown.length === 0 ? <p className="px-3 py-2 text-xs text-muted-foreground">No sector matches.</p> : null}
+        </div>
+
+        <div className="border-t border-border px-4 py-3">
+          <p className="text-xs font-medium text-muted-foreground">File type</p>
+          <div className="mt-2 grid grid-cols-2 gap-1 rounded-full bg-secondary p-1" role="radiogroup" aria-label="File type">
+            {(
+              [
+                ["xlsx", "Excel (.xlsx)"],
+                ["csv", "CSV"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={format === value}
+                onClick={() => setFormat(value)}
+                className={cn(
+                  "rounded-full px-3 py-1.5 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sky",
+                  format === value ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 border-t border-border px-4 py-3">
+          <span className="text-xs text-muted-foreground">
+            {chosen.length} {chosen.length === 1 ? "client" : "clients"}
+          </span>
+          <button
+            type="button"
+            disabled={chosen.length === 0}
+            onClick={download}
+            className="rounded-full bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground outline-none transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-sky disabled:opacity-50"
+          >
+            Download
+          </button>
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function SectorCheck({ label, count, checked, onChange }: { label: string; count: number; checked: boolean; onChange: () => void }) {
+  return (
+    <label className="flex cursor-pointer items-center gap-3 rounded-xl px-3 py-2 text-sm hover:bg-secondary">
+      <input type="checkbox" checked={checked} onChange={onChange} className="size-4 accent-[var(--primary)]" />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
+    </label>
+  );
 }
 
 export function SectorFilter({ value, sectors, onChange }: { value: string; sectors: string[]; onChange: (sector: string) => void }) {

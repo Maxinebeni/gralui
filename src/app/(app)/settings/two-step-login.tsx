@@ -8,12 +8,11 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { AuthenticatorQr, RecoveryCodeList } from "@/components/gral/authenticator-setup";
 import { CODE_LENGTH, CodeBoxes } from "@/components/gral/code-boxes";
 import { PasswordInput } from "@/components/gral/password-input";
-import { FloatCard, NavyButton, OutlineButton } from "@/components/gral/ui";
+import { Chip, NavyButton, OutlineButton } from "@/components/gral/ui";
 import { MOCK_AUTH, confirmMfaEnrollment, getMfaStatus, startMfaEnrollment } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 
@@ -40,33 +39,52 @@ export function TwoStepLogin() {
     };
   }, []);
 
-  return (
-    <FloatCard className="p-5 sm:p-6">
-      <div className="flex items-center gap-2">
-        <ShieldCheck className="size-5 text-primary" />
-        <h2 className="text-base font-semibold tracking-tight">Two-step login</h2>
-      </div>
-      <p className="mt-2 text-sm text-muted-foreground">
-        After your password, you also enter a 6-digit code from an app on your phone, such as Google Authenticator, Microsoft Authenticator or Duo
-        Mobile. Someone who learns your password still cannot sign in. Setting it up signs you out on every device, so you sign in again with the new
-        code.
-      </p>
+  const status =
+    enabled === true ? (
+      <Chip tone="success">On</Chip>
+    ) : enabled === false ? (
+      <Chip tone="warning">Off</Chip>
+    ) : null;
 
-      {MOCK_AUTH ? (
-        <p className="mt-4 text-xs text-subtle">Available on the live system.</p>
-      ) : step.name === "idle" ? (
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
-          {enabled === true ? <p className="text-xs font-medium text-success">Two-step login is on.</p> : enabled === false ? <p className="text-xs text-muted-foreground">Two-step login is off.</p> : null}
-          {enabled !== true ? <NavyButton onClick={() => setStep({ name: "password" })}>Set up two-step login</NavyButton> : null}
+  return (
+    <section className="py-5" aria-labelledby="settings-two-step">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-8">
+        <div className="min-w-0 max-w-2xl">
+          <div className="flex items-center gap-2">
+            <h3 id="settings-two-step" className="text-sm font-semibold">
+              Two-step login
+            </h3>
+            {MOCK_AUTH ? null : status}
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            After your password you also enter a 6-digit code from an app on your phone, such as Google or Microsoft Authenticator.
+          </p>
+          {MOCK_AUTH ? <p className="mt-2 text-xs text-subtle">Available on the live system.</p> : null}
         </div>
-      ) : step.name === "password" ? (
-        <StartSetup onCancel={() => setStep({ name: "idle" })} onStarted={(secret, uri) => setStep({ name: "scan", secret, uri })} />
-      ) : step.name === "scan" ? (
-        <ScanAndConfirm secret={step.secret} uri={step.uri} onCancel={() => setStep({ name: "idle" })} onConfirmed={(codes) => setStep({ name: "codes", codes })} />
-      ) : (
-        <RecoveryCodes codes={step.codes} />
+        {!MOCK_AUTH && step.name === "idle" && enabled !== true ? (
+          <NavyButton className="shrink-0 self-start" onClick={() => setStep({ name: "password" })}>
+            Set up two-step login
+          </NavyButton>
+        ) : null}
+      </div>
+
+      {MOCK_AUTH || step.name === "idle" ? null : (
+        <div className="max-w-md">
+          {step.name === "password" ? (
+            <StartSetup onCancel={() => setStep({ name: "idle" })} onStarted={(secret, uri) => setStep({ name: "scan", secret, uri })} />
+          ) : step.name === "scan" ? (
+            <ScanAndConfirm
+              secret={step.secret}
+              uri={step.uri}
+              onCancel={() => setStep({ name: "idle" })}
+              onConfirmed={(codes) => setStep({ name: "codes", codes })}
+            />
+          ) : (
+            <RecoveryCodes codes={step.codes} />
+          )}
+        </div>
       )}
-    </FloatCard>
+    </section>
   );
 }
 
