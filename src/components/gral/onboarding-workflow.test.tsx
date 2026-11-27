@@ -1,21 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { user as defaultUser, review, track, approval, lead, reviewerId } from "@/test/onboarding-fixtures";
-import type { PolicyTrack, SessionUser } from "@/lib/types";
+import { user as defaultUser, review, track, approval, clientId, lead, reviewerId } from "@/test/onboarding-fixtures";
+import type { DocumentFile, PolicyTrack, SessionUser } from "@/lib/types";
 
 const state = vi.hoisted(() => ({ user: {} as SessionUser, push: vi.fn(), refresh: vi.fn() }));
 const mock = vi.hoisted(() => ({
   assignKycReviewer: vi.fn(), getKycReview: vi.fn(), listKycReviewers: vi.fn(), getOnboardingApproval: vi.fn(), listTrackAssignees: vi.fn(),
   getOnboardingClient: vi.fn(), onboardingOptions: vi.fn(), listKycTemplates: vi.fn(), startKycReview: vi.fn(), runTrackAction: vi.fn(),
   checkProspectDuplicates: vi.fn(), openProspect: vi.fn(), linkProspectCandidate: vi.fn(), listClients: vi.fn(), loadCommandHistory: vi.fn(), listDocuments: vi.fn(),
-  getTrack: vi.fn(),
+  getTrack: vi.fn(), getApprovalSubmittedDocuments: vi.fn(), listRelatedDocuments: vi.fn(), listClientClaims: vi.fn(), listClientPolicies: vi.fn(),
 }));
 vi.mock("@/lib/api", () => ({ ...mock, MOCK_AUTH: false, DEMO_REVIEWER: "Risk and Compliance Manager" }));
 vi.mock("@/lib/auth-context", () => ({ useCurrentUser: () => ({ user: state.user }) }));
 vi.mock("@/lib/queries", () => ({ useRefresh: () => state.refresh }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: state.push, replace: state.push }), usePathname: () => "/" }));
 vi.mock("./documents", () => ({ FilePickButton: ({ onFile, children }: { onFile: (f: File) => void; children: React.ReactNode }) => <button type="button" onClick={() => onFile(new File(["signed"], "signed.pdf", { type: "application/pdf" }))}>{children}</button> }));
-vi.mock("./document-preview", () => ({ DocumentPreviewButton: () => <span>Document preview</span> }));
+vi.mock("./document-preview", () => ({ DocumentPreviewButton: ({ document }: { document: DocumentFile }) => <span data-testid={`preview-${document.id}`} data-version={document.version} data-purpose={document.purpose}>Document preview</span> }));
 
 import { KycReviewerAssignment } from "./kyc-reviewer-assignment";
 import { KycReviewPage, StartKycReview } from "./kyc-review";
@@ -28,6 +28,8 @@ import { OnboardingCaseView } from "./onboarding-case";
 import { ActionPanel } from "./track-forms";
 import { OnboardingError } from "@/lib/command-attempt";
 import { ApprovalPanel } from "./approval-panel";
+import { ClientFile } from "./client-file";
+import { CLIENTS } from "@/lib/mock-data";
 import { canAccessPath } from "@/lib/permissions";
 
 beforeEach(() => {
@@ -42,6 +44,50 @@ beforeEach(() => {
   mock.runTrackAction.mockResolvedValue(track);
   mock.getTrack.mockResolvedValue({ track: { ...track, stage: 8, approvalRequests: { RECOMMENDATION: approval.id } }, lead: null, history: [] });
   mock.listDocuments.mockResolvedValue([]);
+});
+
+describe("record and approval documents", () => {
+  it("opens the lead's document tab and follows server pagination", async () => {
+    mock.listRelatedDocuments.mockImplementation(async (_subject, page: number) => ({
+      page, size: 20, totalItems: 21, totalPages: 2,
+      items: [{ id: `doc-${page}`, version: 4, originalFileName: `report-${page}.pdf`, uploadedAt: "2026-10-20T09:00:00Z", sources: [{ subjectType: "ONBOARDING", subjectId: track.id, purpose: "RECOMMENDATION" }] }],
+    }));
+    render(<OnboardingCaseView detail={{ lead, tracks: [], kyc: null, history: [] }} track={null} onSelectTrack={vi.fn()} onChanged={vi.fn()} />);
+    expect(mock.listRelatedDocuments).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Documents" }));
+    expect(await screen.findByText("report-0.pdf")).toBeInTheDocument();
+    expect(screen.getByTestId("preview-doc-0")).toHaveAttribute("data-purpose", "RECOMMENDATION");
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("report-1.pdf")).toBeInTheDocument();
+    expect(mock.listRelatedDocuments).toHaveBeenLastCalledWith({ type: "LEAD", id: lead.id }, 1, expect.any(AbortSignal));
+  });
+
+  it("loads a client file's Documents tab using the client UUID and shows originating lead files", async () => {
+    mock.listClientClaims.mockResolvedValue([]);
+    mock.listClientPolicies.mockResolvedValue([]);
+    mock.listRelatedDocuments.mockResolvedValue({
+      page: 0, size: 20, totalItems: 1, totalPages: 1,
+      items: [{ id: "lead-evidence", version: 1, originalFileName: "lead-response.pdf", uploadedAt: "2026-10-20T09:00:00Z", sources: [{ subjectType: "LEAD", subjectId: lead.id, purpose: "LEAD_RESPONSE" }] }],
+    });
+    render(<ClientFile client={{ ...CLIENTS[0]!, uuid: clientId }} initialTab="Documents" onClose={vi.fn()} />);
+    expect(await screen.findByText("lead-response.pdf")).toBeInTheDocument();
+    expect(mock.listRelatedDocuments).toHaveBeenCalledWith({ type: "CLIENT", id: clientId }, 0, expect.any(AbortSignal));
+    expect(screen.getByTestId("preview-lead-evidence")).toHaveAttribute("data-purpose", "LEAD_RESPONSE");
+  });
+
+  it("shows the submitted version separately from earlier decision evidence", async () => {
+    mock.getApprovalSubmittedDocuments.mockResolvedValue([{ kind: "SELECTED_QUOTE", documentId: "submitted", version: 2, subjectType: "ONBOARDING", subjectId: track.id, purpose: "QUOTE" }]);
+    render(<ApprovalPanel request={{ ...approval, status: "APPROVED", backend: true, history: [{ at: "2026-10-21", by: "Technical Director", text: "Approved step 1", documents: [{ documentId: "signed", version: 3, subjectType: "ONBOARDING", subjectId: track.id, purpose: "RECOMMENDATION_APPROVAL" }] }] }} onClose={vi.fn()} onChanged={vi.fn()} />);
+    expect(await screen.findByText("Selected quote")).toBeInTheDocument();
+    expect(screen.getByTestId("preview-submitted")).toHaveAttribute("data-version", "2");
+    expect(screen.getByTestId("preview-signed")).toHaveAttribute("data-purpose", "RECOMMENDATION_APPROVAL");
+  });
+
+  it("shows the same unavailable state for a null approval snapshot", async () => {
+    mock.getApprovalSubmittedDocuments.mockResolvedValue(null);
+    render(<ApprovalPanel request={{ ...approval, status: "APPROVED", backend: true }} onClose={vi.fn()} onChanged={vi.fn()} />);
+    expect(await screen.findByText("Submitted documents unavailable")).toBeInTheDocument();
+  });
 });
 
 describe.each(["lead", "standalone"])("%s workflow handoffs", (entry) => {

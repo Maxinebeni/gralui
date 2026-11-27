@@ -6,6 +6,7 @@ import type * as Api from "./api";
 let api: typeof Api;
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 const fetchMock = vi.fn<typeof fetch>();
+const documentId = "40000000-0000-4000-8000-000000000001";
 function mockHttp(handler: (path: string, init?: RequestInit) => Response | Promise<Response>) {
   fetchMock.mockImplementation(async (input, init) => {
     const path = String(input);
@@ -60,6 +61,60 @@ describe("onboarding response contracts", () => {
 });
 
 describe("commands and exact evidence", () => {
+  it.each(["LEAD", "CLIENT"] as const)("reads the authorized %s document page and its exact source link", async (type) => {
+    const sources = [{ subjectType: "ONBOARDING", subjectId: trackId, purpose: "RECOMMENDATION" }];
+    mockHttp((path) => {
+      expect(path).toBe(`/api/v1/documents/related?subjectType=${type}&subjectId=${trackId}&page=1&size=20`);
+      return json({ items: [{ id: documentId, version: 4, sources }], page: 1, size: 20, totalItems: 21, totalPages: 2 });
+    });
+    await expect(api.listRelatedDocuments({ type, id: trackId }, 1, new AbortController().signal))
+      .resolves.toMatchObject({ items: [{ id: documentId, version: 4, sources }], totalItems: 21, totalPages: 2 });
+  });
+
+  it("checks authorization on each open and uses the attachment filename", async () => {
+    let requests = 0;
+    mockHttp((path) => {
+      expect(path).toBe(`/api/v1/documents/${documentId}/versions/4/content?subjectType=ONBOARDING&subjectId=${trackId}&purpose=RECOMMENDATION`);
+      return ++requests === 1 ? new Response("PDF bytes", { headers: {
+        "Content-Type": "application/pdf", "Content-Disposition": "attachment; filename=report.pdf; filename*=UTF-8''Comparaison%20%C3%A9crite.pdf",
+      } }) : json({ code: "FORBIDDEN" }, 403);
+    });
+    const subject = { type: "ONBOARDING", id: trackId } as const;
+    const file = { id: documentId, version: 4, purpose: "RECOMMENDATION" };
+    const content = await api.getDocumentContent(subject, file);
+    expect(content.fileName).toBe("Comparaison écrite.pdf");
+    expect(content.blob.type).toBe("application/pdf");
+    await expect(api.getDocumentContent(subject, file)).rejects.toThrow("You do not have permission to open this file.");
+    expect(requests).toBe(2);
+  });
+
+  it("reads the submitted references from the approval snapshot rather than the current track", async () => {
+    const submittedDocuments = [{ documentId, version: 2, subjectType: "ONBOARDING", subjectId: trackId, purpose: "QUOTE", kind: "SELECTED_QUOTE" }];
+    mockHttp((path) => {
+      expect(path).toBe(`/api/v1/approvals/${trackId}`);
+      return json({ submittedDocuments });
+    });
+    await expect(api.getApprovalSubmittedDocuments(trackId, new AbortController().signal)).resolves.toEqual(submittedDocuments);
+  });
+
+  it("explains how to recover when a saved recommendation has no comparison set", async () => {
+    mockHttp(() => json({ code: "COMPARISON_QUOTES_REQUIRED" }, 409));
+    await expect(api.runTrackAction(track, { action: "REQUEST_APPROVAL" })).rejects.toMatchObject({
+      code: "COMPARISON_QUOTES_REQUIRED", message: expect.stringContaining("revise the recommendation"),
+    });
+  });
+
+  it.each([{ comparedQuotes: [] }, { comparedQuotes: [{ quoteId: "quote-2", quoteVersion: 4 }] }])("sends the explicit comparison set with the recommendation (%#)", async ({ comparedQuotes }) => {
+    mockHttp((path) => path.startsWith("/api/v1/documents?") ? json({ id: documentId, version: 4 }) : json(track));
+    await api.runTrackAction(track, {
+      action: "RECOMMEND",
+      fields: { quoteId: "quote-1", quoteVersion: 3, comparedQuotes },
+      evidence: { main: { file: new File(["proof"], "report.pdf", { type: "application/pdf" }), occurredAt: "2026-10-20" } },
+    });
+    const call = fetchMock.mock.calls.find(([path]) => String(path).endsWith("/recommend"))!;
+    expect(JSON.parse(String(call[1]?.body))).toMatchObject({ quoteId: "quote-1", quoteVersion: 3, comparedQuotes, evidence: { documentId, documentVersion: 4 } });
+  });
+
   it.each([undefined, "", "   ", "x".repeat(2001)])("rejects a missing or oversized single-source justification before uploading (%#)", async (detail) => {
     await expect(api.runTrackAction(track, { action: "SINGLE_SOURCE", evidence: { main: { file: new File(["proof"], "justification.pdf", { type: "application/pdf" }), occurredAt: "2026-10-20", detail } } })).rejects.toThrow(/justification/);
     expect(fetchMock).not.toHaveBeenCalled();

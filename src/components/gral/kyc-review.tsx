@@ -239,12 +239,7 @@ function ChecklistRow({ review, item, canFile, onChanged, disclosure }: { review
                 id: item.documentId,
                 version: item.documentVersion ?? proof?.documentVersion ?? 1,
                 originalFileName: proof?.fileName ?? item.label,
-                mediaType: "application/octet-stream",
-                sizeBytes: 0,
-                classification: "KYC",
                 purpose: item.code,
-                uploadedAt: proof?.occurredAt ?? new Date().toISOString(),
-                previous: [],
               }}
             />
           </div>
@@ -284,12 +279,7 @@ function KycProofPreview({ reviewId, proof, label }: { reviewId: string; proof: 
         id: proof.documentId,
         version: proof.documentVersion ?? 1,
         originalFileName: proof.fileName ?? label,
-        mediaType: "application/octet-stream",
-        sizeBytes: 0,
-        classification: "KYC",
         purpose: proof.purpose,
-        uploadedAt: proof.occurredAt,
-        previous: [],
       }}
     />
   );

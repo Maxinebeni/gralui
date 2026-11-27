@@ -49,6 +49,7 @@ import {
   dateOf,
 } from "./onboarding-ui";
 import { PageHeader } from "./shell";
+import { RelatedDocuments } from "./related-documents";
 import {
   ActionPanel,
   OtherActions,
@@ -57,10 +58,11 @@ import {
   type TrackOptions,
   type TrackRun,
 } from "./track-forms";
-import { Chip, FloatCard, OutlineButton, Person } from "./ui";
+import { Chip, FloatCard, OutlineButton, Person, SegmentedTabs } from "./ui";
 import { BackLink } from "./back-link";
 
 type StepState = "done" | "current" | "late" | "upcoming";
+const LEAD_TABS = ["Workflow", "Documents"] as const;
 
 function normalizedId(value?: string) {
   return value?.trim().replace(/[{}-]/g, "").toLowerCase();
@@ -95,6 +97,7 @@ export function OnboardingCaseView({
   const assignmentReason = assignmentHistory.find((item) => item.reason?.trim())?.reason
     ?? [...detail.history].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)).find((item) => item.reason?.trim())?.reason;
   const current = journeyStep(l, t);
+  const [tab, setTab] = useState<(typeof LEAD_TABS)[number]>("Workflow");
   const [selected, setSelected] = useState(current ?? 11);
   const [adding, setAdding] = useState(false);
   const [options, setOptions] = useState<TrackOptions>({ products: [], insurers: [], accountExecutives: [] });
@@ -128,6 +131,13 @@ export function OnboardingCaseView({
         action={perms.canCloseLead && l.status === "OPEN" ? <CloseLead lead={l} onChanged={onChanged} /> : null}
       />
 
+      <div className="mt-5"><SegmentedTabs tabs={LEAD_TABS} value={tab} onChange={setTab} /></div>
+      {tab === "Documents" ? (
+        <FloatCard className="mt-4 p-4 sm:p-5">
+          <RelatedDocuments key={`${user.id}:${user.role}:${l.id}`} subjectType="LEAD" subjectId={l.id} />
+        </FloatCard>
+      ) : null}
+      <div hidden={tab !== "Workflow"}>
       <FloatCard className="mt-5 p-4 sm:p-5" delay={60}>
         {tracks.length > 1 || (t && canAddTrack) ? (
           <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -272,6 +282,7 @@ export function OnboardingCaseView({
               {track ? <HistoryList items={track.history} resource={{ type: "ONBOARDING", id: track.track.id }} /> : null}
           </FloatCard>
         </div>
+      </div>
       </div>
     </>
   );
@@ -475,7 +486,7 @@ function StepDetail({
                 </p>
               </>
             ) : null}
-            <ProofList items={[...(l.responseEvidence ? [l.responseEvidence] : []), ...(l.assessment?.evidence ?? [])]} labels={RESPONSE_LABELS} />
+            <ProofList items={[...(l.responseEvidence ? [l.responseEvidence] : []), ...(l.assessment?.evidence ?? [])]} labels={RESPONSE_LABELS} subject={{ type: "LEAD", id: l.id }} />
             {l.clientName ? <p>Client: {l.clientName}</p> : null}
           </div>
         ) : null}

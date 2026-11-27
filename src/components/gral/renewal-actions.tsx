@@ -8,7 +8,9 @@ import { useEffect, useState } from "react";
 import { AlertTriangle, ChevronDown, FileText, Paperclip } from "lucide-react";
 import { toast } from "sonner";
 import { listRenewalSpecialists, renewalChoices, runRenewalAction } from "@/lib/api";
+import { OnboardingError } from "@/lib/command-attempt";
 import { blockerText } from "@/lib/onboarding";
+import { latestQuoteRevisions, quoteRevisionKey } from "@/lib/quote-revisions";
 import {
   buildRenewalInput,
   checkRenewalValues,
@@ -21,6 +23,7 @@ import {
 import { RENEWAL_MILESTONES, formatDate } from "@/lib/renewals";
 import type { RenewalCase, RenewalMilestoneCode } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { ComparedQuotes } from "./compared-quotes";
 import { FilePickButton } from "./documents";
 import { Loader, NavyButton, OutlineButton } from "./ui";
 
@@ -194,7 +197,7 @@ function ActionForm({
 
   // Annual commission the chosen quote implies: net premium × commission rate.
   const commissionFor = (quoteId: unknown) => {
-    const q = renewal.backend?.quotes.find((x) => x.id === quoteId);
+    const q = renewal.backend?.quotes.find((x) => quoteRevisionKey(x) === quoteId);
     return q?.financials ? Math.round(q.financials.netPremium * q.financials.commissionRate) : undefined;
   };
   const set = (key: string, v: Values[string]) => {
@@ -202,7 +205,8 @@ function ActionForm({
       const next = { ...x, [key]: v };
       // Choosing a quote fills the commission (and how it was worked out) when the quote has the figures.
       const expected = key === "quoteId" ? commissionFor(v) : undefined;
-      const q = renewal.backend?.quotes.find((y) => y.id === v);
+      const q = renewal.backend?.quotes.find((y) => quoteRevisionKey(y) === v);
+      if (key === "quoteId" && Array.isArray(next.comparedQuotes)) next.comparedQuotes = next.comparedQuotes.filter((quote) => quote !== v);
       if (expected !== undefined && spec.fields.some((f) => f.key === "annualCommissionRwf")) {
         next.annualCommissionRwf = String(expected);
         if (q?.financials && !x.commissionBasis)
@@ -232,7 +236,9 @@ function ActionForm({
       toast.success(`${spec.label}: saved.`);
       onDone(updated);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not save. Please try again.";
+      const message = err instanceof OnboardingError && err.code === "COMPARISON_QUOTES_REQUIRED"
+        ? "Under More actions, choose Withdraw the terms for revision. Record the quotes used in the comparison, then request approval again."
+        : err instanceof Error ? err.message : "Could not save. Please try again.";
       setFormError(message);
       toast.error(message);
     } finally {
@@ -401,17 +407,26 @@ function FieldInput({
       );
       break;
     }
-    case "quote": {
-      const quotes = renewal.backend?.quotes ?? [];
+    case "quote":
+    case "comparedQuotes": {
+      const quotes = latestQuoteRevisions(renewal.backend?.quotes ?? []);
       const insurerName = (insurerId: string) => choices?.insurers.find((i) => i.id === insurerId)?.name ?? "Insurer";
+      const options = quotes.map((quote) => ({
+        id: quoteRevisionKey(quote), name: `${insurerName(quote.insurerId)}, RWF ${quote.premium.toLocaleString("en-US")} · revision ${quote.version}`,
+      }));
+      if (f.kind === "comparedQuotes") {
+        const selected = Array.isArray(value) ? value : [];
+        return (
+          <div id={id} tabIndex={-1}>
+            <ComparedQuotes options={options.filter((option) => option.id !== values.quoteId)} selected={selected} onChange={onChange} />
+            {error ? <p role="alert" className="mt-1 text-[11px] text-danger">{error}</p> : null}
+          </div>
+        );
+      }
       input = (
-        <select id={id} value={text} onChange={(e) => onChange(e.target.value)} className={cls}>
+        <select id={id} value={options.some((option) => option.id === text) ? text : ""} onChange={(e) => onChange(e.target.value)} className={cls}>
           <option value="">{quotes.length ? "Choose…" : "No quotes recorded yet"}</option>
-          {quotes.map((q) => (
-            <option key={q.id} value={q.id}>
-              {insurerName(q.insurerId)}, RWF {q.premium.toLocaleString("en-US")}
-            </option>
-          ))}
+          {options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
         </select>
       );
       break;

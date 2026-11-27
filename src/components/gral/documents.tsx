@@ -178,7 +178,7 @@ export function FilePickButton({
         disabled={disabled}
         onClick={() => input.current?.click()}
         className={cn(
-          "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 sm:min-h-0",
+          "inline-flex min-h-9 cursor-pointer items-center justify-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0",
           variant === "navy"
             ? "bg-primary text-primary-foreground hover:opacity-90"
             : "border border-border bg-card text-foreground hover:bg-secondary",
@@ -358,19 +358,21 @@ export function DocumentPanel({
         {documents && documents.length === 0 && !error ? <p className="text-xs text-muted-foreground">{emptyText}</p> : null}
         {documents?.map((d) => (
           <div key={d.id} className="rounded-xl border border-border px-3 py-2.5">
-            <div className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-2.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center">
-              <FileText className="mt-0.5 size-4 text-primary sm:mt-0" />
-              <div className="min-w-0">
-                <p className="truncate text-xs font-medium">{d.originalFileName}</p>
-                <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-                  <Chip tone="sky">{CLASSIFICATION_LABEL[d.classification]}</Chip>
-                  <span>Version {d.version}</span>
-                  <span>{formatBytes(d.sizeBytes)}</span>
-                  <span>{uploadedOn(d.uploadedAt)}</span>
-                </p>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="flex min-w-0 flex-[1_1_12rem] items-start gap-2.5">
+                <FileText className="mt-0.5 size-4 shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <p className="break-words text-xs font-medium">{d.originalFileName}</p>
+                  <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                    <Chip tone="sky">{CLASSIFICATION_LABEL[d.classification]}</Chip>
+                    <span className="whitespace-nowrap">Version {d.version}</span>
+                    <span className="whitespace-nowrap">{formatBytes(d.sizeBytes)}</span>
+                    <span className="whitespace-nowrap">{uploadedOn(d.uploadedAt)}</span>
+                  </p>
+                </div>
               </div>
-              <div className="col-span-2 flex flex-wrap gap-2 sm:col-span-1 sm:justify-end">
-                <OutlineButton onClick={() => download(d)}>
+              <div className="flex max-w-full flex-wrap gap-2">
+                <OutlineButton className="cursor-pointer" onClick={() => download(d)}>
                   <Download className="size-3.5" /> Download
                 </OutlineButton>
                 {canReplace ? (
@@ -399,7 +401,7 @@ export function DocumentPanel({
                     <button
                       type="button"
                       onClick={() => download(d, p.version)}
-                      className="shrink-0 text-primary underline underline-offset-2"
+                      className="shrink-0 cursor-pointer text-primary underline underline-offset-2"
                     >
                       Download
                     </button>

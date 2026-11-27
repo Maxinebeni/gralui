@@ -5,17 +5,17 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronUp, FileText, Paperclip } from "lucide-react";
 import { toast } from "sonner";
-import { listDocuments, loadCommandHistory, type EvidenceInput } from "@/lib/api";
+import { loadCommandHistory, type EvidenceInput } from "@/lib/api";
 import { CommandAttempt, OnboardingError } from "@/lib/command-attempt";
 import { useCurrentUser } from "@/lib/auth-context";
 import { blockerText, type Health } from "@/lib/onboarding";
 import { formatDate, todayIso } from "@/lib/renewals";
-import type { CommandHistory, DocumentSubject, StoredDocument } from "@/lib/types";
+import type { CommandHistory, DocumentSubject } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { inputClass } from "./client-form";
 import { FilePickButton } from "./documents";
 import { DocumentPreviewButton } from "./document-preview";
-import { Chip, Dot, Loader, NavyButton, OutlineButton } from "./ui";
+import { Chip, Dot, NavyButton, OutlineButton } from "./ui";
 
 /** "2026-10-23T09:00:00Z" as "23 Oct 2026". */
 export function dateOf(iso?: string) {
@@ -395,17 +395,6 @@ export function ProofList({ items, labels, subject }: {
   labels?: Record<string, string>;
   subject?: DocumentSubject;
 }) {
-  const [documents, setDocuments] = useState<StoredDocument[] | null>(null);
-  useEffect(() => {
-    if (!subject) {
-      setDocuments(null);
-      return;
-    }
-    let active = true;
-    listDocuments(subject).then((loaded) => { if (active) setDocuments(loaded); }).catch(() => { if (active) setDocuments([]); });
-    return () => { active = false; };
-  }, [subject?.type, subject?.id]);
-
   if (!items.length) return null;
   return (
     <ul className="space-y-1">
@@ -415,10 +404,8 @@ export function ProofList({ items, labels, subject }: {
           <span className="font-medium text-foreground">{labels?.[p.purpose] ?? p.purpose.replace(/_/g, " ").toLowerCase()}</span>
           {p.fileName ? <span className="truncate">· {p.fileName}</span> : null}
           <span>· {dateOf(p.occurredAt)}</span>
-          {subject && p.documentId && documents ? (() => {
-            const doc = documents.find((candidate) => candidate.id === p.documentId);
-            return doc ? <DocumentPreviewButton subject={subject} document={{ ...doc, version: p.documentVersion ?? doc.version }} /> : <span className="text-subtle">Preview unavailable</span>;
-          })() : subject && p.documentId ? <Loader size="sm" label="Loading preview" className="inline-flex py-0" /> : null}
+          {subject && p.documentId && p.documentVersion ? <DocumentPreviewButton subject={subject}
+            document={{ id: p.documentId, version: p.documentVersion, purpose: p.purpose, originalFileName: p.fileName ?? labels?.[p.purpose] }} /> : null}
         </li>
       ))}
     </ul>

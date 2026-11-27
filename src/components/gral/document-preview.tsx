@@ -1,79 +1,87 @@
 "use client";
 
-// "Preview" for a stored document. The file is kept in the shared cache, so a
-// second preview is instant, and it starts loading when the pointer reaches the
-// button, so it is often ready by the click.
-
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useQueryClient } from "@tanstack/react-query";
 import { Download, Eye, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
-import { getDocumentContent } from "@/lib/api";
-import type { DocumentSubject, StoredDocument } from "@/lib/types";
-import { queryKeys } from "@/lib/query";
+import { downloadDocument, getDocumentContent } from "@/lib/api";
+import { trapTab } from "@/lib/focus-trap";
+import type { DocumentFile, DocumentSubject } from "@/lib/types";
 
-/** Files stay cached for the session; a stored version never changes. */
-const FILE_CACHE_MS = 15 * 60_000;
-
-export function DocumentPreviewButton({ subject, document: doc }: { subject: DocumentSubject; document: StoredDocument }) {
-  const queryClient = useQueryClient();
-  const [loading, setLoading] = useState(false);
+export function DocumentPreviewButton({ subject, document: doc, showDownload = false }: {
+  subject: DocumentSubject;
+  document: DocumentFile;
+  showDownload?: boolean;
+}) {
+  const [busy, setBusy] = useState<"preview" | "download" | null>(null);
   const [preview, setPreview] = useState<{ url: string; fileName: string; mediaType: string } | null>(null);
+  const request = useRef<AbortController | null>(null);
+  const opener = useRef<HTMLButtonElement>(null);
+  const dialog = useRef<HTMLDivElement>(null);
+  useEffect(() => () => request.current?.abort(), []);
 
-  const options = {
-    queryKey: queryKeys.document(subject.type, subject.id, doc.id, doc.version),
-    queryFn: () => getDocumentContent(subject, doc),
-    staleTime: Infinity,
-    gcTime: FILE_CACHE_MS,
-  };
-  const prefetch = () => void queryClient.prefetchQuery(options);
-
-  async function open() {
-    setLoading(true);
+  async function load(action: "preview" | "download") {
+    if (request.current) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setBusy(action);
     try {
-      const file = await queryClient.fetchQuery(options);
-      setPreview({ url: URL.createObjectURL(file), fileName: doc.originalFileName, mediaType: file.type || doc.mediaType });
+      if (action === "download") {
+        await downloadDocument(subject, doc, doc.version, controller.signal);
+      } else {
+        const { blob, fileName } = await getDocumentContent(subject, doc, controller.signal);
+        if (!controller.signal.aborted) setPreview({ url: URL.createObjectURL(blob), fileName, mediaType: blob.type || doc.mediaType || "" });
+      }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not preview the document.");
+      if (!controller.signal.aborted) toast.error(error instanceof Error ? error.message : "Could not open the document.");
     } finally {
-      setLoading(false);
+      request.current = null;
+      if (!controller.signal.aborted) setBusy(null);
     }
   }
 
   useEffect(() => {
     if (!preview) return;
     const { url } = preview;
+    const button = opener.current;
+    dialog.current?.focus({ preventScroll: true });
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPreview(null);
+      if (event.key === "Escape" && [...document.querySelectorAll('[aria-modal="true"]')].at(-1) === dialog.current) {
+        event.preventDefault();
+        setPreview(null);
+      }
+      trapTab(event, dialog.current);
     };
-    window.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown, true);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keydown", onKeyDown, true);
       URL.revokeObjectURL(url);
+      button?.focus({ preventScroll: true });
     };
   }, [preview]);
 
   return (
     <>
-      <button
-        type="button"
-        onClick={open}
-        onPointerEnter={prefetch}
-        onFocus={prefetch}
-        disabled={loading}
-        className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary underline underline-offset-2 disabled:no-underline disabled:opacity-70"
-      >
-        {loading ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />} {loading ? "Opening…" : "Preview"}
-      </button>
+      <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+        <button ref={opener} type="button" onClick={() => void load("preview")} disabled={!!busy} className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary underline underline-offset-2 disabled:no-underline disabled:opacity-70">
+          {busy === "preview" ? <Loader2 className="size-3.5 animate-spin" /> : <Eye className="size-3.5" />} {busy === "preview" ? "Opening…" : "Preview"}
+        </button>
+        {showDownload ? (
+          <button type="button" onClick={() => void load("download")} disabled={!!busy} className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary underline underline-offset-2 disabled:no-underline disabled:opacity-70">
+            {busy === "download" ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />} {busy === "download" ? "Downloading…" : "Download"}
+          </button>
+        ) : null}
+      </span>
       {preview
         ? createPortal(
             <div className="fixed inset-0 z-[70] flex items-center justify-center bg-foreground/50 p-3 sm:p-6" onClick={() => setPreview(null)}>
               <div
+                ref={dialog}
                 role="dialog"
+                tabIndex={-1}
                 aria-modal="true"
                 aria-label={`Preview ${preview.fileName}`}
-                className="flex max-h-[95dvh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-card shadow-2xl"
+                className="flex max-h-[95dvh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-card shadow-2xl outline-none"
                 onClick={(event) => event.stopPropagation()}
               >
                 <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
