@@ -43,6 +43,22 @@ beforeEach(() => {
 });
 
 describe("quote and insurer-response disclosures", () => {
+  it("submits the latest selected and compared quote revisions", async () => {
+    const run = vi.fn().mockResolvedValue(undefined);
+    const alternative = { ...quote, id: "quote-2", terms: { ...quote.terms, insurerId: "insurer-2" } };
+    render(panel({ ...quoting, quotes: [quote, { ...quote, version: 2 }, alternative, { ...alternative, version: 3 }] }, run, "RECOMMEND"));
+    expect(screen.getByRole("combobox", { name: "Quote to recommend" })).toHaveValue("quote-1:2");
+    expect(screen.queryByRole("checkbox", { name: /First Insurer/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: /Second Insurer.*revision 3/ }));
+    change("Comparison", "Compared two property quotes");
+    change("Why this quote", "Better coverage");
+    fireEvent.click(screen.getByRole("button", { name: "Attach the document" }));
+    fireEvent.click(screen.getByRole("button", { name: "Recommend a quote" }));
+    await waitFor(() => expect(run).toHaveBeenCalledWith(expect.objectContaining({ fields: expect.objectContaining({
+      quoteId: "quote-1", quoteVersion: 2, comparedQuotes: [{ quoteId: "quote-2", quoteVersion: 3 }],
+    }) })));
+  });
+
   it("keeps quotes and outstanding insurers visible while the next recommendation form is expanded", async () => {
     render(<TrackWorkspace detail={{ track: { ...quoting, quotes: [quote], invitations: [{ ...quoting.invitations[0], response: "QUOTED" }, quoting.invitations[1]] }, lead: null, history: [] }} onChanged={vi.fn()} />);
     expect(await screen.findByRole("button", { name: "Record another quote" })).toHaveAttribute("aria-expanded", "false");

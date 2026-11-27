@@ -15,9 +15,10 @@ import { KycBadge } from "@/components/gral/kyc-badge";
 import { Chip, Dot, Loader, NavyButton, NotRecorded, OutlineButton, Recorded, SegmentedTabs, TextLink } from "./ui";
 import { PolicyForm } from "./policy-form";
 import { DocumentPanel } from "./documents";
+import { RelatedDocuments } from "./related-documents";
 import { ContactsPanel, InteractionsPanel } from "./client-records";
 
-const TABS = ["KYC and compliance", "Policies", "Claims", "Contacts", "Interactions"] as const;
+const TABS = ["KYC and compliance", "Documents", "Policies", "Claims", "Contacts", "Interactions"] as const;
 export type ClientFileTab = (typeof TABS)[number];
 
 export function ClientFile({
@@ -181,6 +182,12 @@ export function ClientFile({
       <div className="px-5 py-7 sm:px-8">
         {/* Claims are only listed to people who can read them; others do not get an empty tab. */}
         <SegmentedTabs tabs={MOCK_AUTH || hasPermission(user, "CLAIM_READ") ? TABS : TABS.filter((t) => t !== "Claims")} value={tab} onChange={setTab} />
+
+        {tab === "Documents" ? (
+          <div className="mt-6">
+            <RelatedDocuments key={`${user.id}:${user.role}:${client.uuid ?? client.id}`} subjectType="CLIENT" subjectId={client.uuid ?? client.id} />
+          </div>
+        ) : null}
 
         {tab === "KYC and compliance" ? (
           seesDocumentDetail ? (

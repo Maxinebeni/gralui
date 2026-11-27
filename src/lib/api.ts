@@ -113,6 +113,7 @@ import type {
   ClientType,
   CommandHistory,
   DocumentClassification,
+  DocumentFile,
   DocumentSubject,
   EvidenceRef,
   InsurerSummary,
@@ -132,6 +133,7 @@ import type {
   PolicyTerms,
   PolicyTrack,
   Proof,
+  RelatedDocumentPage,
   PolicyFinancials,
   PolicyMovement,
   PolicyPeriod,
@@ -141,6 +143,7 @@ import type {
   Role,
   SessionUser,
   StoredDocument,
+  SubmittedApprovalDocument,
   TrackStatus,
   WorkTask,
 } from "./types";
@@ -1636,6 +1639,7 @@ type RenewalView = {
   ownerId?: string;
   state: string;
   version: number;
+  materialRevision?: number;
   expiryDate: string;
   milestones: RenewalMilestoneView[];
   quotes: RenewalQuoteView[];
@@ -1780,6 +1784,7 @@ function toRenewalCase(
     backend: {
       id: v.id,
       version: v.version,
+      materialRevision: v.materialRevision,
       state: v.state,
       availableActions: v.availableActions ?? [],
       blockers: v.blockers ?? [],
@@ -2607,7 +2612,7 @@ async function approvalSummary(ref: string, track: TrackDetail | null, renewal: 
   const recommended = renewal?.quotes.find((q) => q.recommended);
   if (recommended) return `Recommended renewal for ${ref}: ${recommended.insurer} at ${formatRwf(recommended.premium)}.`;
   const rec = track?.track.recommendation;
-  const quote = rec ? track?.track.quotes.find((q) => q.id === rec.quoteId) : undefined;
+  const quote = rec ? track?.track.quotes.find((q) => q.id === rec.quoteId && q.version === rec.quoteVersion) : undefined;
   if (quote) {
     const catalog = await loadCatalog().catch(() => null);
     const insurer = catalog?.insurers.find((i) => i.id === quote.terms.insurerId)?.name ?? "the recommended insurer";
@@ -2642,6 +2647,8 @@ async function toBackendApproval(h: BackendApprovalHistory, inInbox = false): Pr
     renewal = await getBackendRenewal(v.subjectId).catch(() => null);
     if (renewal) subject = { ref: `${renewal.client} · ${renewal.id}`, client: renewal.client, clientId: renewal.clientId };
   }
+  const submittedTrack = v.action.startsWith("RECOMMEND_") && onboardingTrack?.track.materialRevision === v.materialRevision ? onboardingTrack : null;
+  const submittedRenewal = renewal?.backend?.materialRevision === v.materialRevision || renewal?.backend?.approvalRequestId === v.id ? renewal : null;
   const steps: ApprovalStep[] = await Promise.all(
     [...h.steps]
       .sort((a, b) => a.number - b.number)
@@ -2670,11 +2677,18 @@ async function toBackendApproval(h: BackendApprovalHistory, inInbox = false): Pr
   );
   const requestedAt = kigaliDate(v.createdAt);
   const history = await Promise.all(
-    h.decisions.map(async (d) => ({
-      at: kigaliDate(d.occurredAt),
-      by: (await personName(d.actorId)) ?? roleName(h.steps.find((st) => st.number === d.step)?.requiredRole),
-      text: `${DECISION_PAST[d.outcome.toUpperCase()] ?? humanize(d.outcome)} step ${d.step}${d.comment ? `: ${d.comment}` : ""}`,
-    })),
+    h.decisions.map(async (d): Promise<ApprovalRequest["history"][number]> => {
+      const step = h.steps.find((st) => st.number === d.step);
+      const subjectType = v.subjectType;
+      return {
+        at: kigaliDate(d.occurredAt),
+        by: (await personName(d.actorId)) ?? roleName(step?.requiredRole),
+        text: `${DECISION_PAST[d.outcome.toUpperCase()] ?? humanize(d.outcome)} step ${d.step}${d.comment ? `: ${d.comment}` : ""}`,
+        documents: subjectType === "ONBOARDING" || subjectType === "RENEWAL" ? d.evidence?.map((file) => ({
+          ...file, subjectType, subjectId: v.subjectId, purpose: step?.evidencePurpose || "APPROVAL_EVIDENCE",
+        })) : undefined,
+      };
+    }),
   );
   const known = BACKEND_APPROVALS.get(v.id);
   return {
@@ -2690,15 +2704,16 @@ async function toBackendApproval(h: BackendApprovalHistory, inInbox = false): Pr
         : "KYC") as ApprovalRequest["subjectType"],
     subjectId: v.subjectId,
     subjectRef: subject.ref,
+    backend: true,
     subjectRevision: v.materialRevision,
     title: approvalTitle(v.action, v.subjectType),
     replaces: v.previousRequestId ?? undefined,
-    summary: await approvalSummary(subject.ref, onboardingTrack, renewal),
+    summary: await approvalSummary(subject.ref, submittedTrack, submittedRenewal),
     clientId: subject.clientId,
     client: subject.client,
-    amount: onboardingTrack?.track.recommendation?.annualCommissionRwf ?? renewal?.backend?.annualCommissionRwf,
+    amount: submittedTrack?.track.recommendation?.annualCommissionRwf ?? submittedRenewal?.backend?.annualCommissionRwf,
     amountLabel:
-      onboardingTrack?.track.recommendation || renewal?.backend?.annualCommissionRwf !== undefined ? "Annual commission" : undefined,
+      submittedTrack?.track.recommendation || submittedRenewal?.backend?.annualCommissionRwf !== undefined ? "Annual commission" : undefined,
     policyVersion: v.policyVersion !== undefined ? `Policy v${v.policyVersion}` : "Backend policy",
     requestedBy: (await personName(v.initiatedBy)) ?? "A colleague",
     requestedAt,
@@ -2803,6 +2818,18 @@ async function approvalHistory(id: string): Promise<BackendApprovalHistory> {
   const res = await apiFetch(`/api/v1/approvals/${id}/history?size=100`);
   if (!res.ok) throw new Error(await approvalProblem(res, "Could not load this approval request."));
   return (await res.json()) as BackendApprovalHistory;
+}
+
+export async function getApprovalSubmittedDocuments(id: string, signal: AbortSignal): Promise<SubmittedApprovalDocument[] | null> {
+  const res = await apiFetch(`/api/v1/approvals/${encodeURIComponent(id)}`, { signal });
+  if (!res.ok) throw new Error(await approvalProblem(res, "Could not load the submitted documents."));
+  const detail = (await res.json()) as { submittedDocuments?: SubmittedApprovalDocument[] | null };
+  return detail.submittedDocuments ?? null;
+}
+
+export async function getRetainedApproval(id: string): Promise<ApprovalRequest> {
+  if (MOCK_AUTH || !UUID_PATTERN.test(id)) throw new Error("This approval request could not be found.");
+  return toBackendApproval(await approvalHistory(id));
 }
 
 async function approvalProblem(res: Response, fallback: string): Promise<string> {
@@ -3353,6 +3380,24 @@ export async function listDocuments(subject: DocumentSubject): Promise<StoredDoc
   });
 }
 
+export async function listRelatedDocuments(
+  subject: DocumentSubject & { type: "LEAD" | "CLIENT" }, page: number, signal: AbortSignal,
+): Promise<RelatedDocumentPage> {
+  const size = 20;
+  if (!usesDocumentBackend(subject)) {
+    const local = LOCAL_DOCUMENTS.get(subjectKey(subject)) ?? [];
+    const items = local.slice(page * size, (page + 1) * size).map((doc) => ({
+      ...doc, sources: [{ subjectType: subject.type, subjectId: subject.id, purpose: doc.purpose }],
+    }));
+    return { items, page, size, totalItems: local.length, totalPages: Math.ceil(local.length / size) };
+  }
+  const params = new URLSearchParams({ subjectType: subject.type, subjectId: subject.id, page: String(page), size: String(size) });
+  const res = await apiFetch(`/api/v1/documents/related?${params}`, { signal });
+  if (res.status === 403) throw new Error("You do not have permission to view these documents.");
+  if (!res.ok) throw new Error(await documentError(res, "Could not load the documents."));
+  return (await res.json()) as RelatedDocumentPage;
+}
+
 type BackendDocumentVersion = {
   version: number;
   fileName: string;
@@ -3464,21 +3509,32 @@ export async function replaceDocument(subject: DocumentSubject, doc: StoredDocum
   };
 }
 
-/** Load an exact document version for inline preview or download. */
+function attachmentName(disposition: string | null): string | undefined {
+  const encoded = disposition?.match(/(?:^|;)\s*filename\*=UTF-8'[^']*'([^;]+)/i)?.[1];
+  if (encoded) {
+    try { return decodeURIComponent(encoded.trim()); } catch { /* Fall back to filename. */ }
+  }
+  return disposition?.match(/(?:^|;)\s*filename="((?:[^"\\]|\\.)*)"/i)?.[1]?.replace(/\\(.)/g, "$1")
+    ?? disposition?.match(/(?:^|;)\s*filename=([^;]+)/i)?.[1]?.trim();
+}
+
+/** Fetch an exact version with a fresh permission check. */
 export async function getDocumentContent(
   subject: DocumentSubject,
-  doc: StoredDocument,
-  version = doc.version,
-): Promise<Blob> {
+  doc: DocumentFile,
+  signal = new AbortController().signal,
+): Promise<{ blob: Blob; fileName: string }> {
+  const fallback = doc.originalFileName || "Document";
   if (!usesDocumentBackend(subject)) {
-    const blob = LOCAL_FILES.get(`${doc.id}:${version}`);
+    const blob = LOCAL_FILES.get(`${doc.id}:${doc.version}`);
     if (!blob) throw new Error("This is a sample record; there is no file to download.");
-    return blob;
+    return { blob, fileName: fallback };
   }
   const params = new URLSearchParams({ subjectType: subject.type, subjectId: subject.id, purpose: doc.purpose });
-  const res = await apiFetch(`/api/v1/documents/${doc.id}/versions/${version}/content?${params}`);
+  const res = await apiFetch(`/api/v1/documents/${encodeURIComponent(doc.id)}/versions/${doc.version}/content?${params}`, { signal });
+  if (res.status === 403) throw new Error("You do not have permission to open this file.");
   if (!res.ok) throw new Error(await documentError(res, "Could not load the file."));
-  return res.blob();
+  return { blob: await res.blob(), fileName: attachmentName(res.headers.get("Content-Disposition")) || fallback };
 }
 
 /** Open a document attached as evidence to a workflow step, in a new tab. */
@@ -3503,15 +3559,17 @@ export async function openEvidenceDocument(subject: DocumentSubject, documentId:
 /** Download an exact version of a document. */
 export async function downloadDocument(
   subject: DocumentSubject,
-  doc: StoredDocument,
+  doc: DocumentFile & { previous?: StoredDocument["previous"] },
   version = doc.version,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const name = version === doc.version ? doc.originalFileName : doc.previous.find((p) => p.version === version)?.originalFileName ?? doc.originalFileName;
-  const blob = await getDocumentContent(subject, doc, version);
+  const name = version === doc.version ? doc.originalFileName : doc.previous?.find((p) => p.version === version)?.originalFileName ?? doc.originalFileName;
+  const { blob, fileName } = await getDocumentContent(subject, { ...doc, version, originalFileName: name }, signal);
+  signal?.throwIfAborted();
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = name;
+  link.download = fileName;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
@@ -3881,6 +3939,8 @@ const ONBOARDING_MESSAGES: Record<string, string> = {
   QUOTE_REQUIRED: "Choose a quote to recommend.",
   INSURER_LICENSE_REQUIRED: "Record a current licence check for this insurer first (“Record an insurer licence check”).",
   RECOMMENDATION_REQUIRED: "Recommend a quote first.",
+  COMPARISON_QUOTES_REQUIRED: "Under Other actions, revise the recommendation. Record the quotes used in the comparison, then send it for approval again.",
+  STALE_QUOTE_VERSION: "A quote has a newer version. Refresh the record, then review and select the current quotes.",
   APPROVAL_ALREADY_REQUESTED: "Approval was already requested.",
   PLACEMENT_ALREADY_INSTRUCTED: "The insurer was already instructed, so the recommendation can no longer be revised.",
   ACCEPTANCE_ALREADY_RECORDED: "The written acceptance is already recorded.",

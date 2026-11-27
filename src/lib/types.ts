@@ -209,6 +209,7 @@ export type RenewalCase = {
 export type BackendRenewal = {
   id: string;
   version: number;
+  materialRevision?: number;
   state: string;
   /** Actions the server allows the signed-in user right now, e.g. VISIT_RECORD. */
   availableActions: string[];
@@ -383,6 +384,7 @@ export type EvidenceRef = { name: string; documentId?: string; version?: number 
  
 export type ApprovalRequest = {
   action?: string;
+  backend?: boolean;
   /** The returned request this one was resubmitted in place of. */
   replaces?: string;
   currentStepNumber?: number;
@@ -413,7 +415,7 @@ export type ApprovalRequest = {
   evidence: EvidenceRef[];
   /** Changes when the request changes; sent back with each decision. */
   version: number;
-  history: ClaimEvent[];
+  history: (ClaimEvent & { documents?: (DocumentSource & { documentId: string; version: number })[] })[];
 };
  
 /* --------------------------------- My Work ----------------------------------- */
@@ -535,6 +537,27 @@ export type DocumentSubject = {
   /** Backend UUID when the record comes from the backend, otherwise its reference. */
   id: string;
 };
+
+export type DocumentSource = { subjectType: DocumentSubject["type"]; subjectId: string; purpose: string };
+
+export type RelatedDocument = Omit<StoredDocument, "purpose" | "previous"> & { sources: DocumentSource[] };
+
+export type RelatedDocumentPage = {
+  items: RelatedDocument[];
+  page: number;
+  size: number;
+  totalItems: number;
+  totalPages: number;
+};
+
+export type SubmittedApprovalDocument = DocumentSource & {
+  documentId: string;
+  version: number;
+  kind: "SELECTED_QUOTE" | "COMPARED_QUOTE" | "COMPARISON_REPORT" | "SINGLE_SOURCE_JUSTIFICATION";
+};
+
+export type DocumentFile = Pick<StoredDocument, "id" | "version" | "purpose"> &
+  Partial<Pick<StoredDocument, "originalFileName" | "mediaType">>;
  
 export type StoredDocument = {
   id: string;

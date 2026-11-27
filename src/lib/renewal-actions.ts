@@ -9,6 +9,7 @@
 // specialist assignment, loss details and recovery plans).
 
 import type { EvidenceInput, RenewalActionInput } from "./api";
+import { comparedQuoteReferences, latestQuoteRevisions, quoteRevisionKey } from "./quote-revisions";
 import { RENEWAL_MILESTONES, formatDate } from "./renewals";
 import type { DocumentClassification, RenewalCase, RenewalMilestoneCode } from "./types";
 
@@ -23,6 +24,7 @@ export type FieldKind =
   | "insurers"
   | "product"
   | "quote"
+  | "comparedQuotes"
   | "owner"
   | "assignee"
   | "milestone"
@@ -253,6 +255,7 @@ export const RENEWAL_ACTIONS: RenewalActionSpec[] = [
     help: "Compare the quotes and recommend one, with the comparison matrix.",
     fields: [
       { key: "quoteId", label: "Recommended quote", kind: "quote", required: true },
+      { key: "comparedQuotes", label: "Quotes used in the comparison", kind: "comparedQuotes" },
       { key: "comparison", label: "Comparison", kind: "textarea", required: true },
       { key: "rationale", label: "Why this quote", kind: "textarea", required: true },
       {
@@ -274,11 +277,14 @@ export const RENEWAL_ACTIONS: RenewalActionSpec[] = [
     classification: "CORRESPONDENCE",
     body: (h, r, c) => {
       const p = h.proof("file");
-      const quoteId = r.text("quoteId");
+      const quotes = latestQuoteRevisions(c.backend?.quotes ?? []);
+      const quote = quotes.find((item) => quoteRevisionKey(item) === r.text("quoteId"));
+      if (!quote) throw new Error("Choose a current quote to recommend.");
       return {
         command: h.command(),
-        quoteId,
-        quoteVersion: c.backend?.quotes.find((q) => q.id === quoteId)?.version,
+        quoteId: quote.id,
+        quoteVersion: quote.version,
+        comparedQuotes: comparedQuoteReferences(quotes, quote, r.list("comparedQuotes")),
         comparison: r.text("comparison"),
         rationale: r.text("rationale"),
         annualCommissionRwf: r.number("annualCommissionRwf"),
@@ -543,6 +549,15 @@ export function checkRenewalValues(spec: RenewalActionSpec, values: Values, rene
       const n = Number(String(v).replace(/[,\s]/g, ""));
       if (!Number.isFinite(n) || n < 0) errors[f.key] = "Numbers only.";
       else if (f.kind === "percent" && n > 100) errors[f.key] = "Enter a percentage up to 100.";
+    }
+  }
+  if (spec.key === "recommend" && renewal && !errors.quoteId) {
+    const quotes = latestQuoteRevisions(renewal.backend?.quotes ?? []);
+    const selected = quotes.find((quote) => quoteRevisionKey(quote) === values.quoteId);
+    const alternatives = Array.isArray(values.comparedQuotes) ? values.comparedQuotes : [];
+    if (!selected) errors.quoteId = "Choose a current quote to recommend.";
+    else if (alternatives.some((key) => !quotes.some((quote) => quote.id !== selected.id && quoteRevisionKey(quote) === key))) {
+      errors.comparedQuotes = "A comparison quote has changed. Review and select the current quotes.";
     }
   }
   const money = ["netPremium", "amountPaid", "commissionRate"];

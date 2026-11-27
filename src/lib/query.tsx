@@ -25,8 +25,6 @@ export const queryKeys = {
   approvals: (role: string) => ["approvals", role] as const,
   tasks: (role: string) => ["tasks", role] as const,
   inbox: (userId: string) => ["inbox", userId] as const,
-  document: (subjectType: string, subjectId: string, documentId: string, version: number) =>
-    ["document", subjectType, subjectId, documentId, version] as const,
 };
 
 export function QueryProvider({ children }: { children: ReactNode }) {

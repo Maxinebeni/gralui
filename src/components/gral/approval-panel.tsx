@@ -9,16 +9,17 @@ import { Check, FileText, Paperclip, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
-import { addApprovalEvidence, decideApproval, resubmitApproval, uploadDocument, getTrack } from "@/lib/api";
+import { addApprovalEvidence, decideApproval, getApprovalSubmittedDocuments, resubmitApproval, uploadDocument, getTrack } from "@/lib/api";
 import { BoardApprovalForm, isBoardStep } from "./board-approval-form";
 import { SUBJECT_LABEL, approvalRoleName, approveBlocker, canDecide, currentStep, statusLabel, statusTone } from "@/lib/approvals";
 import { useCurrentUser } from "@/lib/auth-context";
 import { recordHref } from "@/lib/links";
 import { canAccessPath } from "@/lib/permissions";
 import { formatDate } from "@/lib/renewals";
-import type { ApprovalDecision, ApprovalRequest, ApprovalStep, PolicyTrack } from "@/lib/types";
+import type { ApprovalDecision, ApprovalRequest, ApprovalStep, PolicyTrack, SubmittedApprovalDocument } from "@/lib/types";
+import { DocumentPreviewButton } from "./document-preview";
 import { FilePickButton } from "./documents";
-import { Chip, Dot, NavyButton, SegmentedTabs } from "./ui";
+import { Chip, Dot, Loader, NavyButton, OutlineButton, SegmentedTabs } from "./ui";
 
 const INPUT =
   "w-full rounded-xl border border-input bg-card px-3 py-2 text-xs outline-none focus:border-sky focus:ring-2 focus:ring-sky/30";
@@ -29,17 +30,20 @@ export function ApprovalPanel({
   request: r,
   onClose,
   onChanged,
+  readOnly = false,
 }: {
   request: ApprovalRequest;
   onClose: () => void;
   onChanged: () => void;
+  readOnly?: boolean;
 }) {
   const { user } = useCurrentUser();
-  const decides = canDecide(r, user.role);
+  const decides = !readOnly && canDecide(r, user.role);
   const isClaim = r.subjectType === "CLAIM_SETTLEMENT";
   const open = r.status === "PENDING";
   const step = currentStep(r);
-  const board = isBoardStep(r);
+  const board = !readOnly && isBoardStep(r);
+  const hasDecisionDocuments = r.history.some((event) => event.documents?.length);
   const [track, setTrack] = useState<PolicyTrack | null>(null);
   const [trackError, setTrackError] = useState<string | null>(null);
   useEffect(() => {
@@ -122,12 +126,14 @@ export function ApprovalPanel({
           </p>
         </section>
 
-        <section>
+        {r.backend ? <SubmittedDocuments key={`${user.id}:${user.role}:${r.id}:${r.version}`} requestId={r.id} /> : null}
+
+        {open || !hasDecisionDocuments ? <section>
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-              Evidence{r.evidenceRequired ? " (required)" : ""}
+              Decision evidence{r.evidenceRequired ? " (required)" : ""}
             </h3>
-            {open && !isClaim && !board ? (
+            {open && !isClaim && !board && !readOnly ? (
               <FilePickButton onFile={attach} destination={`Approval evidence · ${r.subjectRef}`}>
                 <Paperclip className="size-3.5" /> Attach
               </FilePickButton>
@@ -147,7 +153,7 @@ export function ApprovalPanel({
               ))
             )}
           </div>
-        </section>
+        </section> : null}
 
         {board && user.role === "MD" ? trackError ? <p role="alert" className="text-xs text-danger">{trackError}</p> : track && !track.boardApproval ? <BoardApprovalForm track={track} onChanged={onChanged} /> : !track ? <p className="text-xs text-muted-foreground">Loading Board recording…</p> : null : null}
         {decides ? (
@@ -158,7 +164,7 @@ export function ApprovalPanel({
           </p>
         ) : null}
 
-        {r.status === "RETURNED" && !isClaim ? <ResubmitForm request={r} userName={user.name} onChanged={onChanged} /> : null}
+        {r.status === "RETURNED" && !isClaim && !readOnly ? <ResubmitForm request={r} userName={user.name} onChanged={onChanged} /> : null}
 
         <section>
           <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">History</h3>
@@ -171,6 +177,13 @@ export function ApprovalPanel({
                   <p className="text-[11px] text-subtle">
                     {formatDate(e.at)}{e.by ? ` · ${e.by}` : ""}
                   </p>
+                  {e.documents?.map((file) => (
+                    <div key={`${file.documentId}:${file.version}:${file.purpose}`} className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                      <span className="text-muted-foreground">Decision evidence · version {file.version}</span>
+                      <DocumentPreviewButton subject={{ type: file.subjectType, id: file.subjectId }}
+                        document={{ id: file.documentId, version: file.version, purpose: file.purpose, originalFileName: "Decision evidence" }} showDownload />
+                    </div>
+                  ))}
                 </div>
               </li>
             ))}
@@ -178,6 +191,58 @@ export function ApprovalPanel({
         </section>
       </div>
     </div>
+  );
+}
+
+const SUBMITTED_LABELS: Record<SubmittedApprovalDocument["kind"], string> = {
+  SELECTED_QUOTE: "Selected quote",
+  COMPARED_QUOTE: "Compared quote",
+  COMPARISON_REPORT: "Comparison and recommendation report",
+  SINGLE_SOURCE_JUSTIFICATION: "Single-source justification",
+};
+
+function SubmittedDocuments({ requestId }: { requestId: string }) {
+  const [files, setFiles] = useState<SubmittedApprovalDocument[] | null | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    getApprovalSubmittedDocuments(requestId, controller.signal).then((loaded) => {
+      if (!controller.signal.aborted) setFiles(loaded);
+    }).catch((failure: unknown) => {
+      if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : "Could not load the submitted documents.");
+    });
+    return () => controller.abort();
+  }, [requestId, retry]);
+
+  return (
+    <section className="space-y-2">
+      <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">Submitted documents</h3>
+      {error ? (
+        <>
+          <p role="alert" className="text-xs text-danger">{error}</p>
+          <OutlineButton onClick={() => { setError(null); setRetry((value) => value + 1); }}>Try again</OutlineButton>
+        </>
+      ) : files === undefined ? <Loader label="Loading submitted documents" /> : files === null ? (
+        <p className="text-xs text-muted-foreground">Submitted documents unavailable</p>
+      ) : files.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No documents were submitted with this request.</p>
+      ) : (
+        <ul className="space-y-2">
+          {files.map((file) => (
+            <li key={`${file.kind}:${file.documentId}:${file.version}:${file.subjectType}:${file.subjectId}:${file.purpose}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border px-3 py-2">
+              <div className="flex items-center gap-2 text-xs">
+                <FileText className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                <span>{SUBMITTED_LABELS[file.kind]}</span>
+                <span className="text-muted-foreground">Version {file.version}</span>
+              </div>
+              <DocumentPreviewButton subject={{ type: file.subjectType, id: file.subjectId }}
+                document={{ id: file.documentId, version: file.version, purpose: file.purpose, originalFileName: SUBMITTED_LABELS[file.kind] }} showDownload />
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

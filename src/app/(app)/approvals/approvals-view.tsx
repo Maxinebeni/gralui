@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AlarmClock, CheckCircle2, CornerUpLeft, Inbox } from "lucide-react";
 import { PageHeader, SlideOver } from "@/components/gral/shell";
@@ -8,11 +9,12 @@ import { FilterMenu } from "@/components/gral/filter-menu";
 import { DATE_RANGE_OPTIONS, withinRange, type DateRange } from "@/lib/date-range";
 import { ApprovalPanel } from "@/components/gral/approval-panel";
 import { Td, Th } from "@/components/gral/claim-list";
-import { CardHeader, Chip, FloatCard, SegmentedTabs, StatTile, TextLink } from "@/components/gral/ui";
+import { CardHeader, Chip, FloatCard, Loader, OutlineButton, SegmentedTabs, StatTile, TextLink } from "@/components/gral/ui";
 import { usePaged } from "@/components/gral/pager";
 import { cn } from "@/lib/utils";
 import { useApprovals, useRefresh } from "@/lib/queries";
 import { SUBJECT_LABEL, canDecide, statusLabel, statusTone } from "@/lib/approvals";
+import { getRetainedApproval } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { approvalPermissions } from "@/lib/permissions";
 import { formatDate, todayIso } from "@/lib/renewals";
@@ -33,7 +35,7 @@ export function ApprovalsView() {
   // Date requested filter; applies to every tab and the counts.
   const [range, setRange] = useState<DateRange>("all");
   // Shared with the bell, so opening this page after the bell loaded is instant.
-  const { data: requests = [] } = useApprovals(user.role);
+  const { data: requests = [], isPending: loadingList } = useApprovals(user.role);
   const refresh = useRefresh();
   const reload = () => refresh("approvals", "leads", "clients");
 
@@ -69,7 +71,15 @@ export function ApprovalsView() {
   const { items: pageRows, pager } = usePaged(rows, { resetKey: tab });
 
   const openId = searchParams.get("request");
-  const open = requests.find((r) => r.id === openId) ?? null;
+  const listed = requests.find((r) => r.id === openId);
+  const retained = useQuery({
+    queryKey: ["approvals", "retained", user.id, user.role, openId],
+    queryFn: () => getRetainedApproval(openId!),
+    enabled: !!openId && !listed && !loadingList,
+    retry: false,
+    gcTime: 0,
+  });
+  const open = listed ?? retained.data;
   const setOpen = (r: ApprovalRequest | null) => {
     const params = new URLSearchParams(searchParams.toString());
     if (r) params.set("request", r.id);
@@ -162,8 +172,13 @@ export function ApprovalsView() {
         {pager}
       </FloatCard>
 
-      <SlideOver open={!!open} onClose={() => setOpen(null)}>
-        {open ? <ApprovalPanel key={open.id} request={open} onClose={() => setOpen(null)} onChanged={reload} /> : null}
+      <SlideOver open={!!openId} onClose={() => setOpen(null)}>
+        {open ? <ApprovalPanel key={open.id} request={open} onClose={() => setOpen(null)} onChanged={reload} readOnly={!listed} /> : openId ? (
+          <div className="space-y-3 p-5">
+            {retained.isError ? <p role="alert" className="text-xs text-danger">{retained.error.message}</p> : <Loader label="Loading approval" />}
+            <OutlineButton onClick={() => setOpen(null)}>Close</OutlineButton>
+          </div>
+        ) : null}
       </SlideOver>
     </>
   );

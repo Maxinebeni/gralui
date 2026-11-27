@@ -13,6 +13,7 @@ import { CommandAttempt } from "@/lib/command-attempt";
 import { formatRwf } from "@/lib/format";
 import { ACTION_LABEL, KYC_STATUS_LABEL, TIER_LABEL, commissionTier } from "@/lib/onboarding";
 import { onboardingPermissions } from "@/lib/permissions";
+import { comparedQuoteReferences, latestQuoteRevisions, quoteRevisionKey } from "@/lib/quote-revisions";
 import { todayIso } from "@/lib/renewals";
 import type { PolicyTerms, PolicyTrack } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -22,6 +23,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AmountInput } from "./amount-input";
 import { BoardApprovalForm } from "./board-approval-form";
 import { inputClass } from "./client-form";
+import { ComparedQuotes } from "./compared-quotes";
+import { DocumentPreviewButton } from "./document-preview";
 import {
   ActionForm,
   ActionDisclosure,
@@ -76,6 +79,7 @@ type StageState = "done" | "current" | "late" | "upcoming";
 
 /** What has been recorded for a step so far. */
 export function StageRecord({ track: t, n, insurerName }: { track: PolicyTrack; n: number; insurerName: (id: string) => string }) {
+  const subject = { type: "ONBOARDING", id: t.id } as const;
   const proofs = (purposes: string[]) => t.evidence.filter((e) => purposes.includes(e.purpose));
   const block = (children: ReactNode) => <div className="space-y-2 rounded-xl bg-secondary/60 px-4 py-3 text-xs">{children}</div>;
 
@@ -100,15 +104,15 @@ export function StageRecord({ track: t, n, insurerName }: { track: PolicyTrack; 
                 Grade: <span className="font-medium">{t.riskGrade === "NOT_APPLICABLE" ? "Not applicable" : t.riskGrade}</span>
               </p>
               {t.surveyFindings ? <p className="text-muted-foreground">{t.surveyFindings}</p> : null}
-              <ProofList items={proofs(["RISK_SURVEY"])} labels={PROOF_LABELS} />
+              <ProofList items={proofs(["RISK_SURVEY"])} labels={PROOF_LABELS} subject={subject} />
             </>,
           )
         : null;
     case 5:
-      return t.programTerms ? block(<><p>{t.programTerms}</p><ProofList items={proofs(["PROGRAM"])} labels={PROOF_LABELS} /></>) : null;
+      return t.programTerms ? block(<><p>{t.programTerms}</p><ProofList items={proofs(["PROGRAM"])} labels={PROOF_LABELS} subject={subject} /></>) : null;
     case 6:
     case 7:
-      return t.invitations.length || t.quotes.length ? (
+      return t.invitations.length || t.quotes.length || proofs(["SINGLE_SOURCE"]).length ? (
         <div className="space-y-3">
           {t.invitations.length ? (
             <div>
@@ -131,11 +135,9 @@ export function StageRecord({ track: t, n, insurerName }: { track: PolicyTrack; 
                   </li>
                 ))}
               </ul>
-              <div className="mt-2">
-                <ProofList items={proofs(["RFQ", "SINGLE_SOURCE"])} labels={PROOF_LABELS} />
-              </div>
             </div>
           ) : null}
+          <ProofList items={proofs(["RFQ", "SINGLE_SOURCE"])} labels={PROOF_LABELS} subject={subject} />
           {t.quotes.length ? <QuoteTable track={t} insurerName={insurerName} /> : null}
           {t.recommendation ? <RecommendationBox track={t} insurerName={insurerName} /> : null}
         </div>
@@ -153,15 +155,15 @@ export function StageRecord({ track: t, n, insurerName }: { track: PolicyTrack; 
             </p>
           ) : null}
           {t.boardApproval ? <p className="text-xs">Board approval recorded on {dateOf(t.boardApproval.recordedAt)} (decided {dateOf(t.boardApproval.decisionAt)}).</p> : null}
-          <ProofList items={proofs(["RECOMMENDATION", "BOARD_APPROVAL"])} labels={PROOF_LABELS} />
+          <ProofList items={proofs(["RECOMMENDATION", "BOARD_APPROVAL"])} labels={PROOF_LABELS} subject={subject} />
         </div>
       ) : null;
     case 9:
-      return proofs(["CLIENT_PRESENTATION", "CLIENT_ACCEPTANCE", "PROPERTY_ASSET_LIST"]).length ? block(<ProofList items={proofs(["CLIENT_PRESENTATION", "CLIENT_ACCEPTANCE", "PROPERTY_ASSET_LIST"])} labels={PROOF_LABELS} />) : null;
+      return proofs(["CLIENT_PRESENTATION", "CLIENT_ACCEPTANCE", "PROPERTY_ASSET_LIST"]).length ? block(<ProofList items={proofs(["CLIENT_PRESENTATION", "CLIENT_ACCEPTANCE", "PROPERTY_ASSET_LIST"])} labels={PROOF_LABELS} subject={subject} />) : null;
     case 10:
       return proofs(["PLACEMENT", "PLACEMENT_CONFIRMATION", "SCHEDULE", "POLICY_TECHNICAL_APPROVAL"]).length || t.observedSchedule ? (
         <div className="space-y-2">
-          {block(<ProofList items={proofs(["PLACEMENT", "PLACEMENT_CONFIRMATION", "SCHEDULE", "POLICY_TECHNICAL_APPROVAL"])} labels={PROOF_LABELS} subject={{ type: "ONBOARDING", id: t.id }} />)}
+          {block(<ProofList items={proofs(["PLACEMENT", "PLACEMENT_CONFIRMATION", "SCHEDULE", "POLICY_TECHNICAL_APPROVAL"])} labels={PROOF_LABELS} subject={subject} />)}
           {t.observedSchedule ? <TermsSummary title="Terms on the insurer's schedule" terms={t.observedSchedule} insurerName={insurerName} /> : null}
           {t.discrepancies.length ? (
             <ul className="rounded-xl bg-danger-soft/40 px-3.5 py-2.5 text-xs">
@@ -173,7 +175,7 @@ export function StageRecord({ track: t, n, insurerName }: { track: PolicyTrack; 
         </div>
       ) : null;
     case 11:
-      return proofs(["WELCOME_LETTER", "POLICY_DELIVERY", "FILE_CHECKLIST"]).length ? block(<ProofList items={proofs(["WELCOME_LETTER", "POLICY_DELIVERY", "FILE_CHECKLIST"])} labels={PROOF_LABELS} />) : null;
+      return proofs(["WELCOME_LETTER", "POLICY_DELIVERY", "FILE_CHECKLIST"]).length ? block(<ProofList items={proofs(["WELCOME_LETTER", "POLICY_DELIVERY", "FILE_CHECKLIST"])} labels={PROOF_LABELS} subject={subject} />) : null;
     default:
       return null;
   }
@@ -184,8 +186,9 @@ function QuoteTable({ track: t, insurerName }: { track: PolicyTrack; insurerName
     <div>
       <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Quotes</p>
       <ul className="mt-2 space-y-1.5">
-        {t.quotes.map((q) => (
-          <li key={q.id} className={cn("rounded-xl border px-3 py-2 text-xs", t.recommendation?.quoteId === q.id ? "border-sky/40 bg-pale" : "border-border")}>
+        {t.quotes.map((q) => {
+          const recommended = t.recommendation?.quoteId === q.id && t.recommendation.quoteVersion === q.version;
+          return <li key={quoteRevisionKey(q)} className={cn("rounded-xl border px-3 py-2 text-xs", recommended ? "border-sky/40 bg-pale" : "border-border")}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-medium">{insurerName(q.terms.insurerId)}</span>
               <span className="font-semibold tabular-nums">{formatRwf(q.terms.totalPremium)}</span>
@@ -193,9 +196,14 @@ function QuoteTable({ track: t, insurerName }: { track: PolicyTrack; insurerName
             <p className="mt-0.5 text-muted-foreground">
               Net {formatRwf(q.terms.netPremium)} · commission {+(q.terms.commissionRate * 100).toFixed(2)}% · {q.terms.sumsInsured} · deductible {q.terms.deductibles}
             </p>
-            {t.recommendation?.quoteId === q.id ? <p className="mt-1 font-medium text-primary">Recommended</p> : null}
-          </li>
-        ))}
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <span className="text-muted-foreground">Quote revision {q.version}</span>
+              {recommended ? <span className="font-medium text-primary">Recommended</span> : null}
+              {q.documentId && q.documentVersion ? <DocumentPreviewButton subject={{ type: "ONBOARDING", id: t.id }}
+                document={{ id: q.documentId, version: q.documentVersion, purpose: "QUOTE", originalFileName: q.insurerReference }} /> : null}
+            </div>
+          </li>;
+        })}
       </ul>
     </div>
   );
@@ -203,7 +211,7 @@ function QuoteTable({ track: t, insurerName }: { track: PolicyTrack; insurerName
 
 function RecommendationBox({ track: t, insurerName }: { track: PolicyTrack; insurerName: (id: string) => string }) {
   const r = t.recommendation!;
-  const q = t.quotes.find((x) => x.id === r.quoteId);
+  const q = t.quotes.find((x) => x.id === r.quoteId && x.version === r.quoteVersion);
   return (
     <div className="space-y-1 rounded-xl border border-sky/40 bg-pale px-3.5 py-3 text-xs">
       <p className="font-medium">
@@ -589,8 +597,11 @@ function RecommendForm({ title, track: t, insurerName, run: execute, destination
   const [attempt] = useState(() => new CommandAttempt());
   const run: TrackRun = (input) => execute({ ...input, attempt: input.attempt ?? attempt });
 
-  const [quoteId, setQuoteId] = useState(t.quotes[0]?.id ?? "");
-  const quote = t.quotes.find((q) => q.id === quoteId);
+  const quotes = latestQuoteRevisions(t.quotes);
+  const [selected, setSelected] = useState(() => quotes[0] ? quoteRevisionKey(quotes[0]) : "");
+  const [alternatives, setAlternatives] = useState<string[]>([]);
+  const quote = quotes.find((q) => quoteRevisionKey(q) === selected);
+  const quoteLabel = (q: (typeof quotes)[number]) => `${insurerName(q.terms.insurerId)} · ${formatRwf(q.terms.totalPremium)} · revision ${q.version}`;
   const suggested = quote ? Math.round(quote.terms.netPremium * quote.terms.commissionRate) : 0;
   const [commission, setCommission] = useState(suggested ? suggested.toLocaleString("en-US") : "");
   const [basis, setBasis] = useState("");
@@ -602,7 +613,7 @@ function RecommendForm({ title, track: t, insurerName, run: execute, destination
       setCommission(suggested.toLocaleString("en-US"));
       setBasis(`${+(quote.terms.commissionRate * 100).toFixed(2)}% of the net premium ${formatRwf(quote.terms.netPremium)}`);
     }
-  }, [quoteId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
   const amount = parseAmount(commission);
   const tier = amount > 0 ? commissionTier(amount) : null;
   return (
@@ -617,12 +628,17 @@ function RecommendForm({ title, track: t, insurerName, run: execute, destination
         if (!comparison.trim() || !rationale.trim()) throw new Error("Write the comparison and the reason for the choice.");
         return run({
           action: "RECOMMEND",
-          fields: { quoteId: quote.id, quoteVersion: quote.version, annualCommissionRwf: amount, commissionBasis: basis.trim(), comparison: comparison.trim(), rationale: rationale.trim() },
+          fields: { quoteId: quote.id, quoteVersion: quote.version, comparedQuotes: comparedQuoteReferences(quotes, quote, alternatives), annualCommissionRwf: amount, commissionBasis: basis.trim(), comparison: comparison.trim(), rationale: rationale.trim() },
           evidence: evidence ? { main: evidence } : undefined,
         });
       }}
     >
-      <SelectInput id="rc-quote" label="Quote to recommend" value={quoteId} onChange={setQuoteId} options={t.quotes.map((q) => ({ value: q.id, label: `${insurerName(q.terms.insurerId)} · ${formatRwf(q.terms.totalPremium)}` }))} wide />
+      <SelectInput id="rc-quote" label="Quote to recommend" value={quote ? selected : ""} onChange={(value) => {
+        setSelected(value);
+        setAlternatives((current) => current.filter((key) => key !== value));
+      }} options={[{ value: "", label: "Choose a quote" }, ...quotes.map((q) => ({ value: quoteRevisionKey(q), label: quoteLabel(q) }))]} wide />
+      <ComparedQuotes options={quotes.filter((q) => q.id !== quote?.id).map((q) => ({ id: quoteRevisionKey(q), name: quoteLabel(q) }))}
+        selected={alternatives} onChange={setAlternatives} hint="Include an alternative from another insurer unless a single-source exception applies." />
       <div>
         <Label htmlFor="rc-comm">Expected annual commission (RWF)</Label>
         <AmountInput id="rc-comm" value={commission} onChange={setCommission} className={inputClass()} />
@@ -646,7 +662,7 @@ function ScheduleForm({ title, track: t, options, run: execute, leadName, destin
   const [attempt] = useState(() => new CommandAttempt());
   const run: TrackRun = (input) => execute({ ...input, attempt: input.attempt ?? attempt });
 
-  const accepted = t.quotes.find((q) => q.id === t.recommendation?.quoteId)?.terms;
+  const accepted = t.quotes.find((q) => q.id === t.recommendation?.quoteId && q.version === t.recommendation.quoteVersion)?.terms;
   const [draft, setDraft] = useState<TermsDraft>(draftFrom(t.observedSchedule ?? accepted, leadName));
   const [policyNumber, setPolicyNumber] = useState("");
   const [discrepancies, setDiscrepancies] = useState(t.discrepancies.join("\n"));
