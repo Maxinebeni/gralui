@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Check, Flag, Mail, MapPin, Pencil, Phone, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { formatRwf } from "@/lib/format";
+import { displayToIso, formatRwf } from "@/lib/format";
 import { MOCK_AUTH, getClientKyc, listClientClaims, listClientPolicies } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-context";
 import { canAccessPath, clientEditPermissions, clientPermissions, documentPermissions, hasPermission } from "@/lib/permissions";
@@ -299,7 +299,7 @@ export function ClientFile({
                       </tr>
                     </thead>
                     <tbody>
-                      {policies.map((p) => (
+                      {newestFirst(policies).map((p) => (
                         <tr key={p.uuid ?? p.id}>
                           <td className="border-b border-border px-3 py-3 text-sm font-medium">
                             <Link
@@ -441,4 +441,9 @@ function KycReviewFiles({ clientId }: { clientId: string }) {
       ))}
     </div>
   );
+}
+
+/** Newest policy first, by the date its cover starts. */
+function newestFirst(policies: Policy[]) {
+  return [...policies].sort((a, b) => (displayToIso(b.start) ?? "").localeCompare(displayToIso(a.start) ?? "") || b.id.localeCompare(a.id, undefined, { numeric: true }));
 }

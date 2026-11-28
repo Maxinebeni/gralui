@@ -103,7 +103,8 @@ export function LeadsView({ full = false }: { full?: boolean }) {
             : tab === "Onboarded"
               ? journeys.filter((j) => j.step === null)
               : active;
-    return [...list].sort((a, b) => a.lead.receivedAt.localeCompare(b.lead.receivedAt));
+    // Newest lead first.
+    return [...list].sort((a, b) => b.lead.receivedAt.localeCompare(a.lead.receivedAt) || b.lead.id.localeCompare(a.lead.id, undefined, { numeric: true }));
   }, [tab, active, overdue, journeys]);
   const { items: pagedRows, pager } = usePaged(rows, { resetKey: tab });
   const shown = full ? pagedRows : rows.slice(0, PREVIEW);
