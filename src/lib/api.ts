@@ -1751,6 +1751,7 @@ function toRenewalCase(
         (m.dueDate && m.dueDate <= todayIso() ? m.dueDate : ""),
       completedBy: m.completedBy ? managerName(m.completedBy, managers) : "",
       note: `${def.name} recorded`,
+      skipped: ["SKIPPED", "WAIVED", "NOT_APPLICABLE"].includes(m.status.toUpperCase()) || undefined,
     });
   }
 
@@ -1766,6 +1767,8 @@ function toRenewalCase(
     expiryDate: v.expiryDate,
     owner: managerName(v.ownerId, managers),
     completed,
+    // Steps not reached yet that were marked not needed (proposed status NOT_NEEDED).
+    notNeeded: milestones.filter((m) => m.status.toUpperCase() === "NOT_NEEDED").map((m) => m.code),
     quotes: v.quotes.map((q) => ({
       id: q.id,
       insurer: insurerName(q.insurerId),
@@ -1956,12 +1959,80 @@ export async function completeRenewalMilestone(
   if (m.code === "APPROVAL") {
     throw new Error("Internal approval is recorded in the Approvals inbox. Use Request approval.");
   }
+  return saveRenewal(
+    skipAhead(
+      {
+        ...c,
+        completed: [
+          ...c.completed,
+          { code: m.code, completedAt: todayIso(), completedBy: input.completedBy, note: input.note, evidence: input.evidence },
+        ],
+      },
+      input.completedBy,
+      "Not needed for this renewal",
+    ),
+  );
+}
+
+/* ------------- Skipping renewal steps and restarting (Risk and Compliance Manager) ------------- */
+// Proposed to the backend team (docs/backend-requests-pilot.md):
+//   PUT  /api/v1/renewals/{id}/not-needed  { commandId, expectedVersion, reason, milestoneCodes: [server codes] }
+//   POST /api/v1/renewals/{id}/restart     { commandId, expectedVersion, reason }
+// A step marked not needed is recorded as SKIPPED when the renewal reaches it.
+
+const SERVER_RENEWAL_CODE = Object.fromEntries(Object.entries(RENEWAL_CODE).map(([server, screen]) => [screen, server])) as Record<RenewalMilestoneCode, string>;
+
+/** Steps that can be marked not needed: every step but the last, which records the next policy period. */
+export const SKIPPABLE_MILESTONES = RENEWAL_MILESTONES.filter((m) => m.code !== "COMPLETION").map((m) => m.code);
+
+/** Moves past the steps marked not needed, recording each as skipped. */
+function skipAhead(c: RenewalCase, by: string, reason: string): RenewalCase {
+  const completed = [...c.completed];
+  for (;;) {
+    const next = RENEWAL_MILESTONES[completed.length];
+    if (!next || !c.notNeeded?.includes(next.code)) break;
+    completed.push({ code: next.code, completedAt: todayIso(), completedBy: by, note: reason, skipped: true });
+  }
+  return { ...c, completed };
+}
+
+async function sendRenewalCompliance(c: RenewalCase, path: string, method: "PUT" | "POST", body: Record<string, unknown>, missing: string) {
+  const backend = c.backend!;
+  const res = await apiFetch(`/api/v1/renewals/${backend.id}/${path}`, { method, body: JSON.stringify(body) });
+  if (res.status === 404 || res.status === 405 || res.status === 501) throw new Error(missing);
+  if (!res.ok) throw new Error(await policyProblem(res, "Could not save this change to the renewal."));
+  RENEWAL_POLICIES.delete(backend.policyUuid);
+  return getBackendRenewal(backend.id);
+}
+
+/** Sets which of the steps not yet done are not needed for this renewal. */
+export async function setRenewalStepsNotNeeded(c: RenewalCase, codes: RenewalMilestoneCode[], reason: string, by: string): Promise<RenewalCase> {
+  const done = new Set(c.completed.map((x) => x.code));
+  const notNeeded = codes.filter((code) => SKIPPABLE_MILESTONES.includes(code) && !done.has(code));
+  if (c.backend) {
+    return sendRenewalCompliance(
+      c,
+      "not-needed",
+      "PUT",
+      { ...commandEnvelope(c.backend.version, reason.trim()), milestoneCodes: notNeeded.map((code) => SERVER_RENEWAL_CODE[code]) },
+      "Skipping steps is not on the live system yet.",
+    );
+  }
+  return saveRenewal(skipAhead({ ...findRenewal(c.id), notNeeded }, by, reason.trim()));
+}
+
+/** Starts the renewal again from the first step. Quotes are kept; the recommendation and acceptance are cleared. */
+export async function restartRenewal(c: RenewalCase, reason: string): Promise<RenewalCase> {
+  if (c.backend) {
+    return sendRenewalCompliance(c, "restart", "POST", commandEnvelope(c.backend.version, reason.trim()), "Restarting a renewal is not on the live system yet.");
+  }
+  const found = findRenewal(c.id);
   return saveRenewal({
-    ...c,
-    completed: [
-      ...c.completed,
-      { code: m.code, completedAt: todayIso(), completedBy: input.completedBy, note: input.note, evidence: input.evidence },
-    ],
+    ...found,
+    completed: [],
+    notNeeded: [],
+    acceptance: undefined,
+    quotes: found.quotes.map((q) => ({ ...q, recommended: false })),
   });
 }
 
@@ -5582,6 +5653,8 @@ function requireOpen(c: Claim) {
 type ClaimView = {
   id: string;
   reference: string;
+  /** Proposed: the insurer's reimbursement number for Life and Medical claims. */
+  reimbursementNumber?: string | null;
   clientId: string;
   policyPeriodId: string;
   lossDate: string;
@@ -5615,7 +5688,7 @@ type PolicyPeriodDetail = {
  * reload; other people and other browsers will not see them until the backend
  * stores them.
  */
-type LocalClaimDetails = Pick<Claim, "priority" | "handler" | "dateReported">;
+type LocalClaimDetails = Pick<Claim, "priority" | "handler" | "dateReported" | "reimbursementNo">;
 const LOCAL_CLAIM_DETAILS_KEY = "gral:claim-details";
 const LOCAL_CLAIM_DETAILS = {
   read(): Record<string, LocalClaimDetails> {
@@ -5721,6 +5794,7 @@ function toClaim(v: ClaimView, clientRef: string, clientName: string, period: Po
     handler: staffName(v.ownerId) ?? local?.handler ?? existing?.handler ?? "Not assigned",
     handlerId: v.ownerId,
     description: v.description,
+    reimbursementNo: v.reimbursementNumber ?? local?.reimbursementNo ?? existing?.reimbursementNo,
     ...claimStatusFromState(v),
   };
 }
@@ -6033,6 +6107,8 @@ export type NewClaimInput = {
   description: string;
   /** Backend policy period. Required for backend clients: a claim must sit on a policy. */
   policyPeriodId?: string;
+  /** The insurer's reimbursement number, for Life and Medical claims. */
+  reimbursementNo?: string;
 };
 
 /** Register a claim (step 1). Standard documents are added as the checklist. */
@@ -6054,6 +6130,8 @@ export async function createClaim(input: NewClaimInput, by: string): Promise<Cla
         currency: "RWF",
         priority: input.priority,
         reportedOn: input.dateReported,
+        // Proposed field; kept in this browser until the server stores it.
+        reimbursementNumber: input.reimbursementNo || undefined,
         ownerId: (await listClaimHandlers()).find((h) => h.name === input.handler)?.id,
       }),
     });
@@ -6063,6 +6141,7 @@ export async function createClaim(input: NewClaimInput, by: string): Promise<Cla
       priority: input.priority,
       handler: input.handler,
       dateReported: input.dateReported,
+      reimbursementNo: input.reimbursementNo,
     });
     const claim = toClaim(view, backendClient.id, backendClient.name, await loadPeriod(view.policyPeriodId));
     return rememberClaim({ ...claim, history: [{ at: todayIso(), by, text: "Claim registered" }] });

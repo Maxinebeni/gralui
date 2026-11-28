@@ -116,6 +116,7 @@ export function ClaimDetailPanel({
                 ? " · Policy number not recorded"
                 : " · No policy linked to this claim"}
             {claim.submission?.insurerClaimNo ? ` · Insurer ref ${claim.submission.insurerClaimNo}` : ""}
+            {claim.reimbursementNo ? ` · Reimbursement no. ${claim.reimbursementNo}` : ""}
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Person name={claim.handler} />

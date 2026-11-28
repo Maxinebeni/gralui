@@ -212,31 +212,67 @@ export function claimsReport(claims: Claim[], period: Period) {
 /* -------------------------------- Portfolio report -------------------------------- */
 
 /** The book as it stands on a day: live policies by class and by insurer. */
-export function portfolioReport(clients: Client[], today = todayIso()) {
-  const day: Period = { key: today, label: today, from: today, to: today };
-  const live = clients.flatMap((client) =>
-    client.policies.flatMap(policyCovers).filter((p) => coversPeriod(p, day)).map((policy) => ({ client, policy })),
-  );
-  const group = (keyOf: (p: Policy) => string) => {
-    const m = new Map<string, { label: string; policies: number; premium: number }>();
+/** The three lines of business GRAL reports premium by. */
+export const BUSINESS_LINES = ["Medical", "Life", "Non-life"] as const;
+export type BusinessLine = (typeof BUSINESS_LINES)[number];
+
+/** Medical and health cover first (group medical sits with life products), then life and pensions, then the rest. */
+export function businessLine(classOfInsurance: string): BusinessLine {
+  if (/medical|health/i.test(classOfInsurance)) return "Medical";
+  if (/life|pension/i.test(classOfInsurance)) return "Life";
+  return "Non-life";
+}
+
+/**
+ * Every policy in force during the period (today when no period is given),
+ * grouped by type of insurance, insurer and line of business.
+ */
+export function portfolioReport(clients: Client[], today = todayIso(), period?: Period) {
+  const span: Period = period ?? { key: today, label: today, from: today, to: today };
+  const live = clients
+    .flatMap((client) => client.policies.flatMap(policyCovers).filter((p) => coversPeriod(p, span)).map((policy) => ({ client, policy })))
+    .sort((a, b) => a.client.name.localeCompare(b.client.name) || a.policy.id.localeCompare(b.policy.id));
+  const premiumOf = (p: Policy) => policyFinancials(p).totalPremium ?? 0;
+  const group = (keyOf: (p: Policy) => string, keys: readonly string[] = []) => {
+    const m = new Map<string, { label: string; policies: number; premium: number }>(keys.map((k) => [k, { label: k, policies: 0, premium: 0 }]));
     for (const { policy } of live) {
       const k = keyOf(policy) || "Not recorded";
       const row = m.get(k) ?? { label: k, policies: 0, premium: 0 };
       row.policies += 1;
-      row.premium += policyFinancials(policy).totalPremium ?? 0;
+      row.premium += premiumOf(policy);
       m.set(k, row);
     }
-    return [...m.values()].sort((a, b) => b.premium - a.premium || b.policies - a.policies);
+    const rows = [...m.values()];
+    return keys.length ? rows : rows.sort((a, b) => b.premium - a.premium || b.policies - a.policies);
   };
   return {
+    byLine: group((p) => businessLine(p.classOfInsurance), BUSINESS_LINES),
     byClass: group((p) => p.classOfInsurance),
     byInsurer: group((p) => p.insurer),
+    policies: live.map(({ client, policy }) => ({ client, policy, line: businessLine(policy.classOfInsurance), ...policyFinancials(policy) })),
     totals: {
       clients: new Set(live.map((l) => l.client.id)).size,
       policies: live.length,
-      premium: live.reduce((s, l) => s + (policyFinancials(l.policy).totalPremium ?? 0), 0),
+      premium: live.reduce((s, l) => s + premiumOf(l.policy), 0),
       kycApproved: clients.filter((c) => c.kyc).length,
       allClients: clients.length,
+    },
+  };
+}
+
+/** Policies in force during the period whose premium is not fully paid, largest balance first. */
+export function outstandingReport(clients: Client[], period: Period) {
+  const lines = portfolioReport(clients, todayIso(), period)
+    .policies.filter((l) => l.balance !== null && l.balance > 0)
+    .sort((a, b) => b.balance! - a.balance!);
+  return {
+    lines,
+    totals: {
+      policies: lines.length,
+      clients: new Set(lines.map((l) => l.client.id)).size,
+      premium: lines.reduce((s, l) => s + (l.totalPremium ?? 0), 0),
+      paid: lines.reduce((s, l) => s + (l.amountPaid ?? 0), 0),
+      outstanding: lines.reduce((s, l) => s + l.balance!, 0),
     },
   };
 }

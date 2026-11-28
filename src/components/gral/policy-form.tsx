@@ -33,7 +33,13 @@ type FormValues = {
   status: PolicyStatus | "";
   /** Why a saved policy's figures are changing (kept with the change on GRAL's system). */
   reason: string;
+  /** The insurer's endorsement number, when the change comes from an endorsement. Saved at the start of the reason. */
+  endorsementNo: string;
 };
+
+/** The reason as saved: the endorsement number first, when there is one. */
+const changeReason = (v: Pick<FormValues, "reason" | "endorsementNo">) =>
+  [v.endorsementNo.trim() ? `Endorsement ${v.endorsementNo.trim()}` : "", v.reason.trim()].filter(Boolean).join(": ");
  
 type Errors = Partial<Record<keyof FormValues, string>>;
  
@@ -50,6 +56,7 @@ const EMPTY: FormValues = {
   renewal: "",
   status: "Active",
   reason: "",
+  endorsementNo: "",
 };
  
 /** "12 Mar 2026" style text to the yyyy-mm-dd a date box needs. Empty if it cannot be read. */
@@ -86,6 +93,7 @@ function fromPolicy(p: Policy): FormValues {
     renewal: toInputDate(p.renewal),
     status: p.status,
     reason: "",
+    endorsementNo: "",
   };
 }
  
@@ -288,7 +296,7 @@ export function PolicyForm({
     setSaving(true);
     try {
       const updated = policy
-        ? await updatePolicy(client.id, policy.id, input, values.reason.trim())
+        ? await updatePolicy(client.id, policy.id, input, changeReason(values))
         : await createPolicy(client.id, input);
       toast.success(policy ? `Policy ${input.id} updated.` : input.id ? `Policy ${input.id} added to ${client.name}.` : `Policy added to ${client.name}.`);
       setReview(null);
@@ -520,6 +528,16 @@ export function PolicyForm({
 
         {locked ? (
           <Section title="Reason for the change">
+            <Field id="endorsementNo" label="Endorsement number (if any)">
+              <input
+                id="endorsementNo"
+                maxLength={60}
+                value={values.endorsementNo}
+                onChange={(e) => set("endorsementNo", e.target.value)}
+                placeholder="e.g. END-02"
+                className={inputClass()}
+              />
+            </Field>
             <Field id="reason" label="Why are the figures changing?" error={errors.reason} wide>
               <textarea
                 id="reason"
@@ -553,7 +571,7 @@ export function PolicyForm({
             ? [
                 ...changedFigures(policy, values).map((c) => ({ label: c.label, value: `${c.before} → ${c.after}` })),
                 { label: "Policy number", value: review.input.id },
-                { label: "Reason", value: values.reason.trim() },
+                { label: "Reason", value: changeReason(values) },
               ]
             : review
             ? [

@@ -76,6 +76,8 @@ const RENEWAL_ROLES: readonly Role[] = [
   "CRM Manager",
   "Client Relation Records Officer",
   "GI Underwriting Manager",
+  // Decides which renewal steps are not needed and can restart a renewal.
+  "Risk and Compliance Manager",
 ];
 
 // CLIENT_READ is a real backend code. CLAIM_READ and RENEWAL_READ are
@@ -190,6 +192,32 @@ export function renewalPermissions(user: SessionUser) {
       "GI Underwriting Manager",
     ].includes(role),
   };
+}
+
+/**
+ * Skipping renewal steps that are not needed (often for individuals) and
+ * restarting a renewal from the start. Decided by the Risk and Compliance
+ * Manager. PROVISIONAL: proposed backend permissions RENEWAL_STEP_SKIP and
+ * RENEWAL_RESTART (docs/backend-requests-pilot.md).
+ */
+export function renewalCompliancePermissions(user: SessionUser) {
+  if (usesBackendPermissions(user)) {
+    return { canSkipSteps: hasPermission(user, "RENEWAL_STEP_SKIP"), canRestart: hasPermission(user, "RENEWAL_RESTART") };
+  }
+  const rcm = user.role === "Risk and Compliance Manager";
+  return { canSkipSteps: rcm, canRestart: rcm };
+}
+
+/**
+ * Recording premium payments and instalment plans on a policy. PROVISIONAL:
+ * proposed backend permission POLICY_PAYMENT_RECORD; until then anyone who may
+ * change the policy figures may record payments.
+ */
+export function paymentPermissions(user: SessionUser) {
+  if (usesBackendPermissions(user)) {
+    return { canRecordPayments: hasPermission(user, "POLICY_PAYMENT_RECORD") || hasPermission(user, "POLICY_FINANCIAL_UPDATE") };
+  }
+  return { canRecordPayments: ["Accounts Executive", "GI Underwriting Manager", "Finance Director", "MD", "DMD"].includes(user.role) };
 }
 
 /**

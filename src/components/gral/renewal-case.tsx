@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Check, FileText, X } from "lucide-react";
+import { Check, FileText, Minus, X } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { formatRwf } from "@/lib/format";
@@ -13,11 +13,14 @@ import {
   recordRenewalAcceptance,
   renewalApproval,
   requestRenewalApproval,
+  restartRenewal,
+  setRenewalStepsNotNeeded,
+  SKIPPABLE_MILESTONES,
 } from "@/lib/api";
 import { statusLabel } from "@/lib/approvals";
 import type { ApprovalRequest } from "@/lib/types";
 import { useCurrentUser } from "@/lib/auth-context";
-import { renewalPermissions } from "@/lib/permissions";
+import { renewalCompliancePermissions, renewalPermissions } from "@/lib/permissions";
 import { INSURER_GROUPS } from "@/lib/reference-data";
 import {
   RENEWAL_MILESTONES,
@@ -26,17 +29,18 @@ import {
   daysOverdue,
   daysToExpiry,
   formatDate,
+  isLostRenewal,
   milestoneDue,
   renewalHealth,
 } from "@/lib/renewals";
 import { kycBlockedReasons } from "@/lib/kyc";
 import { useClients } from "@/lib/queries";
-import type { RenewalCase } from "@/lib/types";
+import type { RenewalCase, RenewalMilestoneCode } from "@/lib/types";
 import { AmountInput } from "./amount-input";
 import { KycBadge, KycBlockedNotice } from "./kyc-badge";
 import { RenewalActions, RenewalBlockers } from "./renewal-actions";
 import { renewalActionsFor } from "@/lib/renewal-actions";
-import { Chip, Dot, NavyButton, OutlineButton, Person, SegmentedTabs } from "./ui";
+import { Chip, NavyButton, OutlineButton, Person, SegmentedTabs } from "./ui";
 
 const TABS = ["Milestones", "Quotes", "Acceptance"] as const;
 type Tab = (typeof TABS)[number];
@@ -143,6 +147,14 @@ export function RenewalCasePanel({
 
 type Run = (action: () => Promise<RenewalCase>, success: string) => Promise<boolean>;
 
+type StepState = "done" | "skipped" | "not-needed" | "current" | "late" | "upcoming";
+
+const dayLabel = (offset: number) => `Day ${offset === 0 ? "0" : `−${Math.abs(offset)}`}`;
+
+/**
+ * The ten milestones as a step bar, like a lead's onboarding steps: the bar shows
+ * where the renewal is, and the chosen step's details and actions show below it.
+ */
 function MilestonesTab({
   renewal,
   canUpdate,
@@ -160,13 +172,230 @@ function MilestonesTab({
   kycApproved: boolean;
   kycLink?: string;
 }) {
+  const { user } = useCurrentUser();
+  const current = currentMilestone(renewal);
+  const overdue = daysOverdue(renewal);
+  // The step the user picked; otherwise the current one (or the last when finished).
+  const [picked, setPicked] = useState<RenewalMilestoneCode | null>(null);
+  const selected = picked ?? current?.code ?? RENEWAL_MILESTONES.at(-1)!.code;
+
+  const stateOf = (code: RenewalMilestoneCode): StepState => {
+    const done = renewal.completed.find((c) => c.code === code);
+    if (done) return done.skipped ? "skipped" : "done";
+    if (current?.code === code) return overdue > 0 ? "late" : "current";
+    return renewal.notNeeded?.includes(code) ? "not-needed" : "upcoming";
+  };
+  const { canSkipSteps, canRestart } = renewalCompliancePermissions(user);
+  const [panel, setPanel] = useState<"steps" | "restart" | null>(null);
+  const open = !!current;
+
+  // After a step is recorded, follow the renewal to its next step.
+  const changed = (updated: RenewalCase) => {
+    setPicked(null);
+    onChanged(updated);
+  };
+  const runAndFollow: Run = async (action, success) => {
+    const ok = await run(action, success);
+    if (ok) setPicked(null);
+    return ok;
+  };
+
+  return (
+    <div className="mt-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs text-muted-foreground">
+          {current ? (
+            <>
+              <span className="font-medium text-foreground">{current.name}</span> · due {formatDate(milestoneDue(renewal, current))}
+            </>
+          ) : isLostRenewal(renewal) ? (
+            "Not renewing"
+          ) : (
+            "All steps done"
+          )}
+        </span>
+        {panel === null && (canSkipSteps || canRestart) ? (
+          <div className="flex flex-wrap gap-2">
+            {canSkipSteps && open ? <OutlineButton onClick={() => setPanel("steps")}>Choose steps needed</OutlineButton> : null}
+            {canRestart && renewal.completed.length > 0 ? <OutlineButton onClick={() => setPanel("restart")}>Restart renewal</OutlineButton> : null}
+          </div>
+        ) : null}
+      </div>
+
+      {panel === "steps" ? (
+        <StepsNeededPanel
+          renewal={renewal}
+          userName={userName}
+          run={runAndFollow}
+          onClose={() => setPanel(null)}
+        />
+      ) : null}
+      {panel === "restart" ? <RestartPanel renewal={renewal} run={runAndFollow} onClose={() => setPanel(null)} /> : null}
+
+      <MilestoneTracker renewal={renewal} stateOf={stateOf} selected={selected} onSelect={setPicked} />
+
+      <MilestoneDetail
+        key={selected}
+        code={selected}
+        state={stateOf(selected)}
+        renewal={renewal}
+        canUpdate={canUpdate}
+        userName={userName}
+        overdue={overdue}
+        run={runAndFollow}
+        onChanged={changed}
+        kycApproved={kycApproved}
+        kycLink={kycLink}
+      />
+
+      {renewal.backend ? (
+        <div className="mt-4">
+          <RenewalActions renewal={renewal} step={null} onChanged={changed} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MilestoneDot({ n, state, selected }: { n: number; state: StepState; selected: boolean }) {
+  return (
+    <span
+      className={cn(
+        "relative z-10 flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold transition-shadow",
+        state === "done" && "bg-primary text-primary-foreground",
+        (state === "skipped" || state === "not-needed") && "bg-secondary text-muted-foreground ring-1 ring-border",
+        state === "current" && "bg-card text-primary ring-2 ring-sky",
+        state === "late" && "bg-danger text-white",
+        state === "upcoming" && "bg-secondary text-subtle",
+        selected && "shadow-[0_0_0_4px_var(--color-pale)]",
+      )}
+    >
+      {state === "done" ? <Check className="size-4" /> : state === "skipped" || state === "not-needed" ? <Minus className="size-4" /> : n}
+    </span>
+  );
+}
+
+/** Across the panel when there is room, a list when it is narrow. */
+function MilestoneTracker({
+  renewal,
+  stateOf,
+  selected,
+  onSelect,
+}: {
+  renewal: RenewalCase;
+  stateOf: (code: RenewalMilestoneCode) => StepState;
+  selected: RenewalMilestoneCode;
+  onSelect: (code: RenewalMilestoneCode) => void;
+}) {
+  const last = RENEWAL_MILESTONES.length - 1;
+  return (
+    <div className="@container">
+      <ol className="mt-6 hidden @3xl:flex">
+        {RENEWAL_MILESTONES.map((m, i) => {
+          const state = stateOf(m.code);
+          const isSelected = selected === m.code;
+          return (
+            <li key={m.code} className="relative min-w-0 flex-1">
+              {i < last ? (
+                <span
+                  aria-hidden
+                  className={cn("absolute top-[22px] left-1/2 h-0.5 w-full", state === "done" || state === "skipped" ? "bg-primary" : "bg-border")}
+                />
+              ) : null}
+              <button
+                type="button"
+                onClick={() => onSelect(m.code)}
+                aria-current={isSelected ? "step" : undefined}
+                className={cn(
+                  "flex w-full flex-col items-center rounded-xl px-1 pt-1.5 pb-2 text-center transition-colors",
+                  isSelected ? "bg-pale" : "hover:bg-secondary/60",
+                )}
+              >
+                <MilestoneDot n={i + 1} state={state} selected={isSelected} />
+                <span
+                  className={cn(
+                    "mt-2 line-clamp-2 text-[11px] leading-tight",
+                    state === "upcoming" || state === "not-needed" ? "text-muted-foreground" : "font-medium text-foreground",
+                  )}
+                >
+                  {m.name}
+                </span>
+                <span className="mt-0.5 text-[10px] text-subtle">{state === "skipped" ? "Skipped" : state === "not-needed" ? "Not needed" : formatDate(milestoneDue(renewal, m))}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+
+      <ol className="mt-5 space-y-1 @3xl:hidden">
+        {RENEWAL_MILESTONES.map((m, i) => {
+          const state = stateOf(m.code);
+          return (
+            <li key={m.code}>
+              <button
+                type="button"
+                onClick={() => onSelect(m.code)}
+                aria-current={selected === m.code ? "step" : undefined}
+                className={cn(
+                  "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-xl px-2 py-1.5 text-left",
+                  selected === m.code && "bg-pale",
+                )}
+              >
+                <MilestoneDot n={i + 1} state={state} selected={false} />
+                <span className={cn("truncate text-xs", state === "upcoming" || state === "not-needed" ? "text-muted-foreground" : "font-medium")}>{m.name}</span>
+                <span className="text-[10px] whitespace-nowrap text-subtle">{state === "skipped" ? "Skipped" : state === "not-needed" ? "Not needed" : formatDate(milestoneDue(renewal, m))}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+function Fact({ label, value, danger }: { label: string; value: string; danger?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[11px] text-muted-foreground">{label}</dt>
+      <dd className={cn("mt-0.5 font-medium", danger && "text-danger")}>{value}</dd>
+    </div>
+  );
+}
+
+function MilestoneDetail({
+  code,
+  state,
+  renewal,
+  canUpdate,
+  userName,
+  overdue,
+  run,
+  onChanged,
+  kycApproved,
+  kycLink,
+}: {
+  code: RenewalMilestoneCode;
+  state: StepState;
+  renewal: RenewalCase;
+  canUpdate: boolean;
+  userName: string;
+  overdue: number;
+  run: Run;
+  onChanged: (updated: RenewalCase) => void;
+  kycApproved: boolean;
+  kycLink?: string;
+}) {
   const [note, setNote] = useState("");
   const [evidence, setEvidence] = useState("");
   const [saving, setSaving] = useState(false);
-  const current = currentMilestone(renewal);
+  const index = RENEWAL_MILESTONES.findIndex((x) => x.code === code);
+  const m = RENEWAL_MILESTONES[index]!;
+  const prev = RENEWAL_MILESTONES[index - 1];
+  const done = renewal.completed.find((c) => c.code === code);
+  const active = state === "current" || state === "late";
   const blocker = completionBlocker(renewal);
-  const kycBlocked = current?.code === "ACCEPTANCE" && !kycApproved;
-  const overdue = daysOverdue(renewal);
+  const kycBlocked = code === "ACCEPTANCE" && !kycApproved;
+  const backendActions = !!renewal.backend && (active || renewalActionsFor(renewal, code).length > 0);
 
   async function complete() {
     if (!note.trim()) {
@@ -175,13 +404,8 @@ function MilestonesTab({
     }
     setSaving(true);
     const ok = await run(
-      () =>
-        completeRenewalMilestone(renewal.id, {
-          note: note.trim(),
-          evidence: evidence.trim() || undefined,
-          completedBy: userName,
-        }),
-      `${current?.name} marked complete.`,
+      () => completeRenewalMilestone(renewal.id, { note: note.trim(), evidence: evidence.trim() || undefined, completedBy: userName }),
+      `${m.name} marked complete.`,
     );
     setSaving(false);
     if (ok) {
@@ -191,106 +415,183 @@ function MilestonesTab({
   }
 
   return (
-    <ol className="mt-4 space-y-2">
-      {RENEWAL_MILESTONES.map((m, i) => {
-        const done = renewal.completed.find((c) => c.code === m.code);
-        const isCurrent = current?.code === m.code;
-        const late = isCurrent && overdue > 0;
-        return (
-          <li
-            key={m.code}
-            className={cn(
-              "rounded-xl border px-3 py-2.5",
-              isCurrent ? (late ? "border-danger/40 bg-danger-soft/40" : "border-sky/40 bg-pale") : "border-border",
-            )}
-          >
-            <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2.5">
-              <span className="mt-0.5">
-                {done ? (
-                  <Check className="size-4 text-success" />
-                ) : late ? (
-                  <Dot tone="danger" />
-                ) : (
-                  <Dot tone={isCurrent ? "sky" : "subtle"} />
-                )}
-              </span>
-              <div className="min-w-0">
-                <p className="text-xs font-medium">
-                  {i + 1}. {m.name}
-                </p>
-                <p className="text-[11px] text-muted-foreground">
-                  {m.owner} · {m.output}
-                </p>
-                {done ? (
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    Done{done.completedAt ? ` ${formatDate(done.completedAt)}` : ""}
-                    {done.completedBy ? ` by ${done.completedBy}` : ""}
-                    {done.evidence ? (
-                      <span className="ml-1 inline-flex items-center gap-1 text-primary">
-                        · <FileText className="size-3" /> {done.evidence}
-                      </span>
-                    ) : null}
-                  </p>
-                ) : null}
-              </div>
-              <div className="text-right">
-                <p className="text-[11px] font-medium whitespace-nowrap">
-                  Day {m.offset === 0 ? "0" : `−${Math.abs(m.offset)}`}
-                </p>
-                <p className="text-[10px] whitespace-nowrap text-subtle">{formatDate(milestoneDue(renewal, m))}</p>
-              </div>
-            </div>
+    <div className={cn("mt-4 overflow-hidden rounded-2xl border", state === "late" ? "border-danger/30" : state === "current" ? "border-sky/40" : "border-border")}>
+      <div
+        className={cn(
+          "border-b px-4 py-4 sm:px-5",
+          state === "late" ? "border-danger/30 bg-danger-soft/40" : state === "current" ? "border-sky/30 bg-pale" : "border-border",
+        )}
+      >
+        <p className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+          Step {index + 1} of {RENEWAL_MILESTONES.length}
+        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <h3 className="text-lg font-semibold tracking-tight">{m.name}</h3>
+          {state === "done" ? (
+            <Chip tone="success">Done</Chip>
+          ) : state === "skipped" ? (
+            <Chip>Skipped</Chip>
+          ) : state === "not-needed" ? (
+            <Chip>Not needed</Chip>
+          ) : state === "current" ? (
+            <Chip tone="sky">In progress</Chip>
+          ) : state === "late" ? (
+            <Chip tone="danger">Overdue {overdue}d</Chip>
+          ) : (
+            <Chip>Not started</Chip>
+          )}
+        </div>
+        <dl className="mt-4 grid gap-3 text-xs sm:grid-cols-3">
+          <Fact label="Owner" value={m.owner} />
+          <Fact label="Due" value={`${formatDate(milestoneDue(renewal, m))} · ${dayLabel(m.offset)}`} danger={state === "late"} />
+          <Fact label="Output" value={m.output} />
+        </dl>
+      </div>
 
-            {renewal.backend && (isCurrent || renewalActionsFor(renewal, m.code).length > 0) ? (
-              <div className="mt-3 space-y-2 border-t border-border pt-3">
-                {late ? <p className="text-[11px] font-medium text-danger">Overdue by {overdue} days.</p> : null}
-                <RenewalActions renewal={renewal} step={m.code} onChanged={onChanged} />
-              </div>
+      <div className="space-y-3 px-4 py-4 text-xs sm:px-5">
+        {done ? (
+          <p className="text-muted-foreground">
+            {done.skipped ? "Skipped" : "Done"}
+            {done.completedAt ? ` ${formatDate(done.completedAt)}` : ""}
+            {done.completedBy ? ` by ${done.completedBy}` : ""}
+            {done.evidence ? (
+              <span className="ml-1 inline-flex items-center gap-1 text-primary">
+                · <FileText className="size-3" /> {done.evidence}
+              </span>
             ) : null}
-            {!renewal.backend && isCurrent && canUpdate ? (
-              <div className="mt-3 space-y-2 border-t border-border pt-3">
-                {late ? (
-                  <p className="text-[11px] font-medium text-danger">Overdue by {overdue} days.</p>
-                ) : null}
-                {kycBlocked ? (
-                  <KycBlockedNotice reasons={kycBlockedReasons(["KYC_NOT_READY"])} href={kycLink} />
-                ) : blocker ? (
-                  <p className="text-[11px] text-warning">{blocker}</p>
-                ) : m.code === "APPROVAL" ? (
-                  <ApprovalRequestBox renewalId={renewal.id} userName={userName} />
-                ) : (
-                  <>
-                    <textarea
-                      value={note}
-                      onChange={(e) => setNote(e.target.value)}
-                      rows={2}
-                      placeholder="What was done? e.g. Notice sent to the client by email"
-                      aria-label="Completion note"
-                      className={INPUT}
-                    />
-                    <input
-                      value={evidence}
-                      onChange={(e) => setEvidence(e.target.value)}
-                      placeholder="Evidence document (optional), e.g. Renewal notice.pdf"
-                      aria-label="Evidence document"
-                      className={INPUT}
-                    />
-                    <NavyButton onClick={complete} disabled={saving}>
-                      <Check className="size-3.5" /> {saving ? "Saving…" : `Mark ${m.name} complete`}
-                    </NavyButton>
-                  </>
-                )}
-              </div>
-            ) : null}
-          </li>
-        );
-      })}
-      {renewal.backend ? (
-        <li className="list-none pt-2">
-          <RenewalActions renewal={renewal} step={null} onChanged={onChanged} />
-        </li>
-      ) : null}
-    </ol>
+          </p>
+        ) : null}
+
+        {backendActions ? (
+          <RenewalActions renewal={renewal} step={code} onChanged={onChanged} />
+        ) : !renewal.backend && active && canUpdate ? (
+          kycBlocked ? (
+            <KycBlockedNotice reasons={kycBlockedReasons(["KYC_NOT_READY"])} href={kycLink} />
+          ) : blocker ? (
+            <p className="text-[11px] text-warning">{blocker}</p>
+          ) : code === "APPROVAL" ? (
+            <ApprovalRequestBox renewalId={renewal.id} userName={userName} />
+          ) : (
+            <div className="max-w-xl space-y-2">
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                rows={2}
+                placeholder="What was done? e.g. Notice sent to the client by email"
+                aria-label="Completion note"
+                className={INPUT}
+              />
+              <input
+                value={evidence}
+                onChange={(e) => setEvidence(e.target.value)}
+                placeholder="Evidence document (optional), e.g. Renewal notice.pdf"
+                aria-label="Evidence document"
+                className={INPUT}
+              />
+              <NavyButton onClick={complete} disabled={saving}>
+                <Check className="size-3.5" /> {saving ? "Saving…" : `Mark ${m.name.toLowerCase()} complete`}
+              </NavyButton>
+            </div>
+          )
+        ) : state === "not-needed" ? (
+          <p className="text-muted-foreground">Marked as not needed. It is skipped when the renewal reaches it.</p>
+        ) : state === "upcoming" && prev ? (
+          <p className="text-muted-foreground">Starts after {prev.name.toLowerCase()}.</p>
+        ) : !done && active ? (
+          <p className="text-muted-foreground">Waiting for the {m.owner}.</p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** The Risk and Compliance Manager marks which remaining steps this renewal needs. */
+function StepsNeededPanel({ renewal, userName, run, onClose }: { renewal: RenewalCase; userName: string; run: Run; onClose: () => void }) {
+  const done = new Set(renewal.completed.map((c) => c.code));
+  const remaining = RENEWAL_MILESTONES.filter((m) => !done.has(m.code) && SKIPPABLE_MILESTONES.includes(m.code));
+  const [notNeeded, setNotNeeded] = useState<RenewalMilestoneCode[]>(renewal.notNeeded ?? []);
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    if (!reason.trim()) {
+      toast.error("Say why these steps are not needed.");
+      return;
+    }
+    setSaving(true);
+    const ok = await run(() => setRenewalStepsNotNeeded(renewal, notNeeded, reason, userName), "Steps updated.");
+    setSaving(false);
+    if (ok) onClose();
+  }
+
+  return (
+    <div className="mt-4 space-y-3 rounded-2xl border border-border p-4 sm:p-5">
+      <h3 className="text-sm font-semibold">Steps this renewal needs</h3>
+      <ul className="grid gap-1.5 sm:grid-cols-2">
+        {remaining.map((m) => {
+          const needed = !notNeeded.includes(m.code);
+          return (
+            <li key={m.code}>
+              <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-border px-3 py-2 text-xs hover:bg-secondary/60">
+                <input
+                  type="checkbox"
+                  checked={needed}
+                  onChange={() => setNotNeeded((all) => (needed ? [...all, m.code] : all.filter((x) => x !== m.code)))}
+                  className="size-4 accent-[var(--primary)]"
+                />
+                <span className={cn(!needed && "text-muted-foreground line-through")}>
+                  {RENEWAL_MILESTONES.indexOf(m) + 1}. {m.name}
+                </span>
+              </label>
+            </li>
+          );
+        })}
+      </ul>
+      <label className="block text-xs text-muted-foreground">
+        Reason
+        <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Individual client, no visit needed" className={INPUT + " mt-1"} />
+      </label>
+      <div className="flex justify-between gap-2">
+        <OutlineButton onClick={onClose}>Cancel</OutlineButton>
+        <NavyButton onClick={save} disabled={saving}>
+          {saving ? "Saving…" : "Save steps"}
+        </NavyButton>
+      </div>
+    </div>
+  );
+}
+
+/** Starts the renewal again from step 1, for example when the client's situation changed. */
+function RestartPanel({ renewal, run, onClose }: { renewal: RenewalCase; run: Run; onClose: () => void }) {
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function restart() {
+    if (!reason.trim()) {
+      toast.error("Say why the renewal is restarting.");
+      return;
+    }
+    setSaving(true);
+    const ok = await run(() => restartRenewal(renewal, reason), "Renewal restarted from step 1.");
+    setSaving(false);
+    if (ok) onClose();
+  }
+
+  return (
+    <div className="mt-4 space-y-3 rounded-2xl border border-border p-4 sm:p-5">
+      <h3 className="text-sm font-semibold">Restart this renewal</h3>
+      <p className="text-xs text-muted-foreground">All steps go back to not started. Quotes stay on file; the recommendation and client acceptance are cleared.</p>
+      <label className="block text-xs text-muted-foreground">
+        Reason
+        <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Client changed the cover needed" className={INPUT + " mt-1"} />
+      </label>
+      <div className="flex justify-between gap-2">
+        <OutlineButton onClick={onClose}>Cancel</OutlineButton>
+        <NavyButton onClick={restart} disabled={saving}>
+          {saving ? "Restarting…" : "Restart renewal"}
+        </NavyButton>
+      </div>
+    </div>
   );
 }
 

@@ -3,7 +3,7 @@
 import { useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Printer } from "lucide-react";
+import { ChevronDown, Printer } from "lucide-react";
 import { Td, Th } from "@/components/gral/claim-list";
 import { FilterMenu } from "@/components/gral/filter-menu";
 import { usePaged } from "@/components/gral/pager";
@@ -11,6 +11,8 @@ import { PageHeader } from "@/components/gral/shell";
 import { CardHeader, Chip, FloatCard, NavyButton, OutlineButton, PageLoader, SegmentedTabs, StatTile } from "@/components/gral/ui";
 import { useCurrentUser } from "@/lib/auth-context";
 import { downloadCsv, type CsvCell } from "@/lib/csv";
+import { downloadXlsx } from "@/lib/xlsx";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { claimStatus } from "@/lib/dashboard";
 import { displayToIso, formatRwf } from "@/lib/format";
 import { canAccessPath } from "@/lib/permissions";
@@ -20,6 +22,7 @@ import {
   clientReport,
   customKey,
   isCustomKey,
+  outstandingReport,
   periodFor,
   periodOptions,
   portfolioReport,
@@ -29,12 +32,18 @@ import {
   type Period,
 } from "@/lib/reports";
 import { todayIso } from "@/lib/renewals";
-import type { Client } from "@/lib/types";
+import type { Client, Policy } from "@/lib/types";
 
-const TABS = ["Client report", "Renewals", "Claims", "All business"] as const;
+const TABS = ["Client report", "Renewals", "Claims", "All business", "Outstanding payments"] as const;
 type Tab = (typeof TABS)[number];
 /** Each tab's name in the URL (?report=client), so a report can be linked to. */
-const TAB_SLUGS: Record<Tab, string> = { "Client report": "client", Renewals: "renewals", Claims: "claims", "All business": "portfolio" };
+const TAB_SLUGS: Record<Tab, string> = {
+  "Client report": "client",
+  Renewals: "renewals",
+  Claims: "claims",
+  "All business": "portfolio",
+  "Outstanding payments": "outstanding",
+};
 const CUSTOM = "custom";
 
 const money = (n: number | null | undefined) => (n === null || n === undefined ? "Not recorded" : formatRwf(n));
@@ -44,6 +53,7 @@ const day = (display: string) => {
 };
 const clientHref = (id: string) => `/clients?client=${encodeURIComponent(id)}`;
 const claimHref = (id: string) => `/claims?claim=${encodeURIComponent(id)}`;
+const policyHref = (p: Policy) => `/policies/${encodeURIComponent(p.id)}${p.uuid ? `?ref=${encodeURIComponent(p.uuid)}` : ""}`;
 
 /** One report's on-screen body and the rows its CSV file carries. */
 type Built = { body: ReactNode; csv: CsvCell[][]; fileName: string };
@@ -100,23 +110,23 @@ export function ReportsView() {
         ? buildRenewals(clients, renewals, period)
         : tab === "Claims"
           ? buildClaims(claims, period)
-          : buildPortfolio(clients);
+          : tab === "All business"
+            ? buildPortfolio(clients, period)
+            : buildOutstanding(clients, period);
 
   return (
     <>
       <PageHeader
         title="Reports"
-        subtitle={tab === "All business" ? `As of ${shortDate(todayIso())}` : custom ? period.label : `${period.label} · ${rangeLabel(period)}`}
+        subtitle={custom ? period.label : `${period.label} · ${rangeLabel(period)}`}
         extraPills={
           <>
-            {tab !== "All business" ? (
-              <FilterMenu
-                label="Period"
-                value={custom ? CUSTOM : period.key}
-                options={[...periods.map((p) => ({ value: p.key, label: p.label })), { value: CUSTOM, label: "Custom range" }]}
-                onChange={setPeriod}
-              />
-            ) : null}
+            <FilterMenu
+              label="Period"
+              value={custom ? CUSTOM : period.key}
+              options={[...periods.map((p) => ({ value: p.key, label: p.label })), { value: CUSTOM, label: "Custom range" }]}
+              onChange={setPeriod}
+            />
             {tab === "Client report" && clients.length ? (
               <FilterMenu label="Client" value={client?.id ?? ""} options={clients.map((c) => ({ value: c.id, label: c.name }))} onChange={setClientId} />
             ) : null}
@@ -125,9 +135,7 @@ export function ReportsView() {
         action={
           built && built.csv.length > 1 ? (
             <>
-              <OutlineButton className="px-4 py-2 text-sm" onClick={() => downloadCsv(built.fileName, built.csv)}>
-                Download CSV
-              </OutlineButton>
+              <DownloadMenu built={built} sheetName={tab} />
               <NavyButton className="px-4 py-2 text-sm" onClick={() => window.print()}>
                 <Printer className="size-4" /> Print
               </NavyButton>
@@ -138,7 +146,7 @@ export function ReportsView() {
 
       <div className="mt-5 flex flex-wrap items-center gap-3 print:hidden">
         <SegmentedTabs tabs={tabs} value={tab} onChange={setTab} />
-        {tab !== "All business" && custom ? (
+        {custom ? (
           <span className="float-pill flex flex-wrap items-center gap-1.5 px-3.5 py-1.5 text-xs">
             <input type="date" aria-label="From" value={period.from} max={period.to} onChange={(e) => setCustomEnd("from", e.target.value)} className="bg-transparent outline-none" />
             <span className="text-muted-foreground">to</span>
@@ -150,7 +158,7 @@ export function ReportsView() {
       <p className="mt-4 hidden text-sm print:block">
         GRAL Operations Platform · {tab}
         {tab === "Client report" && client ? ` · ${client.name}` : ""}
-        {tab !== "All business" ? ` · ${custom ? period.label : `${period.label} (${rangeLabel(period)})`}` : ` · as of ${shortDate(todayIso())}`}
+        {` · ${custom ? period.label : `${period.label} (${rangeLabel(period)})`}`}
       </p>
 
       {built ? built.body : <PageLoader label="Loading the report" />}
@@ -159,6 +167,24 @@ export function ReportsView() {
 }
 
 /* ---------------------------------- Pieces ---------------------------------- */
+
+/** The report as an Excel or CSV file. */
+function DownloadMenu({ built, sheetName }: { built: Built; sheetName: string }) {
+  const base = built.fileName.replace(/\.csv$/, "");
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <OutlineButton className="px-4 py-2 text-sm">
+          Download <ChevronDown className="size-3.5" />
+        </OutlineButton>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onSelect={() => downloadXlsx(`${base}.xlsx`, built.csv, sheetName)}>Excel (.xlsx)</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => downloadCsv(`${base}.csv`, built.csv)}>CSV</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 function Empty({ children }: { children: ReactNode }) {
   return <p className="px-4 pb-5 text-xs text-muted-foreground sm:px-5">{children}</p>;
@@ -363,29 +389,107 @@ function buildClaims(claims: Parameters<typeof claimsReport>[0], period: Period)
   };
 }
 
-function buildPortfolio(clients: Client[]): Built {
-  const r = portfolioReport(clients);
-  const groupRows = (rows: { label: string; policies: number; premium: number }[]) =>
-    rows.map((x) => [x.label, x.policies, formatRwf(x.premium), r.totals.premium ? `${Math.round((x.premium / r.totals.premium) * 100)}%` : "-"]);
+function buildPortfolio(clients: Client[], period: Period): Built {
+  const r = portfolioReport(clients, todayIso(), period);
+  const share = (premium: number) => (r.totals.premium ? `${Math.round((premium / r.totals.premium) * 100)}%` : "-");
+  const groupRows = (rows: { label: string; policies: number; premium: number }[]) => rows.map((x) => [x.label, x.policies, formatRwf(x.premium), share(x.premium)]);
   return {
-    fileName: `portfolio-${todayIso()}.csv`,
+    fileName: `policies-${period.key}.csv`,
     csv: [
-      ["Grouped by", "Name", "Active policies", "Premium (RWF)"],
-      ...r.byClass.map((x) => ["Type of insurance", x.label, x.policies, x.premium]),
-      ...r.byInsurer.map((x) => ["Insurer", x.label, x.policies, x.premium]),
+      ["Client", "Policy", "Line of business", "Type of insurance", "Insurer", "Cover starts", "Cover ends", "Status", "Total premium (RWF)", "Paid (RWF)", "Still to pay (RWF)"],
+      ...r.policies.map((l) => [
+        l.client.name,
+        l.policy.id,
+        l.line,
+        l.policy.classOfInsurance,
+        l.policy.insurer,
+        displayToIso(l.policy.start) || l.policy.start,
+        displayToIso(l.policy.renewal) || l.policy.renewal,
+        l.policy.status,
+        l.totalPremium,
+        l.amountPaid,
+        l.balance,
+      ]),
+      [],
+      ["Line of business", "Policies", "Premium (RWF)", "Share of premium"],
+      ...r.byLine.map((x) => [x.label, x.policies, x.premium, share(x.premium)]),
     ],
     body: (
       <>
         <Tiles
           items={[
-            { label: "Clients with active policies", value: String(r.totals.clients) },
-            { label: "Active policies", value: String(r.totals.policies) },
-            { label: "Premium for active policies", value: formatRwf(r.totals.premium) },
+            { label: "Clients with policies in force", value: String(r.totals.clients) },
+            { label: "Policies in force", value: String(r.totals.policies) },
+            { label: "Premium", value: formatRwf(r.totals.premium) },
             { label: "Clients with KYC approved", value: `${r.totals.kycApproved} of ${r.totals.allClients}` },
           ]}
         />
-        <Table title="By type of insurance" head={["Type of insurance", "Active policies", "Premium", "Share of premium"]} rows={groupRows(r.byClass)} empty="No active policies." />
-        <Table title="By insurer" head={["Insurer", "Active policies", "Premium", "Share of premium"]} rows={groupRows(r.byInsurer)} empty="No active policies." />
+        <Table title="Share of premium by line of business" head={["Line of business", "Policies", "Premium", "Share of premium"]} rows={groupRows(r.byLine)} empty="No policies in force." />
+        <Table title="By type of insurance" head={["Type of insurance", "Policies", "Premium", "Share of premium"]} rows={groupRows(r.byClass)} empty="No policies in force." />
+        <Table title="By insurer" head={["Insurer", "Policies", "Premium", "Share of premium"]} rows={groupRows(r.byInsurer)} empty="No policies in force." />
+        <Table
+          title="Policies"
+          head={["Client", "Policy", "Line of business", "Type of insurance", "Insurer", "Covered", "Premium", "Still to pay"]}
+          rows={r.policies.map((l) => [
+            <RowLink key="c" href={clientHref(l.client.id)}>{l.client.name}</RowLink>,
+            <RowLink key="p" href={policyHref(l.policy)}>{l.policy.id}</RowLink>,
+            l.line,
+            l.policy.classOfInsurance,
+            l.policy.insurer,
+            `${day(l.policy.start)} to ${day(l.policy.renewal)}`,
+            money(l.totalPremium),
+            money(l.balance),
+          ])}
+          empty="No policies in force in this period."
+        />
+      </>
+    ),
+  };
+}
+
+function buildOutstanding(clients: Client[], period: Period): Built {
+  const r = outstandingReport(clients, period);
+  return {
+    fileName: `outstanding-payments-${period.key}.csv`,
+    csv: [
+      ["Client", "Policy", "Line of business", "Type of insurance", "Insurer", "Cover starts", "Total premium (RWF)", "Paid (RWF)", "Still to pay (RWF)"],
+      ...r.lines.map((l) => [
+        l.client.name,
+        l.policy.id,
+        l.line,
+        l.policy.classOfInsurance,
+        l.policy.insurer,
+        displayToIso(l.policy.start) || l.policy.start,
+        l.totalPremium,
+        l.amountPaid,
+        l.balance,
+      ]),
+    ],
+    body: (
+      <>
+        <Tiles
+          items={[
+            { label: "Still to pay", value: formatRwf(r.totals.outstanding) },
+            { label: "Paid so far", value: formatRwf(r.totals.paid) },
+            { label: "Policies not fully paid", value: String(r.totals.policies) },
+            { label: "Clients", value: String(r.totals.clients) },
+          ]}
+        />
+        <Table
+          title="Policies not fully paid"
+          head={["Client", "Policy", "Line of business", "Type of insurance", "Insurer", "Premium", "Paid", "Still to pay"]}
+          rows={r.lines.map((l) => [
+            <RowLink key="c" href={clientHref(l.client.id)}>{l.client.name}</RowLink>,
+            <RowLink key="p" href={policyHref(l.policy)}>{l.policy.id}</RowLink>,
+            l.line,
+            l.policy.classOfInsurance,
+            l.policy.insurer,
+            money(l.totalPremium),
+            money(l.amountPaid),
+            <span key="b" className="font-medium">{money(l.balance)}</span>,
+          ])}
+          empty="Every policy in force in this period is paid in full."
+        />
       </>
     ),
   };

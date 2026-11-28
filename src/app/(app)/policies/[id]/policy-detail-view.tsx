@@ -5,6 +5,7 @@ import Link from "next/link";
 import { PageHeader } from "@/components/gral/shell";
 import { DocumentPanel } from "@/components/gral/documents";
 import { PaymentTermsCard } from "@/components/gral/payment-terms-card";
+import { PolicyPaymentsCard } from "@/components/gral/policy-payments-card";
 import { Td, Th } from "@/components/gral/claim-list";
 import { CardHeader, Chip, FloatCard, NotRecorded, PageLoader, Recorded } from "@/components/gral/ui";
 import { cn } from "@/lib/utils";
@@ -122,6 +123,17 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
               Balance and commission are worked out by the system. To change the figures, use Edit policy in the client file; each change is kept in the history below.
             </p>
           </FloatCard>
+
+          <PolicyPaymentsCard
+            period={{
+              key: current.periodId || p.id,
+              periodId: p.uuid ? current.periodId : undefined,
+              policyUuid: p.uuid,
+              totalPremium: f.totalPremium,
+              startDate: current.from || undefined,
+              amountPaid: f.amountPaid,
+            }}
+          />
 
           <FloatCard className="overflow-hidden" delay={180}>
             <CardHeader title="Cover periods" />
@@ -262,6 +274,37 @@ export function PolicyDetailView({ policyId, policyUuid }: { policyId: string; p
               canReplace={canReplace}
               title="Policy documents"
               emptyText="No schedule or endorsement uploaded yet."
+            />
+          </FloatCard>
+
+          <FloatCard className="space-y-5 p-5" delay={320}>
+            <h2 className="text-base font-semibold tracking-tight">Invoice and payment documents</h2>
+            <DocumentPanel
+              subject={{ type: "POLICY", id: p.uuid ?? p.id }}
+              classification="CORRESPONDENCE"
+              purpose="INVOICE"
+              canUpload={canUpload}
+              canReplace={canReplace}
+              title="Invoice"
+              emptyText="No invoice uploaded yet."
+            />
+            <DocumentPanel
+              subject={{ type: "POLICY", id: p.uuid ?? p.id }}
+              classification="POLICY_SCHEDULE"
+              purpose="CONTRACT"
+              canUpload={canUpload}
+              canReplace={canReplace}
+              title="Contract"
+              emptyText="No contract uploaded yet."
+            />
+            <DocumentPanel
+              subject={{ type: "POLICY", id: p.uuid ?? p.id }}
+              classification="CORRESPONDENCE"
+              purpose="PROOF_OF_PAYMENT"
+              canUpload={canUpload}
+              canReplace={canReplace}
+              title="Proof of payment"
+              emptyText="No receipt uploaded yet."
             />
           </FloatCard>
         </div>

@@ -170,6 +170,8 @@ export type CompletedMilestone = {
   completedBy: string;
   note: string;
   evidence?: string; // document name or reference
+  /** The step was skipped, waived or marked not needed, not done. */
+  skipped?: boolean;
 };
  
 export type RenewalQuote = {
@@ -199,6 +201,8 @@ export type RenewalCase = {
   expiryDate: string; // ISO date the current cover ends
   owner: string; // Accounts Executive responsible
   completed: CompletedMilestone[];
+  /** Steps not yet reached that the Risk and Compliance Manager marked as not needed. */
+  notNeeded?: RenewalMilestoneCode[];
   quotes: RenewalQuote[];
   acceptance?: RenewalAcceptance;
   /** Present when the renewal lives on GRAL's backend (REN-01 to REN-06). */
@@ -339,6 +343,8 @@ export type Claim = {
   /** Backend user id of the handler. Only set for backend claims. */
   handlerId?: string;
   description: string;
+  /** The insurer's reimbursement number, for Life and Medical claims. */
+  reimbursementNo?: string;
   documents: ClaimDocument[];
   submission?: { submittedAt: string; insurerClaimNo?: string; evidence: string };
   followUps: ClaimFollowUp[];
